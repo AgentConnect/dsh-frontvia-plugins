@@ -1,0 +1,913 @@
+import { createHash, createHmac, randomUUID } from "node:crypto";
+import {
+  Vault,
+  Serial,
+  fail,
+  canonical,
+  type PapService,
+  type Secrets,
+} from "dsh-pap/core";
+import { z } from "zod";
+export type CustomerConfig = {
+  dataDir: string;
+  sites: {
+    siteId: string;
+    storeId: string;
+    confirmationKeyRef: string;
+    confirmationKid: string;
+  }[];
+};
+export type PapPort = Pick<
+  PapService,
+  "apiVersion" | "sites" | "status" | "connect" | "identity" | "request"
+>;
+type Command = {
+  key: string;
+  method: string;
+  params: any;
+  status: "pending" | "done";
+  result?: any;
+};
+type Intent = {
+  id: string;
+  expiresAt: number;
+  snapshot: any;
+  visibleHash: string;
+  nonce: string;
+  key: string;
+  token?: string;
+};
+export type Flow = {
+  id: string;
+  sessionId: string;
+  connectionRef: string;
+  siteId: string;
+  storeId: string;
+  connection: any;
+  products?: any;
+  variants?: any;
+  cart?: any;
+  delivery?: any;
+  quote?: any;
+  checkout?: any;
+  order?: any;
+  orders?: any;
+  ordersCursor?: string;
+  operation?: any;
+  intent?: Intent;
+  pending?: string;
+  commands: Record<string, Command>;
+  invocations?: Record<string, string>;
+  updatedAt: string;
+};
+const pricing = { country: "US", currency: "USD", locale: "en-US" };
+const profile = "frontvia.pap_subject_purchase.v1";
+const digest = (v: unknown) =>
+  createHash("sha256").update(canonical(v)).digest("hex");
+const id = z
+  .string()
+  .min(1)
+  .max(128)
+  .regex(/^[A-Za-z0-9][A-Za-z0-9._:-]*$/);
+const version = z.string().min(1).max(128);
+const address = z
+  .object({
+    country: z.literal("US"),
+    recipient: z.string().min(1).max(200),
+    line1: z.string().min(1).max(300),
+    line2: z.string().max(300).optional(),
+    city: z.string().min(1).max(100),
+    region: z.string().min(1).max(100),
+    postal_code: z.string().min(1).max(40),
+    phone: z.string().max(40).optional(),
+  })
+  .strict();
+export const contactSchema = z
+  .object({ email: z.email(), shipping_address: address })
+  .strict();
+const privateKeys = new Set([
+  "email",
+  "phone",
+  "shipping_address",
+  "billing_address",
+  "customer",
+  "customer_id",
+  "buyer",
+  "user_id",
+  "identity_ref",
+  "confirmation",
+  "next_actions",
+  "return_url",
+  "access_token",
+  "refresh_token",
+  "token",
+  "session_id",
+  "note",
+  "extensions",
+]);
+export function modelData(value: any): any {
+  if (Array.isArray(value)) return value.slice(0, 20).map(modelData);
+  if (value && typeof value === "object")
+    return Object.fromEntries(
+      Object.entries(value)
+        .filter(([k]) => !privateKeys.has(k))
+        .map(([k, v]) => [
+          k,
+          k === "next_cursor" && typeof v === "string" && v.length <= 4096
+            ? v
+            : modelData(v),
+        ]),
+    );
+  return typeof value === "string" ? value.slice(0, 2000) : value;
+}
+export class CustomerService {
+  private serial = new Serial();
+  constructor(
+    readonly config: CustomerConfig,
+    readonly pap: PapPort,
+    private secrets: Secrets,
+    private vault: Vault,
+  ) {
+    if (pap.apiVersion !== 1) fail("PAP_VERSION_UNSUPPORTED");
+  }
+  private save(f: Flow) {
+    f.updatedAt = new Date().toISOString();
+    this.vault.set(`flow:${f.id}`, f);
+  }
+  flow(sessionId: string, flowId: string): Flow {
+    const f = this.vault.get<Flow>(`flow:${flowId}`);
+    if (!f || f.sessionId !== sessionId) fail("FLOW_NOT_OWNED");
+    return f;
+  }
+  list(sessionId?: string) {
+    return this.vault
+      .keys("flow:")
+      .map((k) => this.vault.get<Flow>(k)!)
+      .filter((f) => !sessionId || f.sessionId === sessionId)
+      .map((f) => ({
+        flowId: f.id,
+        sessionId: f.sessionId,
+        siteId: f.siteId,
+        updatedAt: f.updatedAt,
+        pending: !!f.pending,
+      }));
+  }
+  private policy(f: Flow) {
+    return (
+      this.config.sites.find(
+        (s) => s.siteId === f.siteId && s.storeId === f.storeId,
+      ) ?? fail("SITE_NOT_APPROVED")
+    );
+  }
+  private async read(
+    f: Flow,
+    method: string,
+    params = {},
+    signal?: AbortSignal,
+  ) {
+    const r = await this.pap.request(
+      f.connectionRef,
+      `commerce.${method}`,
+      params,
+      signal,
+    );
+    if (r.error)
+      fail(
+        typeof r.error.data?.type === "string" &&
+          /^[A-Z_]{1,70}$/.test(r.error.data.type)
+          ? r.error.data.type
+          : `COMMERCE_${r.error.code}`,
+      );
+    if (!r.result || !("data" in r.result)) fail("INVALID_COMMERCE_RESPONSE");
+    return r.result.data;
+  }
+  async connect(sessionId: string, siteId: string) {
+    if (!sessionId || sessionId.length > 200) fail("SESSION_REQUIRED");
+    return this.serial.run(`connect:${sessionId}:${siteId}`, async () => {
+      const policy =
+        this.config.sites.find((s) => s.siteId === siteId) ??
+        fail("SITE_NOT_APPROVED");
+      const c = await this.pap.connect(siteId);
+      let f = this.list(sessionId)
+        .filter((f) => f.siteId === siteId)
+        .map((f) => this.flow(sessionId, f.flowId))[0];
+      if (!f)
+        f = {
+          id: randomUUID(),
+          sessionId,
+          siteId,
+          storeId: policy.storeId,
+          connectionRef: c.connectionRef,
+          connection: null,
+          commands: {},
+          updatedAt: "",
+        };
+      if (f.connectionRef !== c.connectionRef) fail("IDENTITY_CHANGED");
+      const cap = await this.read(f, "capabilities.get");
+      if (
+        cap.store_id !== policy.storeId ||
+        !cap.business_profiles?.some(
+          (p: any) => p.id === profile && p.availability === "supported",
+        )
+      )
+        fail("PURCHASE_PROFILE_UNAVAILABLE");
+      const connections = await this.read(f, "connections.list");
+      const entries = Array.isArray(connections)
+        ? connections
+        : (connections.items ?? connections.connections ?? []);
+      const selected =
+        entries.find((v: any) => v.current === true) ??
+        (entries.length === 1 ? entries[0] : undefined);
+      if (
+        !selected ||
+        typeof selected.connection_id !== "string" ||
+        !Number.isSafeInteger(selected.generation)
+      )
+        fail("CONNECTION_SELECTION_REQUIRED");
+      if (
+        f.connection &&
+        canonical(f.connection) !==
+          canonical({
+            connection_id: selected.connection_id,
+            generation: selected.generation,
+          })
+      )
+        fail("CONNECTION_GENERATION_CHANGED");
+      f.connection = {
+        connection_id: selected.connection_id,
+        generation: selected.generation,
+      };
+      this.save(f);
+      return this.result(f, "connection", {
+        sites: this.pap.sites(),
+        connection: this.pap.status(c.connectionRef),
+      });
+    });
+  }
+  private result(f: Flow, card: string, data: any) {
+    return {
+      ...modelData(data),
+      ui: {
+        kind: "frontvia-customer",
+        card,
+        flowId: f.id,
+        sessionId: f.sessionId,
+      },
+      flowId: f.id,
+    };
+  }
+  private apply(f: Flow, method: string, data: any) {
+    if (data.operation) f.operation = data.operation;
+    const r = data.resource;
+    if (r) {
+      if (method.startsWith("commerce.carts.")) {
+        f.cart = r;
+        delete f.quote;
+        delete f.intent;
+      }
+      if (method.startsWith("commerce.quotes.")) {
+        f.quote = r;
+        delete f.intent;
+      }
+      if (method.startsWith("commerce.checkouts.")) f.checkout = r;
+      if (
+        method === "commerce.checkouts.cancel" &&
+        r.status === "canceled" &&
+        r.can_start_new_attempt
+      ) {
+        delete f.checkout;
+        delete f.quote;
+        delete f.intent;
+      }
+    }
+  }
+  private async write(
+    f: Flow,
+    method: string,
+    params: any,
+    callId: string,
+    signal?: AbortSignal,
+  ) {
+    const key = digest([f.id, callId, method]),
+      old = f.commands[key];
+    if (
+      old &&
+      digest(old.params) !==
+        digest({ ...params, meta: { idempotency_key: key } })
+    )
+      fail("IDEMPOTENCY_CONFLICT");
+    if (old?.status === "done") return old.result;
+    if (f.pending) fail("RESOLVE_PENDING_OPERATION");
+    const command: Command = {
+      key,
+      method,
+      params: { ...params, meta: { idempotency_key: key } },
+      status: "pending",
+    };
+    f.commands[key] = command;
+    f.pending = key;
+    this.save(f);
+    signal?.throwIfAborted();
+    const response = await this.pap.request(
+      f.connectionRef,
+      method,
+      command.params,
+      signal,
+    );
+    if (response.error) {
+      if (
+        [-32602, -32601, 1101, 1102, 1103, 1201, 1203, 1301].includes(
+          response.error.code,
+        ) &&
+        !response.error.data?.operation_id
+      ) {
+        command.status = "done";
+        command.result = { error: modelData(response.error) };
+        delete f.pending;
+        this.save(f);
+      }
+      fail(
+        response.error.data?.type &&
+          /^[A-Z_]{1,70}$/.test(response.error.data.type)
+          ? response.error.data.type
+          : "OPERATION_NOT_COMPLETED",
+      );
+    }
+    const data = response.result?.data;
+    if (!data?.operation) fail("INVALID_OPERATION_RESPONSE");
+    this.apply(f, method, data);
+    if (
+      data.operation.status === "succeeded" ||
+      (data.operation.status === "failed" && data.operation.effects === "none")
+    ) {
+      command.status = "done";
+      command.result = data;
+      delete f.pending;
+    }
+    this.save(f);
+    return data;
+  }
+  private change(f: Flow, expected: unknown) {
+    if (!f.cart) fail("CART_REQUIRED");
+    if (typeof expected !== "string" || !expected)
+      fail("CART_VERSION_REQUIRED");
+    if (expected !== f.cart.version) fail("CART_VERSION_CHANGED");
+    if (f.checkout && !f.checkout.can_start_new_attempt)
+      fail("CHECKOUT_IN_PROGRESS");
+    return { cart_id: f.cart.id, expected_version: expected };
+  }
+  async tool(
+    sessionId: string,
+    name: string,
+    args: any,
+    callId: string,
+    signal?: AbortSignal,
+  ) {
+    if (name === "frontvia_connection") {
+      if (args.action === "connect")
+        return this.connect(sessionId, args.siteId);
+      return {
+        sites: this.pap.sites(),
+        flows: this.list(sessionId),
+        connections: this.pap.status(),
+      };
+    }
+    const flowId = id.parse(args.flowId);
+    return this.serial.run(flowId, async () => {
+      const f = this.flow(sessionId, flowId);
+      this.policy(f);
+      const invocationKey = digest(callId),
+        inputHash = digest([name, args]);
+      f.invocations ??= {};
+      if (
+        f.invocations[invocationKey] &&
+        f.invocations[invocationKey] !== inputHash
+      )
+        fail("IDEMPOTENCY_CONFLICT");
+      f.invocations[invocationKey] = inputHash;
+      this.save(f);
+      const original = Object.values(f.commands).find(
+        (c) => c.key === digest([f.id, callId, c.method]),
+      );
+      if (original) {
+        if (original.status === "done")
+          return this.result(f, "cart", original.result);
+        return this.result(f, "order", await this.recover(f));
+      }
+      let data: any;
+      let card = "cart";
+      if (name === "frontvia_products") {
+        card = "products";
+        if (args.action === "search") {
+          data = await this.read(
+            f,
+            "products.search",
+            {
+              context: pricing,
+              query: args.query,
+              page: {
+                limit: 8,
+                ...(args.cursor ? { cursor: args.cursor } : {}),
+              },
+            },
+            signal,
+          );
+          f.products = data;
+        } else if (args.action === "get")
+          data = await this.read(
+            f,
+            "products.get",
+            { product_id: id.parse(args.product_id), context: pricing },
+            signal,
+          );
+        else if (args.action === "variants") {
+          data = await this.read(
+            f,
+            "variants.list",
+            {
+              product_id: id.parse(args.product_id),
+              context: pricing,
+              page: {
+                limit: 20,
+                ...(args.cursor ? { cursor: args.cursor } : {}),
+              },
+            },
+            signal,
+          );
+          f.variants = data;
+        } else fail("INVALID_ACTION");
+      } else if (name === "frontvia_cart") {
+        if (args.action === "get") {
+          data = f.cart
+            ? await this.read(f, "carts.get", { cart_id: f.cart.id }, signal)
+            : { cart: null };
+          if (data.id) f.cart = data;
+        } else if (args.action === "delivery_options") {
+          if (!f.cart) fail("CART_REQUIRED");
+          data = await this.read(
+            f,
+            "carts.delivery_options.list",
+            { cart_id: f.cart.id },
+            signal,
+          );
+          f.delivery = data;
+        } else {
+          let method: string;
+          let params: any;
+          if (args.action === "add" && !f.cart) {
+            method = "carts.create";
+            params = {
+              context: pricing,
+              lines: [
+                {
+                  variant_id: id.parse(args.variant_id),
+                  quantity: z
+                    .number()
+                    .int()
+                    .min(1)
+                    .max(100)
+                    .parse(args.quantity),
+                },
+              ],
+            };
+          } else {
+            const base = this.change(f, args.expected_version);
+            if (args.action === "add") {
+              method = "carts.lines.add";
+              params = {
+                ...base,
+                line: {
+                  variant_id: id.parse(args.variant_id),
+                  quantity: z
+                    .number()
+                    .int()
+                    .min(1)
+                    .max(100)
+                    .parse(args.quantity),
+                },
+              };
+            } else if (args.action === "update") {
+              method = "carts.lines.update";
+              params = {
+                ...base,
+                line_id: id.parse(args.line_id),
+                quantity: z.number().int().min(1).max(100).parse(args.quantity),
+              };
+            } else if (args.action === "remove") {
+              method = "carts.lines.remove";
+              params = { ...base, line_id: id.parse(args.line_id) };
+            } else if (args.action === "delivery_select") {
+              method = "carts.delivery_option.select";
+              params = {
+                ...base,
+                group_id: id.parse(args.group_id),
+                option_id: id.parse(args.option_id),
+              };
+            } else fail("INVALID_ACTION");
+          }
+          data = await this.write(
+            f,
+            `commerce.${method}`,
+            params,
+            callId,
+            signal,
+          );
+        }
+      } else if (name === "frontvia_checkout") {
+        card = "quote";
+        if (args.action === "quote")
+          data = await this.write(
+            f,
+            "commerce.quotes.create",
+            this.change(f, args.expected_version),
+            callId,
+            signal,
+          );
+        else if (args.action === "revise") {
+          if (f.pending || f.intent?.token) fail("RESOLVE_PENDING_OPERATION");
+          if (!f.checkout) {
+            delete f.quote;
+            delete f.intent;
+            data = { readyToRequote: true };
+          } else {
+            f.checkout = await this.read(
+              f,
+              "checkouts.get",
+              { checkout_id: f.checkout.id },
+              signal,
+            );
+            const payment = f.checkout.payment_summary;
+            if (
+              f.checkout.status !== "requires_action" ||
+              f.checkout.order_ids?.length ||
+              payment?.authorized_amount?.amount_minor !== "0" ||
+              payment?.captured_amount?.amount_minor !== "0"
+            )
+              fail("CHECKOUT_IN_PROGRESS");
+            delete f.intent;
+            this.save(f);
+            data = await this.write(
+              f,
+              "commerce.checkouts.cancel",
+              { checkout_id: f.checkout.id },
+              callId,
+              signal,
+            );
+          }
+        } else if (args.action === "prepare") {
+          if (f.pending) fail("RESOLVE_PENDING_OPERATION");
+          const q = f.quote;
+          if (
+            !q?.checkout_allowed ||
+            !f.cart ||
+            q.cart_version !== f.cart.version ||
+            !(Date.parse(q.expires_at) > Date.now())
+          )
+            fail("QUOTE_CHANGED");
+          if (f.checkout && !f.checkout.can_start_new_attempt)
+            data = await this.read(
+              f,
+              "checkouts.get",
+              { checkout_id: f.checkout.id },
+              signal,
+            );
+          else
+            data = await this.write(
+              f,
+              "commerce.checkouts.create",
+              {
+                quote_id: q.id,
+                expected_cart_version: q.cart_version,
+                amount_limit: { mode: "exact", value: q.totals.grand_total },
+              },
+              callId,
+              signal,
+            );
+        } else if (args.action === "status") data = await this.refresh(f);
+        else fail("INVALID_ACTION");
+      } else if (name === "frontvia_orders") {
+        card = "order";
+        if (args.action === "recover") data = await this.recover(f);
+        else if (args.action === "list") {
+          f.ordersCursor = args.cursor;
+          data = await this.ordersPage(f, signal);
+          f.orders = data;
+        } else if (args.action === "get") {
+          data = await this.read(
+            f,
+            "orders.get",
+            { order_id: id.parse(args.order_id) },
+            signal,
+          );
+          f.order = data;
+        } else fail("INVALID_ACTION");
+      } else fail("TOOL_NOT_ALLOWED");
+      this.save(f);
+      return this.result(f, card, {
+        data,
+        cartVersion: f.cart?.version,
+        contactReady: !!f.cart?.email && !!f.cart?.shipping_address?.line1,
+        pending: !!f.pending,
+      });
+    });
+  }
+  private async ordersPage(f: Flow, signal?: AbortSignal) {
+    const page = await this.read(
+      f,
+      "orders.list",
+      {
+        connection: f.connection,
+        page: {
+          limit: 10,
+          ...(f.ordersCursor ? { cursor: f.ordersCursor } : {}),
+        },
+      },
+      signal,
+    );
+    const orders = [];
+    for (const order of (page.items ?? []).slice(0, 10)) {
+      // Current Commerce returns references; also accept full Order pages.
+      orders.push(
+        order.id
+          ? order
+          : await this.read(
+              f,
+              "orders.get",
+              {
+                order_id: id.parse(order.order_id),
+              },
+              signal,
+            ),
+      );
+    }
+    return { ...page, items: orders };
+  }
+  private async refresh(f: Flow) {
+    if (f.cart)
+      f.cart = await this.read(f, "carts.get", { cart_id: f.cart.id });
+    if (f.quote)
+      f.quote = await this.read(f, "quotes.get", { quote_id: f.quote.id });
+    if (f.checkout) {
+      f.checkout = await this.read(f, "checkouts.get", {
+        checkout_id: f.checkout.id,
+      });
+      if (f.checkout.order_ids?.[0])
+        f.order = await this.read(f, "orders.get", {
+          order_id: f.checkout.order_ids[0],
+        });
+    }
+    if (f.order && !f.checkout?.order_ids?.includes(f.order.id))
+      f.order = await this.read(f, "orders.get", { order_id: f.order.id });
+    if (f.orders) f.orders = await this.ordersPage(f);
+    this.save(f);
+    return {
+      cart: f.cart,
+      quote: f.quote,
+      checkout: f.checkout,
+      order: f.order,
+      orders: f.orders,
+      operation: f.operation,
+    };
+  }
+  private async recover(f: Flow) {
+    if (f.pending) {
+      const c = f.commands[f.pending];
+      if (!c) fail("RECOVERY_STATE_INVALID");
+      const r = await this.pap.request(
+        f.connectionRef,
+        "commerce.operations.lookup",
+        { method: c.method, idempotency_key: c.key },
+      );
+      if (r.error) fail("ORIGINAL_RESULT_UNKNOWN");
+      const op = r.result?.data;
+      if (!op?.id) fail("ORIGINAL_RESULT_UNKNOWN");
+      f.operation = op;
+      if (
+        op.status === "succeeded" ||
+        (op.status === "failed" && op.effects === "none")
+      ) {
+        const ref = op.result_ref;
+        let resource = null;
+        if (ref?.id) {
+          const kind = c.method.startsWith("commerce.carts.")
+            ? "carts"
+            : c.method.startsWith("commerce.quotes.")
+              ? "quotes"
+              : "checkouts";
+          resource = await this.read(f, `${kind}.get`, {
+            [`${kind.slice(0, -1)}_id`]: ref.id,
+          });
+        }
+        c.result = { operation: op, resource };
+        c.status = "done";
+        delete f.pending;
+        this.apply(f, c.method, c.result);
+      }
+      this.save(f);
+    }
+    return this.refresh(f);
+  }
+  async view(sessionId: string, flowId: string) {
+    return this.serial.run(flowId, async () => {
+      const f = this.flow(sessionId, flowId);
+      await this.refresh(f);
+      return this.humanView(f);
+    });
+  }
+  private humanView(f: Flow) {
+    return {
+      flowId: f.id,
+      sessionId: f.sessionId,
+      siteId: f.siteId,
+      storeId: f.storeId,
+      products: f.products,
+      variants: f.variants,
+      cart: f.cart,
+      delivery: f.delivery,
+      quote: f.quote,
+      checkout: f.checkout && {
+        id: f.checkout.id,
+        status: f.checkout.status,
+        payment_summary: f.checkout.payment_summary,
+      },
+      order: f.order,
+      orders: f.orders,
+      operation: f.operation,
+      pending: !!f.pending,
+      intent: f.intent && {
+        id: f.intent.id,
+        expiresAt: f.intent.expiresAt,
+        submitted: !!f.intent.token,
+      },
+      mockPayment: true,
+    };
+  }
+  async contact(
+    sessionId: string,
+    flowId: string,
+    expected: string,
+    patch: unknown,
+    actionId: string,
+  ) {
+    const contact = contactSchema.parse(patch);
+    return this.serial.run(flowId, async () => {
+      const f = this.flow(sessionId, flowId);
+      await this.write(
+        f,
+        "commerce.carts.update",
+        { ...this.change(f, expected), patch: contact },
+        actionId,
+      );
+      return this.humanView(f);
+    });
+  }
+  private snapshot(f: Flow) {
+    const c = f.checkout?.confirmation,
+      q = f.quote,
+      cart = f.cart,
+      identity = this.pap.identity(f.connectionRef),
+      amount = q?.totals?.grand_total;
+    if (
+      identity.signedIn ||
+      f.checkout?.identity_kind !== "pap_subject" ||
+      f.checkout?.mode !== "client_confirmation" ||
+      f.checkout?.status !== "requires_action" ||
+      c?.profile !== profile
+    )
+      fail("CLIENT_CONFIRMATION_UNAVAILABLE");
+    if (
+      !q?.checkout_allowed ||
+      !(Date.parse(q.expires_at) > Date.now()) ||
+      q.cart_id !== cart?.id ||
+      q.cart_version !== cart.version ||
+      f.checkout.cart_id !== cart.id ||
+      f.checkout.quote_id !== q.id
+    )
+      fail("QUOTE_CHANGED");
+    if (
+      c.issuer !== identity.issuer ||
+      c.resource !== identity.resource ||
+      c.store_id !== f.storeId ||
+      c.connection_id !== f.connection.connection_id ||
+      c.generation !== f.connection.generation ||
+      c.quote_id !== q.id ||
+      c.snapshot_hash !== q.snapshot_hash ||
+      !/^[a-f0-9]{64}$/.test(c.snapshot_hash) ||
+      c.amount_minor !== amount?.amount_minor ||
+      c.currency !== "USD" ||
+      amount.currency !== "USD" ||
+      !/^\d+$/.test(amount.amount_minor)
+    )
+      fail("CONFIRMATION_BINDING_MISMATCH");
+    return {
+      ...c,
+      client_id: identity.clientId,
+      user_id: identity.userId,
+      checkout_id: f.checkout.id,
+    };
+  }
+  async review(sessionId: string, flowId: string) {
+    return this.serial.run(flowId, async () => {
+      const f = this.flow(sessionId, flowId);
+      if (f.pending) fail("RESOLVE_PENDING_OPERATION");
+      await this.refresh(f);
+      if (f.intent?.token) return this.humanView(f);
+      const snapshot = this.snapshot(f),
+        visibleHash = digest({ cart: f.cart, quote: f.quote });
+      if (
+        !f.intent ||
+        f.intent.expiresAt <= Date.now() ||
+        f.intent.visibleHash !== visibleHash
+      ) {
+        f.intent = {
+          id: randomUUID(),
+          snapshot,
+          visibleHash,
+          expiresAt: Math.min(
+            Date.parse(f.quote.expires_at),
+            Date.now() + 120000,
+          ),
+          key: randomUUID(),
+          nonce: randomUUID(),
+        };
+        this.save(f);
+      }
+      return this.humanView(f);
+    });
+  }
+  /** Called only from the owner UI adapter, never registered as a tool. */
+  async confirm(sessionId: string, flowId: string, intentId: string) {
+    return this.serial.run(flowId, async () => {
+      const f = this.flow(sessionId, flowId),
+        intent = f.intent;
+      if (!intent || intent.id !== intentId) fail("CONFIRMATION_REQUIRED");
+      if (intent.token) {
+        await this.recover(f);
+        return this.humanView(f);
+      }
+      if (f.pending) fail("RESOLVE_PENDING_OPERATION");
+      if (intent.expiresAt <= Date.now()) fail("CONFIRMATION_EXPIRED");
+      await this.refresh(f);
+      if (
+        canonical(this.snapshot(f)) !== canonical(intent.snapshot) ||
+        digest({ cart: f.cart, quote: f.quote }) !== intent.visibleHash
+      )
+        fail("QUOTE_CHANGED");
+      const policy = this.policy(f),
+        key =
+          (await this.secrets.get(policy.confirmationKeyRef)) ??
+          fail("CONFIRMATION_KEY_REQUIRED");
+      if (Buffer.from(key, "base64url").length !== 32)
+        fail("INVALID_CONFIRMATION_KEY");
+      const issued = Math.floor(Date.now() / 1000),
+        expiry = Math.min(issued + 120, Math.floor(intent.expiresAt / 1000));
+      if (expiry <= issued) fail("CONFIRMATION_EXPIRED");
+      const body = [
+        {
+          alg: "HS256",
+          typ: "frontvia-purchase-confirmation+jwt",
+          kid: policy.confirmationKid,
+        },
+        {
+          ...intent.snapshot,
+          idempotency_key: intent.key,
+          nonce: intent.nonce,
+          iat: issued,
+          exp: expiry,
+        },
+      ]
+        .map((v) => Buffer.from(JSON.stringify(v)).toString("base64url"))
+        .join(".");
+      intent.token = `${body}.${createHmac("sha256", Buffer.from(key, "base64url")).update(body).digest("base64url")}`;
+      const c: Command = {
+        key: intent.key,
+        method: "commerce.checkouts.confirm",
+        params: {
+          checkout_id: f.checkout.id,
+          idempotency_key: intent.key,
+          confirmation: intent.token,
+        },
+        status: "pending",
+      };
+      f.commands[c.key] = c;
+      f.pending = c.key;
+      this.save(f);
+      const r = await this.pap.request(f.connectionRef, c.method, c.params);
+      if (r.error) fail("CONFIRMATION_NOT_COMPLETED");
+      const d = r.result?.data;
+      if (!d?.operation) fail("INVALID_OPERATION_RESPONSE");
+      this.apply(f, c.method, d);
+      if (
+        d.operation.status === "succeeded" ||
+        (d.operation.status === "failed" && d.operation.effects === "none")
+      ) {
+        c.status = "done";
+        c.result = d;
+        delete f.pending;
+      }
+      this.save(f);
+      await this.refresh(f);
+      return this.humanView(f);
+    });
+  }
+}

@@ -1,0 +1,713 @@
+/* DSH's center column clips overflow. The plugin owns its scrollable viewport. */
+.pap-viewport {
+  flex: 1 1 0;
+  width: 100%;
+  height: 100%;
+  min-width: 0;
+  min-height: 0;
+  overflow: auto;
+  overscroll-behavior: contain;
+}
+.pap {
+  --pap-bg: var(--dsw-alias-bg-base, #fff);
+  --pap-surface: color-mix(in srgb, var(--pap-text) 3%, var(--pap-bg));
+  --pap-muted: var(--dsw-alias-label-secondary, #737983);
+  --pap-text: var(--dsw-alias-label-primary, #20242b);
+  --pap-border: var(--dsw-alias-border-l2, #e5e7eb);
+  --pap-primary: var(--dsw-alias-button-primary-fill, #4d6bfe);
+  --pap-primary-hover: var(--dsw-alias-button-primary-hover, #3f5be0);
+  --pap-on-primary: var(--dsw-alias-label-primary-inverted, #fff);
+  --pap-error: var(--dsw-alias-state-error-primary, #b34040);
+  --pap-success: color-mix(
+    in srgb,
+    var(--dsw-alias-state-success-primary, #20845d) 40%,
+    var(--pap-text)
+  );
+  --pap-warning: color-mix(
+    in srgb,
+    var(--dsw-alias-state-warn-label, #976515) 70%,
+    var(--pap-text)
+  );
+  --pap-ring: color-mix(in srgb, var(--pap-primary) 25%, transparent);
+  color: var(--pap-text);
+  font: 400 14px/1.55 var(--dsh-font-family-text, inherit);
+  font-family: var(--dsh-font-family-text, inherit);
+  width: 100%;
+  box-sizing: border-box;
+  min-width: 0;
+  max-width: 800px;
+  margin: 0 auto;
+  padding: 32px 24px;
+  container-type: inline-size;
+  text-align: left;
+}
+.pap *,
+.pap *::before,
+.pap *::after {
+  box-sizing: border-box;
+}
+.pap :is(h2, h3, h4, p, dl, dd, dt) {
+  margin: 0;
+  font-weight: 400;
+}
+.pap :is(button, input, select, textarea) {
+  font-family: inherit;
+  font-weight: 400;
+}
+.pap svg {
+  width: 18px;
+  height: 18px;
+  flex-shrink: 0;
+  stroke-width: 1.7;
+}
+.pap button {
+  -webkit-tap-highlight-color: transparent;
+}
+.pap :is(button, input, summary):focus-visible {
+  outline: 2px solid var(--pap-primary);
+  outline-offset: 3px;
+}
+.pap .pap-card {
+  display: flex;
+  flex-direction: column;
+  background: var(--pap-bg);
+  border: 1px solid var(--pap-border);
+  border-radius: 16px;
+  box-shadow: 0 2px 8px #00000004;
+  min-width: 0;
+  overflow: clip;
+}
+.pap .pap-card-header {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 20px 20px 16px;
+}
+.pap .pap-card-title {
+  font-size: 16px;
+  line-height: 1.4;
+  letter-spacing: -0.02em;
+}
+.pap .pap-description {
+  color: var(--pap-muted);
+  font-size: 12px;
+  line-height: 1.65;
+  margin-top: 4px;
+}
+.pap .pap-card-content {
+  padding: 0 20px 20px;
+  min-width: 0;
+}
+.pap .pap-card-footer {
+  padding: 12px 20px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  border-top: 1px solid var(--pap-border);
+  color: var(--pap-muted);
+  font-size: 11px;
+  background: var(--pap-surface);
+}
+.pap .pap-brand {
+  background: color-mix(in srgb, var(--pap-primary) 9%, var(--pap-bg));
+  color: var(--pap-primary);
+  border: 1px solid color-mix(in srgb, var(--pap-primary) 10%, transparent);
+  width: 40px;
+  height: 40px;
+  display: grid;
+  place-items: center;
+  border-radius: 12px;
+}
+.pap .pap-brand svg {
+  width: 21px;
+  height: 21px;
+}
+.pap .pap-header-text {
+  flex: 1;
+  min-width: 0;
+}
+.pap .pap-header-actions {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.pap .pap-button {
+  appearance: none;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 7px;
+  flex-shrink: 0;
+  min-height: 38px;
+  padding: 8px 14px;
+  border: 1px solid transparent;
+  border-radius: 8px;
+  background: var(--pap-primary);
+  color: var(--pap-on-primary);
+  cursor: pointer;
+  font-size: 13px;
+  line-height: 20px;
+  white-space: normal;
+  transition:
+    background 120ms,
+    box-shadow 120ms;
+  text-decoration: none;
+}
+.pap .pap-button:hover:not(:disabled) {
+  background: var(--pap-primary-hover);
+}
+.pap .pap-button[data-variant="outline"] {
+  background: var(--pap-bg);
+  border-color: var(--pap-border);
+  color: var(--pap-text);
+  box-shadow: 0 1px 2px #00000004;
+}
+.pap .pap-button[data-variant="ghost"] {
+  background: transparent;
+  color: var(--pap-muted);
+}
+.pap
+  .pap-button:is([data-variant="outline"], [data-variant="ghost"]):hover:not(
+    :disabled
+  ) {
+  background: var(--pap-surface);
+  color: var(--pap-text);
+}
+.pap .pap-button[data-size="sm"] {
+  min-height: 32px;
+  padding: 5px 10px;
+  font-size: 12px;
+}
+.pap .pap-button[data-size="icon"] {
+  width: 32px;
+  min-height: 32px;
+  padding: 7px;
+}
+.pap .pap-button svg {
+  width: 15px;
+  height: 15px;
+}
+.pap .pap-button:disabled {
+  opacity: 0.46;
+  cursor: not-allowed;
+}
+.pap .pap-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  width: fit-content;
+  max-width: 100%;
+  padding: 3px 8px;
+  font-size: 11px;
+  line-height: 18px;
+  border-radius: 6px;
+  background: var(--pap-surface);
+  color: var(--pap-muted);
+  white-space: nowrap;
+}
+.pap .pap-badge svg {
+  width: 12px;
+  height: 12px;
+}
+.pap .pap-badge[data-variant="success"] {
+  background: color-mix(in srgb, var(--pap-success) 9%, var(--pap-bg));
+  color: var(--pap-success);
+}
+.pap .pap-badge[data-variant="warning"] {
+  background: color-mix(in srgb, var(--pap-warning) 9%, var(--pap-bg));
+  color: var(--pap-warning);
+}
+.pap .pap-page-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 20px;
+  margin-bottom: 24px;
+}
+.pap .pap-title-row {
+  display: flex;
+  gap: 14px;
+  align-items: center;
+}
+.pap h2 {
+  font-size: 24px;
+  letter-spacing: -0.035em;
+  line-height: 1.5;
+}
+.pap .pap-brand {
+  width: 46px;
+  height: 46px;
+  flex-shrink: 0;
+  border-radius: 14px;
+}
+.pap .pap-muted {
+  font-size: 12px;
+  color: var(--pap-muted);
+  line-height: 1.8;
+}
+.pap .pap-layout {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 280px;
+  gap: 16px 24px;
+  align-items: start;
+}
+.pap .pap-main {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  min-width: 0;
+}
+.pap .pap-section-heading {
+  grid-column: 1 / -1;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 12px;
+}
+.pap .pap-section-heading h3 {
+  font-size: 15px;
+}
+.pap .pap-section-heading .pap-badge {
+  flex-shrink: 0;
+}
+.pap .pap-heading {
+  flex: 1;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+.pap .pap-heading .pap-card-title {
+  font-size: 17px;
+}
+.pap .pap-store-icon {
+  width: 44px;
+  height: 44px;
+  border: 1px solid var(--pap-border);
+  background: var(--pap-surface);
+  border-radius: 12px;
+  display: grid;
+  place-items: center;
+  flex-shrink: 0;
+}
+.pap .pap-store-icon svg {
+  width: 22px;
+  height: 22px;
+  stroke-width: 1.5;
+}
+.pap .pap-facts {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  background: var(--pap-surface);
+  border-radius: 10px;
+  padding: 16px;
+  gap: 20px;
+}
+.pap .pap-facts dt {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 11px;
+  color: var(--pap-muted);
+  margin-bottom: 7px;
+}
+.pap .pap-facts dt svg {
+  width: 13px;
+  height: 13px;
+}
+.pap .pap-facts dd {
+  font-size: 13px;
+}
+.pap .pap-connect-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  margin: 18px 0 0;
+}
+.pap .pap-card-footer {
+  justify-content: flex-start;
+  gap: 7px;
+}
+.pap .pap-card-footer svg {
+  width: 13px;
+  height: 13px;
+  flex-shrink: 0;
+}
+.pap .pap-auth {
+  margin-top: 22px;
+  border-top: 1px solid var(--pap-border);
+  padding-top: 18px;
+}
+.pap .pap-auth summary {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  cursor: pointer;
+  list-style: none;
+  font-size: 13px;
+}
+.pap .pap-auth summary::-webkit-details-marker {
+  display: none;
+}
+.pap .pap-auth summary > svg {
+  width: 16px;
+  height: 16px;
+  color: var(--pap-muted);
+  flex-shrink: 0;
+}
+.pap .pap-auth summary > span:first-of-type {
+  flex: 1;
+  min-width: 0;
+}
+.pap .pap-summary-hint {
+  display: block;
+  font-size: 11px;
+  color: var(--pap-muted);
+  margin-top: 3px;
+}
+.pap .pap-auth .pap-chevron {
+  transition: transform 120ms;
+}
+.pap .pap-auth[open] .pap-chevron {
+  transform: rotate(180deg);
+}
+.pap .pap-auth-content {
+  display: flex;
+  flex-direction: column;
+  gap: 22px;
+  padding-top: 18px;
+}
+.pap .pap-auth form {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+.pap .pap-auth form + form {
+  border-top: 1px dashed var(--pap-border);
+  padding-top: 22px;
+}
+.pap .pap-step-title {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 13px;
+}
+.pap .pap-step-title > span {
+  display: grid;
+  place-items: center;
+  border: 1px solid var(--pap-border);
+  border-radius: 50%;
+  width: 22px;
+  height: 22px;
+  font-size: 11px;
+  color: var(--pap-muted);
+}
+.pap .pap-field-group,
+.pap .pap-field {
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+  min-width: 0;
+}
+.pap .pap-field-label {
+  font-size: 12px;
+}
+.pap .pap-input {
+  display: block;
+  width: 100%;
+  min-width: 0;
+  min-height: 40px;
+  border: 1px solid var(--pap-border);
+  border-radius: 8px;
+  padding: 9px 11px;
+  font: inherit;
+  font-size: 13px;
+  background: var(--pap-bg);
+  color: var(--pap-text);
+  transition:
+    border-color 120ms,
+    box-shadow 120ms;
+}
+.pap .pap-input::placeholder {
+  color: var(--pap-muted);
+}
+.pap .pap-input:focus-visible {
+  outline: none;
+  border-color: var(--pap-primary);
+  box-shadow: 0 0 0 3px var(--pap-ring);
+}
+.pap .pap-input:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+.pap .pap-input[aria-invalid="true"] {
+  border-color: var(--pap-error);
+}
+.pap .pap-field-help {
+  font-size: 11px;
+  color: var(--pap-muted);
+  line-height: 1.7;
+}
+.pap .pap-field-error {
+  color: var(--pap-error);
+  font-size: 12px;
+}
+.pap .pap-form-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+.pap .pap-alert {
+  display: flex;
+  gap: 10px;
+  align-items: center;
+  padding: 12px 14px;
+  border: 1px solid var(--pap-border);
+  background: var(--pap-surface);
+  border-radius: 10px;
+  margin: 16px 0;
+  font-size: 12px;
+  line-height: 1.7;
+}
+.pap .pap-alert > svg {
+  width: 16px;
+  height: 16px;
+  flex-shrink: 0;
+  align-self: flex-start;
+  margin-top: 2px;
+}
+.pap .pap-alert-description {
+  flex: 1;
+  min-width: 0;
+}
+.pap .pap-alert[data-variant="destructive"] {
+  color: var(--pap-error);
+  border-color: color-mix(in srgb, var(--pap-error) 25%, var(--pap-border));
+  background: color-mix(in srgb, var(--pap-error) 4%, var(--pap-bg));
+}
+.pap .pap-notice {
+  display: flex;
+  gap: 6px;
+  align-items: center;
+  color: var(--pap-success);
+  font-size: 12px;
+  margin-top: 14px;
+}
+.pap .pap-notice svg {
+  width: 14px;
+  height: 14px;
+}
+.pap .pap-aside {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  min-width: 0;
+}
+.pap .pap-aside .pap-card {
+  background: var(--pap-surface);
+  box-shadow: none;
+  border-color: transparent;
+}
+.pap .pap-aside .pap-card-header {
+  padding: 20px 20px 16px;
+}
+.pap .pap-aside .pap-card-title {
+  font-size: 14px;
+}
+.pap .pap-aside .pap-card-content {
+  padding: 0 20px 20px;
+}
+.pap .pap-guide {
+  display: flex;
+  flex-direction: column;
+  gap: 24px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.pap .pap-guide li {
+  display: flex;
+  align-items: flex-start;
+  gap: 11px;
+}
+.pap .pap-guide-icon {
+  width: 28px;
+  height: 28px;
+  flex-shrink: 0;
+  display: grid;
+  place-items: center;
+  border: 1px solid var(--pap-border);
+  border-radius: 8px;
+  background: var(--pap-bg);
+}
+.pap .pap-guide-icon svg {
+  width: 14px;
+  height: 14px;
+  color: var(--pap-muted);
+}
+.pap .pap-guide h4,
+.pap .pap-privacy h4 {
+  font-size: 12px;
+  margin: 0 0 4px;
+}
+.pap .pap-guide p,
+.pap .pap-privacy p {
+  font-size: 11px;
+  color: var(--pap-muted);
+  line-height: 1.8;
+}
+.pap .pap-privacy {
+  display: flex;
+  align-items: flex-start;
+  gap: 9px;
+  padding: 0;
+  color: var(--pap-muted);
+}
+.pap .pap-privacy > svg {
+  width: 15px;
+  height: 15px;
+  flex-shrink: 0;
+  margin-top: 2px;
+}
+.pap .pap-empty {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  padding: 50px 26px;
+  gap: 12px;
+  text-align: center;
+}
+.pap .pap-empty [data-slot="empty-title"] {
+  font-size: 16px;
+}
+.pap .pap-empty [data-slot="empty-description"] {
+  font-size: 13px;
+  max-width: 370px;
+  color: var(--pap-muted);
+  line-height: 1.8;
+}
+.pap .pap-empty-icon {
+  border: 1px solid var(--pap-border);
+  background: var(--pap-surface);
+  width: 48px;
+  height: 48px;
+  display: grid;
+  place-items: center;
+  border-radius: 14px;
+  margin-bottom: 4px;
+}
+.pap .pap-empty-icon svg {
+  width: 22px;
+  height: 22px;
+}
+.pap .pap-loading {
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+}
+.pap .pap-skeleton {
+  background: var(--pap-surface);
+  border-radius: 10px;
+  animation: pap-pulse 1.8s ease-in-out infinite;
+}
+.pap .pap-loading-heading {
+  width: 180px;
+  height: 26px;
+}
+.pap .pap-loading-card {
+  width: 100%;
+  height: 240px;
+}
+.pap .pap-spinner {
+  animation: pap-spin 0.9s linear infinite;
+}
+@keyframes pap-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+@keyframes pap-pulse {
+  50% {
+    opacity: 0.5;
+  }
+}
+@container (max-width:700px) {
+  .pap .pap-layout {
+    grid-template-columns: 1fr;
+    gap: 24px;
+  }
+  .pap .pap-guide {
+    flex-direction: row;
+    gap: 16px;
+  }
+  .pap .pap-guide li {
+    flex: 1;
+  }
+}
+@container (max-width:540px) {
+  .pap .pap-page-header {
+    flex-wrap: wrap;
+    gap: 16px;
+    margin-bottom: 24px;
+  }
+  .pap .pap-title-row {
+    gap: 10px;
+  }
+  .pap h2 {
+    font-size: 22px;
+  }
+  .pap .pap-card-header {
+    flex-wrap: wrap;
+    padding: 18px;
+  }
+  .pap .pap-card-content {
+    padding: 0 18px 18px;
+  }
+  .pap .pap-card-footer {
+    padding: 12px 18px;
+  }
+  .pap .pap-connect-row {
+    align-items: stretch;
+    flex-direction: column;
+    gap: 12px;
+  }
+  .pap .pap-guide {
+    flex-direction: column;
+  }
+  .pap .pap-input {
+    font-size: 16px;
+  }
+  .pap .pap-facts {
+    gap: 14px;
+    padding: 14px;
+  }
+  .pap .pap-form-actions > * {
+    flex: 1;
+  }
+}
+@media (max-width: 600px) {
+  .pap {
+    padding: 24px 16px;
+  }
+}
+@container (max-width:330px) {
+  .pap .pap-facts {
+    grid-template-columns: 1fr;
+  }
+  .pap .pap-card-header > .pap-badge {
+    margin-left: 56px;
+  }
+  .pap .pap-section-heading {
+    flex-wrap: wrap;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .pap *,
+  .pap *::before,
+  .pap *::after {
+    animation: none !important;
+    transition: none !important;
+  }
+}

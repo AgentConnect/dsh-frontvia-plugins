@@ -1,0 +1,9 @@
+node_modules/
+dist/
+.local/
+*.tgz
+.DS_Store
+coverage/
+.playwright-cli/
+output/playwright/
+__pycache__/

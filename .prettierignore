@@ -1,0 +1,5 @@
+# playwright-cli --filename expects a function expression without a trailing semicolon.
+scripts/*.playwright.cjs
+.local/
+output/
+**/dist/

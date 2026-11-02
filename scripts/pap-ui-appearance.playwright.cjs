@@ -1,0 +1,37 @@
+async (page) => {
+  const checks=[];const check=(name,ok)=>{if(!ok)throw new Error(name);checks.push({name,status:'PASS'});};
+  const panel=page.getByRole('region',{name:'PAP 连接管理'});
+  const refresh=async()=>{await panel.getByRole('button',{name:'刷新连接状态'}).click();await panel.getByRole('button',{name:'刷新连接状态',disabled:false}).waitFor();};
+  await page.evaluate(()=>window.__papTestControl={sites:window.__papTestState.sites.slice(0,1),connections:window.__papTestState.connections.slice(0,1)});await refresh();
+  await panel.locator('summary').click();
+  await page.setViewportSize({width:1440,height:1200});await page.emulateMedia({colorScheme:'light'});await page.waitForFunction(()=>!document.body.hasAttribute('data-ds-dark-theme'));
+  const badgeContrast=await panel.locator('[data-slot=badge][data-variant=success]').evaluate(el=>{const rgba=c=>{const v=document.createElement('canvas').getContext('2d');v.fillStyle=c;v.fillRect(0,0,1,1);return [...v.getImageData(0,0,1,1).data].slice(0,3).map(x=>x/255);};const lum=rgb=>rgb.map(c=>c<=.04045?c/12.92:((c+.055)/1.055)**2.4).reduce((n,c,i)=>n+c*[.2126,.7152,.0722][i],0);const s=getComputedStyle(el),a=lum(rgba(s.color)),b=lum(rgba(s.backgroundColor));return (Math.max(a,b)+.05)/(Math.min(a,b)+.05);});
+  check('connection badge text has sufficient contrast',badgeContrast>=4.5);
+  check('all visible page typography remains regular weight',await panel.locator('h2,h3,h4,p,button,label,input,summary').evaluateAll(els=>els.filter(e=>e.getClientRects().length).every(e=>getComputedStyle(e).fontWeight==='400')));
+  await panel.screenshot({path:'output/playwright/pap-auth-light.png',animations:'disabled'});
+  const light=await panel.evaluate(el=>getComputedStyle(el).color);
+  await page.emulateMedia({colorScheme:'dark'});await page.waitForFunction(()=>document.body.hasAttribute('data-ds-dark-theme'));
+  await panel.screenshot({path:'output/playwright/pap-auth-dark.png',animations:'disabled'});
+  check('page follows actual DSH dark theme',await panel.evaluate(el=>getComputedStyle(el).color)!==light);
+  await page.setViewportSize({width:390,height:1800});
+  await page.waitForFunction(()=>{const el=document.querySelector('.pap');return el && el.getBoundingClientRect().right<=innerWidth+1 && el.scrollWidth<=el.clientWidth+1 && document.documentElement.scrollWidth<=innerWidth+1;});
+  const mobile=await panel.evaluate(el=>({width:el.getBoundingClientRect().width,scroll:el.scrollWidth,client:el.clientWidth,body:document.documentElement.scrollWidth,viewport:innerWidth,cols:getComputedStyle(el.querySelector('.pap-layout')).gridTemplateColumns,font:getComputedStyle(el.querySelector('input')).fontSize}));
+  check('390px viewport has no horizontal page overflow',mobile.scroll<=mobile.client+1 && mobile.body<=mobile.viewport+1);
+  check('narrow screen stacks the layout and uses legible form controls',!mobile.cols.includes(' ') && mobile.font==='16px');
+  await panel.screenshot({path:'output/playwright/pap-mobile-dark.png',animations:'disabled'});
+  await page.emulateMedia({colorScheme:'light',reducedMotion:'reduce'});await page.waitForFunction(()=>!document.body.hasAttribute('data-ds-dark-theme'));
+  await panel.screenshot({path:'output/playwright/pap-mobile-light.png',animations:'disabled'});
+  check('reduced motion disables transitions',await panel.locator('.pap-chevron').evaluate(el=>getComputedStyle(el).transitionDuration)==='0s');
+  await page.setViewportSize({width:1440,height:1100});await page.emulateMedia({reducedMotion:'no-preference'});
+  await page.evaluate(()=>window.__papTestControl={delay:800});await refresh();
+  await page.reload();await page.getByRole('button',{name:'PAP 连接',exact:true}).click();
+  await panel.getByRole('status',{name:'正在读取连接'}).waitFor();
+  check('initial fetch shows a loading skeleton',await panel.locator('[data-slot=skeleton]').count()===2);
+  await panel.getByRole('heading',{name:'Frontvia Test Shop'}).waitFor();
+  await page.evaluate(()=>window.__papTestControl={delay:0,failStatus:true});await refresh();
+  await page.reload();await page.getByRole('button',{name:'PAP 连接',exact:true}).click();await panel.getByRole('alert').filter({hasText:'暂时无法读取'}).waitFor();
+  check('initial load failure shows retry without infinite skeleton',await panel.locator('[data-slot=skeleton]').count()===0 && await panel.getByRole('button',{name:'重试',exact:true}).count()===1);
+  await page.evaluate(()=>window.__papTestControl={failStatus:false});await panel.getByRole('button',{name:'重试',exact:true}).click();await panel.getByRole('heading',{name:'Frontvia Test Shop'}).waitFor();
+  check('initial failure recovers without reopening the panel',await panel.getByRole('article').count()===1);
+  return {status:'PASS',checks,badgeContrast,mobile,scope:'DSH Web UI with synthetic PAP responses'};
+}
