@@ -11,6 +11,9 @@ for (const [folder, name] of [
       entryPoints: [`${root}/src/${entry}.ts`],
       bundle: true,
       packages: "external",
+      // The entry and dependent plugins must share one core module, including
+      // PapError identity; bundling another copy hides PAP errors at the UI.
+      external: entry === "index" ? ["./core.js"] : [],
       platform: "node",
       target: "node24",
       format: "esm",

@@ -68,3 +68,24 @@ python3 "$FRONTVIA_SOURCE/platform/scripts/local-db.py" down \
 ```
 
 保留安装包、加密本地状态、历史聊天和验收证据；不删除用户工作或其他已安装应用。首次停止后的示例订单属于已销毁的隔离数据库，不能再当成在线订单查询结果。
+
+
+## 个人账号免审批购物
+
+使用包含 Schema52 的 Frontvia 源码和当前构建产物，选择新的专用输出目录。
+已有 4347/4349 宿主和账号不需要重启。测试只使用保留手机号、隔离数据库和原生
+Mock 支付，不发送真实短信或调用付费模型：
+
+```sh
+FRONTVIA_NATIVE_PERSONAL=1 FRONTVIA_NATIVE_OUT=/absolute/isolated/test-directory \
+  python3 scripts/native-stack.py
+# 等该目录 status.json 为 READY；手机号验证码只在本夹具为 246810。
+node scripts/personal-commerce-check.mjs /absolute/isolated/test-directory
+# 最后创建该目录 stop 文件，等待 cleanup.json PASS。
+```
+
+个人测试栈没有 legacy subject purchase 策略或客户端 HMAC 确认密钥。
+覆盖真实手机号登录、浏览/规格、加购/数量、地址/配送、报价/结算、金额篡改与错密钥
+拒绝、Mock 确认、重复确认、订单查询/重载，以及第二个人和游客隔离、退出失效。
+同一夹具重复登录需等待 OTP 的发送冷却期。创建正式购买只由 owner UI 的确认入口
+负责；此脚本显式确认的是自己拥有的 Mock 夹具订单。

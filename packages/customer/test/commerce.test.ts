@@ -8,6 +8,7 @@ import { Vault, PapError } from "dsh-pap/core";
 import { CustomerService, modelData, type PapPort } from "../src/core.js";
 import { schemas, tools } from "../src/tools.js";
 import { uiSchemas } from "../src/ui-contract.js";
+import { shoppingReference } from "../src/client/history.js";
 const copy = (v: any) => structuredClone(v);
 function fixture() {
   const dir = mkdtempSync(join(tmpdir(), "dsh-customer-test-")),
@@ -20,10 +21,13 @@ function fixture() {
     order: null as any,
     ops: new Map<string, any>(),
     calls: [] as string[],
+    searches: [] as any[],
     writes: 0,
     confirms: 0,
     lose: "",
     price: "1234",
+    purchase: true,
+    methodAvailability: {} as Record<string, string>,
   };
   const identity = {
     clientId: "https://client.test/client.json",
@@ -35,7 +39,19 @@ function fixture() {
   const response = (data: any) => ({ result: { data: copy(data) } });
   const pap: PapPort = {
     apiVersion: 1,
-    sites: () => [{ id: "a", label: "Shop", domain: "shop.test" }],
+    sites: () => [
+      {
+        revision: "fixture-revision",
+        id: "a",
+        label: "Shop",
+        domain: "shop.test",
+        issuer: identity.issuer,
+        resource: identity.resource,
+        description: undefined,
+        service: undefined,
+        clientAllowed: undefined,
+      },
+    ],
     status: () => [],
     connect: async () => ({
       connectionRef: "connection-a",
@@ -54,10 +70,38 @@ function fixture() {
       if (m === "commerce.capabilities.get")
         return response({
           store_id: "store",
+          methods: [
+            "capabilities.get",
+            "connections.list",
+            "products.search",
+            "products.get",
+            "variants.list",
+            "carts.create",
+            "carts.get",
+            "carts.update",
+            "carts.lines.add",
+            "carts.lines.update",
+            "carts.lines.remove",
+            "carts.delivery_options.list",
+            "carts.delivery_option.select",
+            "quotes.create",
+            "quotes.get",
+            "checkouts.create",
+            "checkouts.get",
+            "checkouts.cancel",
+            "checkouts.confirm",
+            "orders.list",
+            "orders.get",
+            "operations.lookup",
+          ].map((m) => ({
+            method: `commerce.${m}`,
+            availability:
+              remote.methodAvailability[`commerce.${m}`] ?? "supported",
+          })),
           business_profiles: [
             {
               id: "frontvia.pap_subject_purchase.v1",
-              availability: "supported",
+              availability: remote.purchase ? "supported" : "disabled",
             },
           ],
         });
@@ -65,8 +109,18 @@ function fixture() {
         return response({
           items: [{ connection_id: "native", generation: 1, is_current: true }],
         });
-      if (m === "commerce.products.search")
-        return response({ items: [{ id: "prod", title: "Test Mug" }] });
+      if (m === "commerce.products.search") {
+        remote.searches.push(copy(p));
+        if ("query" in p && !p.query)
+          return { error: { code: "INVALID_PARAMS" } };
+        return response({
+          items: [{ id: "prod", title: "Test Mug" }],
+          page: {
+            has_more: !!p.page?.cursor,
+            next_cursor: p.page?.cursor ? "next-page" : null,
+          },
+        });
+      }
       if (m === "commerce.variants.list")
         return response({ items: [{ id: "variant", title: "Blue" }] });
       if (m === "commerce.operations.lookup") {
@@ -229,6 +283,9 @@ function fixture() {
   return {
     remote,
     db,
+    get vault() {
+      return vault;
+    },
     get service() {
       return service;
     },
@@ -302,6 +359,336 @@ async function prepare(f: ReturnType<typeof fixture>) {
   );
   return flow;
 }
+test("sidebar list selection opens the owning flow through the strict UI contract", async () => {
+  const f = fixture();
+  try {
+    const flow = await prepare(f),
+      row = f.service.list()[0];
+    const ui = shoppingReference(row);
+    const args = uiSchemas.view.parse(ui);
+    const view = await f.service.view(args.sessionId, args.flowId);
+    assert.equal(view.flowId, flow);
+    assert.equal(view.cart.shipping_address.line1, "Secret Street");
+    assert.ok(uiSchemas.review.safeParse(ui).success);
+    assert.ok(uiSchemas.recover.safeParse(ui).success);
+    assert.ok(!uiSchemas.view.safeParse({ ...row, card: "cart" }).success);
+    await assert.rejects(
+      f.service.view("other-session", args.flowId),
+      /FLOW_NOT_OWNED/,
+    );
+  } finally {
+    f.close();
+  }
+});
+test(
+  "reconnect serializes with cart writes instead of overwriting their journal",
+  { timeout: 5000 },
+  async () => {
+    const f = fixture();
+    let release!: () => void;
+    try {
+      const flow = await f.flow(),
+        port = f.service.pap,
+        request = port.request.bind(port);
+      let entered!: () => void;
+      const gate = new Promise<void>((r) => {
+        release = r;
+      });
+      const waiting = new Promise<void>((r) => {
+        entered = r;
+      });
+      port.request = async (...args) => {
+        if (args[1] === "commerce.capabilities.get") {
+          entered();
+          await gate;
+        }
+        return request(...args);
+      };
+      const reconnect = f.service.connect("session-a", "a");
+      await waiting;
+      const write = f.service.tool(
+        "session-a",
+        "frontvia_cart",
+        {
+          flowId: flow,
+          action: "add",
+          variant_id: "variant",
+          quantity: 1,
+        },
+        "concurrent-add",
+      );
+      await new Promise<void>((r) => setImmediate(r));
+      assert.equal(f.remote.writes, 0);
+      release();
+      await Promise.all([reconnect, write]);
+      f.restart();
+      const saved = f.service.flow("session-a", flow);
+      assert.equal(saved.cart.id, "cart");
+      assert.equal(Object.keys(saved.commands).length, 1);
+      assert.equal(Object.values(saved.commands)[0].status, "done");
+      assert.equal(f.remote.writes, 1);
+    } finally {
+      release?.();
+      f.close();
+    }
+  },
+);
+test("reconnect preserves an uncertain write and its original key across restart", async () => {
+  const f = fixture();
+  try {
+    const flow = await f.flow();
+    f.remote.lose = "commerce.carts.create";
+    await assert.rejects(
+      f.service.tool(
+        "session-a",
+        "frontvia_cart",
+        {
+          flowId: flow,
+          action: "add",
+          variant_id: "variant",
+          quantity: 1,
+        },
+        "lost-add",
+      ),
+      /NETWORK_UNCERTAIN/,
+    );
+    const original = f.service.flow("session-a", flow).pending;
+    await f.service.connect("session-a", "a");
+    f.restart();
+    assert.equal(f.service.flow("session-a", flow).pending, original);
+    await f.service.tool(
+      "session-a",
+      "frontvia_orders",
+      { flowId: flow, action: "recover" },
+      "lookup",
+    );
+    const saved = f.service.flow("session-a", flow);
+    assert.equal(saved.cart.id, "cart");
+    assert.equal(saved.commands[original!].status, "done");
+    assert.equal(f.remote.writes, 1);
+  } finally {
+    f.close();
+  }
+});
+test("a pre-dispatch abort leaves no pending command and the same invocation can be explicitly retried", async () => {
+  const f = fixture();
+  try {
+    const flow = await f.flow(),
+      controller = new AbortController();
+    const args = {
+      flowId: flow,
+      action: "add",
+      variant_id: "variant",
+      quantity: 1,
+    };
+    controller.abort();
+    await assert.rejects(
+      f.service.tool(
+        "session-a",
+        "frontvia_cart",
+        args,
+        "cancelled-add",
+        controller.signal,
+      ),
+      { name: "AbortError" },
+    );
+    assert.equal(f.remote.writes, 0);
+    assert.equal(f.service.flow("session-a", flow).pending, undefined);
+    assert.deepEqual(f.service.flow("session-a", flow).commands, {});
+    f.restart();
+    await f.service.tool(
+      "session-a",
+      "frontvia_orders",
+      { flowId: flow, action: "recover" },
+      "lookup",
+    );
+    await f.service.tool("session-a", "frontvia_cart", args, "cancelled-add");
+    assert.equal(f.remote.writes, 1);
+    assert.equal(f.service.flow("session-a", flow).cart.id, "cart");
+  } finally {
+    f.close();
+  }
+});
+for (const lostReceipt of [false, true]) {
+  test(`failed confirmation with no effects permits fresh consent (${lostReceipt ? "recovered after restart" : "immediate receipt"})`, async () => {
+    const f = fixture();
+    try {
+      const flow = await prepare(f),
+        review = await f.service.review("session-a", flow);
+      const port = f.service.pap,
+        request = port.request.bind(port);
+      let rejectOnce = true,
+        originalKey = "";
+      port.request = async (ref, method, params: any, signal) => {
+        if (method !== "commerce.checkouts.confirm" || !rejectOnce)
+          return request(ref, method, params, signal);
+        rejectOnce = false;
+        originalKey = params.idempotency_key;
+        const data = {
+          operation: {
+            id: "rejected-confirm",
+            status: "failed",
+            effects: "none",
+            result_ref: { id: "checkout" },
+          },
+          resource: copy(f.remote.checkout),
+        };
+        f.remote.ops.set(originalKey, data);
+        if (lostReceipt) throw new PapError("NETWORK_UNCERTAIN");
+        return { result: { data } };
+      };
+      if (lostReceipt) {
+        await assert.rejects(
+          f.service.confirm("session-a", flow, review.intent!.id),
+          /NETWORK_UNCERTAIN/,
+        );
+        f.restart();
+        await f.service.tool(
+          "session-a",
+          "frontvia_orders",
+          { flowId: flow, action: "recover" },
+          "recover-failure",
+        );
+      } else await f.service.confirm("session-a", flow, review.intent!.id);
+      const saved = f.service.flow("session-a", flow);
+      assert.equal(saved.pending, undefined);
+      assert.equal(saved.intent, undefined);
+      assert.equal(saved.commands[originalKey].status, "done");
+      assert.equal(
+        saved.commands[originalKey].params.idempotency_key,
+        originalKey,
+      );
+      assert.equal(f.remote.confirms, 0);
+      await assert.rejects(
+        f.service.confirm("session-a", flow, review.intent!.id),
+        /CONFIRMATION_REQUIRED/,
+      );
+      if (lostReceipt) {
+        await f.service.tool(
+          "session-a",
+          "frontvia_checkout",
+          { flowId: flow, action: "revise" },
+          "revise-after-failure",
+        );
+        await f.service.tool(
+          "session-a",
+          "frontvia_checkout",
+          { flowId: flow, action: "quote", expected_version: "v3" },
+          "new-quote",
+        );
+        await f.service.tool(
+          "session-a",
+          "frontvia_checkout",
+          { flowId: flow, action: "prepare" },
+          "new-checkout",
+        );
+      }
+      const next = await f.service.review("session-a", flow);
+      assert.notEqual(next.intent!.id, review.intent!.id);
+      assert.equal(next.intent!.submitted, false);
+      assert.equal(f.remote.confirms, 0);
+      assert.notEqual(
+        f.service.flow("session-a", flow).intent!.key,
+        originalKey,
+      );
+      await f.service.confirm("session-a", flow, next.intent!.id);
+      await f.service.confirm("session-a", flow, next.intent!.id);
+      assert.equal(f.remote.confirms, 1);
+      assert.equal(
+        f.service.flow("session-a", flow).commands[originalKey].result.operation
+          .status,
+        "failed",
+      );
+    } finally {
+      f.close();
+    }
+  });
+}
+test("legacy completed failed/no-effect records retire stale consent without replay", async () => {
+  const f = fixture();
+  try {
+    const flow = await prepare(f);
+    await f.service.review("session-a", flow);
+    const saved = f.service.flow("session-a", flow),
+      oldIntent = saved.intent!;
+    oldIntent.token = "previously-submitted-token";
+    saved.commands[oldIntent.key] = {
+      key: oldIntent.key,
+      method: "commerce.checkouts.confirm",
+      params: { idempotency_key: oldIntent.key, confirmation: oldIntent.token },
+      status: "done",
+      result: {
+        operation: { id: "failed-op", status: "failed", effects: "none" },
+      },
+    };
+    f.vault.set(`flow:${flow}`, saved);
+    f.restart();
+    const view = await f.service.view("session-a", flow);
+    assert.equal(view.intent, undefined);
+    const next = await f.service.review("session-a", flow);
+    assert.notEqual(next.intent!.id, oldIntent.id);
+    assert.equal(f.remote.confirms, 0);
+    assert.equal(
+      f.service.flow("session-a", flow).commands[oldIntent.key].status,
+      "done",
+    );
+  } finally {
+    f.close();
+  }
+});
+test("failed confirmation with uncertain effects stays blocked without new consent or writes", async () => {
+  const f = fixture();
+  try {
+    const flow = await prepare(f),
+      review = await f.service.review("session-a", flow);
+    const port = f.service.pap,
+      request = port.request.bind(port);
+    port.request = async (ref, method, params: any, signal) => {
+      if (method !== "commerce.checkouts.confirm")
+        return request(ref, method, params, signal);
+      const data = {
+        operation: { id: "uncertain", status: "failed", effects: "unknown" },
+        resource: copy(f.remote.checkout),
+      };
+      f.remote.ops.set(params.idempotency_key, data);
+      return { result: { data } };
+    };
+    const result = await f.service.confirm(
+      "session-a",
+      flow,
+      review.intent!.id,
+    );
+    assert.equal(result.pending, true);
+    assert.equal(result.intent!.submitted, true);
+    f.restart();
+    await f.service.tool(
+      "session-a",
+      "frontvia_orders",
+      { flowId: flow, action: "recover" },
+      "lookup-uncertain",
+    );
+    await assert.rejects(
+      f.service.review("session-a", flow),
+      /RESOLVE_PENDING_OPERATION/,
+    );
+    await assert.rejects(
+      f.service.tool(
+        "session-a",
+        "frontvia_checkout",
+        { flowId: flow, action: "revise" },
+        "blocked-revise",
+      ),
+      /RESOLVE_PENDING_OPERATION/,
+    );
+    assert.equal(
+      f.service.flow("session-a", flow).intent!.id,
+      review.intent!.id,
+    );
+    assert.equal(f.remote.confirms, 0);
+  } finally {
+    f.close();
+  }
+});
 test("full shopping, private contact, user confirmation and duplicate click produce one order", async () => {
   const f = fixture();
   try {
@@ -597,7 +984,7 @@ test("opaque API pagination cursors remain intact through model output and tool 
     );
   }
 });
-test("DSH tool registration exposes exactly five provider-compatible capabilities, never confirm", () => {
+test("DSH tool registration exposes provider-compatible commerce and consultation tools, never purchase confirm", () => {
   const f = fixture();
   try {
     const definitions = tools(f.service);
@@ -678,6 +1065,179 @@ test("revise invalidates old confirmation and preserves inputs; submitted purcha
       /RESOLVE_PENDING_OPERATION/,
     );
     assert.equal(f.remote.confirms, 1);
+  } finally {
+    f.close();
+  }
+});
+
+test("merchant purchase disabled still permits catalogue while blocking writes before journal admission", async () => {
+  const f = fixture();
+  try {
+    f.remote.purchase = false;
+    const flow = await f.flow();
+    const products = await f.service.tool(
+      "session-a",
+      "frontvia_products",
+      { flowId: flow, action: "search", query: "mug" },
+      "search",
+    );
+    assert.equal(products.data.items[0].title, "Test Mug");
+    assert.equal(
+      (await f.service.view("session-a", flow)).purchaseReady,
+      false,
+    );
+    await assert.rejects(
+      f.service.tool(
+        "session-a",
+        "frontvia_cart",
+        { flowId: flow, action: "add", variant_id: "variant", quantity: 1 },
+        "add",
+      ),
+      /PURCHASE_PROFILE_UNAVAILABLE/,
+    );
+    assert.equal(f.remote.writes, 0);
+    assert.equal((await f.service.view("session-a", flow)).pending, false);
+  } finally {
+    f.close();
+  }
+});
+test("fresh merchant capabilities revoke previously supported methods and unverified is not usable", async () => {
+  const f = fixture();
+  try {
+    const flow = await f.flow();
+    for (const availability of ["disabled", "unverified", "unsupported"]) {
+      f.remote.methodAvailability["commerce.products.search"] = availability;
+      const before = f.remote.calls.filter(
+        (m) => m === "commerce.products.search",
+      ).length;
+      await assert.rejects(
+        f.service.tool(
+          "session-a",
+          "frontvia_products",
+          { flowId: flow, action: "search", query: "mug" },
+          availability,
+        ),
+        /METHOD_UNAVAILABLE/,
+      );
+      assert.equal(
+        f.remote.calls.filter((m) => m === "commerce.products.search").length,
+        before,
+      );
+    }
+    f.remote.methodAvailability["commerce.carts.create"] = "disabled";
+    await assert.rejects(
+      f.service.tool(
+        "session-a",
+        "frontvia_cart",
+        { flowId: flow, action: "add", variant_id: "variant", quantity: 1 },
+        "add",
+      ),
+      /METHOD_UNAVAILABLE/,
+    );
+    assert.equal(f.remote.writes, 0);
+  } finally {
+    f.close();
+  }
+});
+test("a merchant exposing confirmation does not create a missing client confirmation credential", async () => {
+  const f = fixture();
+  try {
+    f.service.config.sites[0].confirmationKeyRef = undefined;
+    f.service.config.sites[0].confirmationKid = undefined;
+    const flow = await prepare(f);
+    assert.equal(
+      (await f.service.view("session-a", flow)).purchaseReady,
+      false,
+    );
+    await assert.rejects(
+      f.service.review("session-a", flow),
+      /PURCHASE_CONFIRMATION_UNAVAILABLE/,
+    );
+    assert.equal(f.remote.confirms, 0);
+  } finally {
+    f.close();
+  }
+});
+
+test("browse and legacy blank searches omit the query, retain pagination, and return one catalog page", async () => {
+  const f = fixture();
+  try {
+    const flowId = await f.flow();
+    const tool = tools(f.service).find((t) => t.name === "frontvia_products")!;
+    for (const [index, args] of [
+      { action: "browse" },
+      { action: "search", query: "" },
+      { action: "search", query: "  " },
+      { action: "search" },
+      { action: "search", query: "  Mug  ", cursor: "opaque-page" },
+    ].entries()) {
+      const result: any = await tool.execute({ ...args, flowId }, {
+        agent: { id: "session-a" },
+        callId: `catalog-${index}`,
+      } as any);
+      assert.equal(result.error, undefined);
+      assert.equal(f.remote.searches.length, index + 1);
+      const params = f.remote.searches.at(-1);
+      if (index < 4) {
+        assert.equal(Object.hasOwn(params, "query"), false);
+        assert.equal(result.catalog.mode, "browse");
+        assert.equal(result.catalog.hasMore, false);
+        assert.match(result.nextStep, /没有下一页/);
+      } else {
+        assert.equal(params.query, "Mug");
+        assert.equal(params.page.cursor, "opaque-page");
+        assert.equal(result.catalog.mode, "search");
+        assert.equal(result.catalog.hasMore, true);
+        assert.equal(result.data.page.next_cursor, "next-page");
+      }
+      assert.equal(result.catalog.returnedCount, 1);
+      assert.equal(result.data.items[0].title, "Test Mug");
+    }
+    assert.equal(f.remote.writes, 0);
+    assert(!f.remote.calls.includes("commerce.variants.list"));
+    const invalid: any = await tool.execute(
+      { action: "browse", flowId, query: "unexpected search keyword" },
+      { agent: { id: "session-a" }, callId: "invalid-catalog" } as any,
+    );
+    assert.equal(invalid.error.code, "INVALID_TOOL_ARGUMENTS");
+    assert.match(invalid.nextStep, /browse/);
+    assert.equal(f.remote.searches.length, 5);
+  } finally {
+    f.close();
+  }
+});
+
+test("cart availability matches fresh authority and unavailable add stops before any remote write", async () => {
+  const f = fixture();
+  try {
+    const flowId = await f.flow();
+    assert.equal((await f.service.view("session-a", flowId)).cartReady, true);
+    f.remote.methodAvailability["commerce.carts.create"] = "disabled";
+    assert.equal((await f.service.view("session-a", flowId)).cartReady, false);
+    const tool = tools(f.service).find((t) => t.name === "frontvia_cart")!;
+    const result: any = await tool.execute(
+      { action: "add", flowId, variant_id: "variant", quantity: 1 },
+      { agent: { id: "session-a" }, callId: "blocked-add" } as any,
+    );
+    assert.equal(result.error.code, "METHOD_UNAVAILABLE");
+    assert.match(result.nextStep, /操作没有执行/);
+    assert.match(result.nextStep, /不要重试/);
+    assert.equal(f.remote.writes, 0);
+    assert.equal((await f.service.view("session-a", flowId)).pending, false);
+    delete f.remote.methodAvailability["commerce.carts.create"];
+    f.remote.purchase = false;
+    assert.equal((await f.service.view("session-a", flowId)).cartReady, false);
+    f.remote.purchase = true;
+    await f.service.tool(
+      "session-a",
+      "frontvia_cart",
+      { action: "add", flowId, variant_id: "variant", quantity: 1 },
+      "allowed-add",
+    );
+    f.remote.methodAvailability["commerce.carts.lines.add"] = "disabled";
+    assert.equal((await f.service.view("session-a", flowId)).cartReady, false);
+    delete f.remote.methodAvailability["commerce.carts.lines.add"];
+    assert.equal((await f.service.view("session-a", flowId)).cartReady, true);
   } finally {
     f.close();
   }

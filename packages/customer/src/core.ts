@@ -8,19 +8,22 @@ import {
   type Secrets,
 } from "dsh-pap/core";
 import { z } from "zod";
+import { ConsultationService, consultationSite } from "./consultation.js";
 export type CustomerConfig = {
   dataDir: string;
   sites: {
     siteId: string;
     storeId: string;
-    confirmationKeyRef: string;
-    confirmationKid: string;
+    confirmationKeyRef?: string;
+    confirmationKid?: string;
+    mockPayment?: boolean;
   }[];
 };
 export type PapPort = Pick<
   PapService,
   "apiVersion" | "sites" | "status" | "connect" | "identity" | "request"
->;
+> &
+  Partial<Pick<PapService, "canAccess" | "signResourceStatement">>;
 type Command = {
   key: string;
   method: string;
@@ -59,8 +62,11 @@ export type Flow = {
   commands: Record<string, Command>;
   invocations?: Record<string, string>;
   updatedAt: string;
+  capabilities?: any;
+  purchaseReady?: boolean;
 };
 const pricing = { country: "US", currency: "USD", locale: "en-US" };
+const personalProfile = "frontvia.personal_purchase.v1";
 const profile = "frontvia.pap_subject_purchase.v1";
 const digest = (v: unknown) =>
   createHash("sha256").update(canonical(v)).digest("hex");
@@ -96,6 +102,7 @@ const privateKeys = new Set([
   "user_id",
   "identity_ref",
   "confirmation",
+  "bytes_base64",
   "next_actions",
   "return_url",
   "access_token",
@@ -121,6 +128,7 @@ export function modelData(value: any): any {
   return typeof value === "string" ? value.slice(0, 2000) : value;
 }
 export class CustomerService {
+  readonly consultation: ConsultationService;
   private serial = new Serial();
   constructor(
     readonly config: CustomerConfig,
@@ -129,6 +137,7 @@ export class CustomerService {
     private vault: Vault,
   ) {
     if (pap.apiVersion !== 1) fail("PAP_VERSION_UNSUPPORTED");
+    this.consultation = new ConsultationService(pap, vault);
   }
   private save(f: Flow) {
     f.updatedAt = new Date().toISOString();
@@ -137,6 +146,13 @@ export class CustomerService {
   flow(sessionId: string, flowId: string): Flow {
     const f = this.vault.get<Flow>(`flow:${flowId}`);
     if (!f || f.sessionId !== sessionId) fail("FLOW_NOT_OWNED");
+    if (this.pap.canAccess?.(f.connectionRef) === false)
+      fail("PERSONAL_ACCOUNT_CHANGED");
+    const submitted = f.intent?.token && f.commands[f.intent.key];
+    if (!f.pending && submitted && submitted.status === "done") {
+      this.retireFailedConfirmation(f, submitted, submitted.result?.operation);
+      if (!f.intent) this.save(f);
+    }
     return f;
   }
   list(sessionId?: string) {
@@ -144,20 +160,28 @@ export class CustomerService {
       .keys("flow:")
       .map((k) => this.vault.get<Flow>(k)!)
       .filter((f) => !sessionId || f.sessionId === sessionId)
+      .filter((f) => this.pap.canAccess?.(f.connectionRef) !== false)
       .map((f) => ({
         flowId: f.id,
         sessionId: f.sessionId,
         siteId: f.siteId,
         updatedAt: f.updatedAt,
         pending: !!f.pending,
-      }));
+      }))
+      .concat(this.consultation.list(sessionId));
   }
-  private policy(f: Flow) {
-    return (
-      this.config.sites.find(
-        (s) => s.siteId === f.siteId && s.storeId === f.storeId,
-      ) ?? fail("SITE_NOT_APPROVED")
+  private policy(f: Flow): CustomerConfig["sites"][number] {
+    const configured = this.config.sites.find(
+      (s) => s.siteId === f.siteId && s.storeId === f.storeId,
     );
+    if (configured) return configured;
+    const site = this.pap.sites().find((s) => s.id === f.siteId);
+    if (
+      site?.description?.methods.includes("commerce.capabilities.get") &&
+      site.service?.store_id === f.storeId
+    )
+      return { siteId: f.siteId, storeId: f.storeId };
+    return fail("SITE_NOT_APPROVED");
   }
   private async read(
     f: Flow,
@@ -165,6 +189,8 @@ export class CustomerService {
     params = {},
     signal?: AbortSignal,
   ) {
+    if (method !== "capabilities.get")
+      this.requireMethod(f, `commerce.${method}`);
     const r = await this.pap.request(
       f.connectionRef,
       `commerce.${method}`,
@@ -181,66 +207,156 @@ export class CustomerService {
     if (!r.result || !("data" in r.result)) fail("INVALID_COMMERCE_RESPONSE");
     return r.result.data;
   }
+  private requireMethod(f: Flow, method: string) {
+    const advertised = this.pap.sites().find((s) => s.id === f.siteId)
+      ?.description?.methods;
+    if (advertised && !advertised.includes(method))
+      fail("METHOD_NOT_ADVERTISED");
+    if (!Array.isArray(f.capabilities?.methods)) fail("CAPABILITIES_INVALID");
+    if (
+      !f.capabilities.methods.some(
+        (m: any) => m.method === method && m.availability === "supported",
+      )
+    )
+      fail("METHOD_UNAVAILABLE");
+  }
+  private async currentCapabilities(f: Flow) {
+    const cap = await this.read(f, "capabilities.get");
+    if (cap.store_id !== f.storeId || !Array.isArray(cap.methods))
+      fail("STORE_BINDING_MISMATCH");
+    f.capabilities = cap;
+    f.purchaseReady = await this.purchaseReady(f);
+  }
+  private purchaseProfile(f: Flow) {
+    return this.pap.identity(f.connectionRef).personalSignedIn
+      ? personalProfile
+      : profile;
+  }
+  private cartReady(f: Flow) {
+    const method = f.cart
+      ? "commerce.carts.lines.add"
+      : "commerce.carts.create";
+    const advertised = this.pap.sites().find((s) => s.id === f.siteId)
+      ?.description?.methods;
+    return !!(
+      (!advertised || advertised.includes(method)) &&
+      f.capabilities?.methods?.some(
+        (m: any) => m.method === method && m.availability === "supported",
+      ) &&
+      f.capabilities?.business_profiles?.some(
+        (p: any) =>
+          p.id === this.purchaseProfile(f) && p.availability === "supported",
+      )
+    );
+  }
+  private async purchaseReady(f: Flow) {
+    const p = this.policy(f);
+    return !!(
+      (this.purchaseProfile(f) === personalProfile
+        ? !!this.pap.signResourceStatement
+        : p.confirmationKeyRef &&
+          p.confirmationKid &&
+          (await this.secrets.get(p.confirmationKeyRef))) &&
+      f.capabilities?.business_profiles?.some(
+        (v: any) =>
+          v.id === this.purchaseProfile(f) && v.availability === "supported",
+      ) &&
+      f.capabilities.methods?.some(
+        (v: any) =>
+          v.method === "commerce.checkouts.confirm" &&
+          v.availability === "supported",
+      )
+    );
+  }
   async connect(sessionId: string, siteId: string) {
     if (!sessionId || sessionId.length > 200) fail("SESSION_REQUIRED");
+    // A DSH chat retains its model context. Do not mix a second personal
+    // account into a chat containing the first account's tool responses.
+    for (const prefix of ["flow:", "consultation:"]) {
+      for (const key of this.vault.keys(prefix)) {
+        const saved = this.vault.get<{
+          sessionId: string;
+          connectionRef: string;
+        }>(key)!;
+        if (
+          saved.sessionId === sessionId &&
+          this.pap.canAccess?.(saved.connectionRef) === false
+        )
+          fail("PERSONAL_CHAT_ACCOUNT_CHANGED");
+      }
+    }
+    const site = this.pap.sites().find((s) => s.id === siteId);
+    if (consultationSite(site))
+      return this.consultation.connect(sessionId, siteId);
     return this.serial.run(`connect:${sessionId}:${siteId}`, async () => {
       const policy =
         this.config.sites.find((s) => s.siteId === siteId) ??
-        fail("SITE_NOT_APPROVED");
-      const c = await this.pap.connect(siteId);
-      let f = this.list(sessionId)
-        .filter((f) => f.siteId === siteId)
-        .map((f) => this.flow(sessionId, f.flowId))[0];
-      if (!f)
-        f = {
-          id: randomUUID(),
-          sessionId,
-          siteId,
-          storeId: policy.storeId,
-          connectionRef: c.connectionRef,
-          connection: null,
-          commands: {},
-          updatedAt: "",
-        };
-      if (f.connectionRef !== c.connectionRef) fail("IDENTITY_CHANGED");
-      const cap = await this.read(f, "capabilities.get");
-      if (
-        cap.store_id !== policy.storeId ||
-        !cap.business_profiles?.some(
-          (p: any) => p.id === profile && p.availability === "supported",
+        (site?.description?.methods.includes("commerce.capabilities.get") &&
+        site.service?.store_id
+          ? { siteId, storeId: site.service.store_id }
+          : fail("SITE_NOT_APPROVED"));
+      const existing = this.list(sessionId).find((f) => f.siteId === siteId),
+        flowId = existing?.flowId ?? randomUUID();
+      return this.serial.run(flowId, async () => {
+        const c = await this.pap.connect(siteId);
+        const f: Flow = existing
+          ? this.flow(sessionId, flowId)
+          : {
+              id: flowId,
+              sessionId,
+              siteId,
+              storeId: policy.storeId,
+              connectionRef: c.connectionRef,
+              connection: null,
+              commands: {},
+              updatedAt: "",
+            };
+        if (f.connectionRef !== c.connectionRef) fail("IDENTITY_CHANGED");
+        const cap = await this.read(f, "capabilities.get");
+        if (cap.store_id !== policy.storeId) fail("STORE_BINDING_MISMATCH");
+        f.capabilities = cap;
+        const connections = cap.methods?.some(
+          (m: any) =>
+            m.method === "commerce.connections.list" &&
+            m.availability === "supported",
         )
-      )
-        fail("PURCHASE_PROFILE_UNAVAILABLE");
-      const connections = await this.read(f, "connections.list");
-      const entries = Array.isArray(connections)
-        ? connections
-        : (connections.items ?? connections.connections ?? []);
-      const selected =
-        entries.find((v: any) => v.current === true) ??
-        (entries.length === 1 ? entries[0] : undefined);
-      if (
-        !selected ||
-        typeof selected.connection_id !== "string" ||
-        !Number.isSafeInteger(selected.generation)
-      )
-        fail("CONNECTION_SELECTION_REQUIRED");
-      if (
-        f.connection &&
-        canonical(f.connection) !==
-          canonical({
+          ? await this.read(f, "connections.list")
+          : [];
+        const entries = Array.isArray(connections)
+          ? connections
+          : (connections.items ?? connections.connections ?? []);
+        const selected =
+          entries.find((v: any) => v.current === true) ??
+          (entries.length === 1 ? entries[0] : undefined);
+        if (
+          selected &&
+          (typeof selected.connection_id !== "string" ||
+            !Number.isSafeInteger(selected.generation))
+        )
+          fail("CONNECTION_SELECTION_REQUIRED");
+        if (
+          f.connection &&
+          selected &&
+          canonical(f.connection) !==
+            canonical({
+              connection_id: selected.connection_id,
+              generation: selected.generation,
+            })
+        )
+          fail("CONNECTION_GENERATION_CHANGED");
+        if (selected)
+          f.connection = {
             connection_id: selected.connection_id,
             generation: selected.generation,
-          })
-      )
-        fail("CONNECTION_GENERATION_CHANGED");
-      f.connection = {
-        connection_id: selected.connection_id,
-        generation: selected.generation,
-      };
-      this.save(f);
-      return this.result(f, "connection", {
-        sites: this.pap.sites(),
-        connection: this.pap.status(c.connectionRef),
+          };
+        this.save(f);
+        return this.result(f, "connection", {
+          sites: this.pap.sites(),
+          connection: this.pap.status(c.connectionRef),
+          capabilities: cap,
+          cartReady: this.cartReady(f),
+          purchaseReady: await this.purchaseReady(f),
+        });
       });
     });
   }
@@ -288,6 +404,15 @@ export class CustomerService {
     callId: string,
     signal?: AbortSignal,
   ) {
+    await this.currentCapabilities(f);
+    this.requireMethod(f, method);
+    if (
+      !f.capabilities?.business_profiles?.some(
+        (p: any) =>
+          p.id === this.purchaseProfile(f) && p.availability === "supported",
+      )
+    )
+      fail("PURCHASE_PROFILE_UNAVAILABLE");
     const key = digest([f.id, callId, method]),
       old = f.commands[key];
     if (
@@ -298,6 +423,8 @@ export class CustomerService {
       fail("IDEMPOTENCY_CONFLICT");
     if (old?.status === "done") return old.result;
     if (f.pending) fail("RESOLVE_PENDING_OPERATION");
+    // Cancellation before admission must not create an unknown remote operation.
+    signal?.throwIfAborted();
     const command: Command = {
       key,
       method,
@@ -307,7 +434,6 @@ export class CustomerService {
     f.commands[key] = command;
     f.pending = key;
     this.save(f);
-    signal?.throwIfAborted();
     const response = await this.pap.request(
       f.connectionRef,
       method,
@@ -363,6 +489,15 @@ export class CustomerService {
     callId: string,
     signal?: AbortSignal,
   ) {
+    if (name === "frontvia_consultation" || name === "frontvia_knowledge")
+      return this.consultation.tool(
+        sessionId,
+        id.parse(args.flowId),
+        name,
+        args,
+        callId,
+        signal,
+      );
     if (name === "frontvia_connection") {
       if (args.action === "connect")
         return this.connect(sessionId, args.siteId);
@@ -376,6 +511,7 @@ export class CustomerService {
     return this.serial.run(flowId, async () => {
       const f = this.flow(sessionId, flowId);
       this.policy(f);
+      await this.currentCapabilities(f);
       const invocationKey = digest(callId),
         inputHash = digest([name, args]);
       f.invocations ??= {};
@@ -398,13 +534,15 @@ export class CustomerService {
       let card = "cart";
       if (name === "frontvia_products") {
         card = "products";
-        if (args.action === "search") {
+        if (args.action === "browse" || args.action === "search") {
+          const query =
+            args.action === "search" ? args.query?.trim() : undefined;
           data = await this.read(
             f,
             "products.search",
             {
               context: pricing,
-              query: args.query,
+              ...(query ? { query } : {}),
               page: {
                 limit: 8,
                 ...(args.cursor ? { cursor: args.cursor } : {}),
@@ -605,6 +743,25 @@ export class CustomerService {
       this.save(f);
       return this.result(f, card, {
         data,
+        ...(name === "frontvia_products" &&
+        (args.action === "browse" || args.action === "search")
+          ? {
+              catalog: {
+                mode:
+                  args.action === "browse" || !args.query?.trim()
+                    ? "browse"
+                    : "search",
+                returnedCount: Array.isArray(data.items)
+                  ? data.items.length
+                  : 0,
+                hasMore: data.page?.has_more === true,
+              },
+              nextStep:
+                data.page?.has_more === true
+                  ? "先展示本页商品名称和价格；用户要求更多时才用 page.next_cursor 翻页，不要猜关键词搜索或自动读取规格。"
+                  : "本次查询没有下一页。现在向用户展示返回的商品名称和价格；没有结果则说明未找到。不要猜关键词搜索或自动读取规格。",
+            }
+          : {}),
         cartVersion: f.cart?.version,
         contactReady: !!f.cart?.email && !!f.cart?.shipping_address?.line1,
         pending: !!f.pending,
@@ -643,6 +800,7 @@ export class CustomerService {
     return { ...page, items: orders };
   }
   private async refresh(f: Flow) {
+    await this.currentCapabilities(f);
     if (f.cart)
       f.cart = await this.read(f, "carts.get", { cart_id: f.cart.id });
     if (f.quote)
@@ -702,6 +860,7 @@ export class CustomerService {
         c.status = "done";
         delete f.pending;
         this.apply(f, c.method, c.result);
+        this.retireFailedConfirmation(f, c, op);
       }
       this.save(f);
     }
@@ -713,6 +872,18 @@ export class CustomerService {
       await this.refresh(f);
       return this.humanView(f);
     });
+  }
+  private retireFailedConfirmation(f: Flow, command: Command, operation: any) {
+    if (
+      command.method === "commerce.checkouts.confirm" &&
+      operation?.status === "failed" &&
+      operation.effects === "none" &&
+      f.intent?.key === command.key
+    ) {
+      // Keep the original command (including its key and receipt) for audit.
+      // A subsequent review must create fresh consent; old cards stay invalid.
+      delete f.intent;
+    }
   }
   private humanView(f: Flow) {
     return {
@@ -739,7 +910,10 @@ export class CustomerService {
         expiresAt: f.intent.expiresAt,
         submitted: !!f.intent.token,
       },
-      mockPayment: true,
+      capabilities: f.capabilities,
+      cartReady: this.cartReady(f),
+      purchaseReady: f.purchaseReady,
+      mockPayment: this.policy(f).mockPayment === true,
     };
   }
   async contact(
@@ -772,7 +946,7 @@ export class CustomerService {
       f.checkout?.identity_kind !== "pap_subject" ||
       f.checkout?.mode !== "client_confirmation" ||
       f.checkout?.status !== "requires_action" ||
-      c?.profile !== profile
+      c?.profile !== this.purchaseProfile(f)
     )
       fail("CLIENT_CONFIRMATION_UNAVAILABLE");
     if (
@@ -802,7 +976,10 @@ export class CustomerService {
     return {
       ...c,
       client_id: identity.clientId,
-      user_id: identity.userId,
+      user_id:
+        this.purchaseProfile(f) === personalProfile
+          ? c.user_id
+          : identity.userId,
       checkout_id: f.checkout.id,
     };
   }
@@ -812,6 +989,7 @@ export class CustomerService {
       if (f.pending) fail("RESOLVE_PENDING_OPERATION");
       await this.refresh(f);
       if (f.intent?.token) return this.humanView(f);
+      if (!f.purchaseReady) fail("PURCHASE_CONFIRMATION_UNAVAILABLE");
       const snapshot = this.snapshot(f),
         visibleHash = digest({ cart: f.cart, quote: f.quote });
       if (
@@ -848,37 +1026,51 @@ export class CustomerService {
       if (f.pending) fail("RESOLVE_PENDING_OPERATION");
       if (intent.expiresAt <= Date.now()) fail("CONFIRMATION_EXPIRED");
       await this.refresh(f);
+      if (!f.purchaseReady) fail("PURCHASE_CONFIRMATION_UNAVAILABLE");
       if (
         canonical(this.snapshot(f)) !== canonical(intent.snapshot) ||
         digest({ cart: f.cart, quote: f.quote }) !== intent.visibleHash
       )
         fail("QUOTE_CHANGED");
-      const policy = this.policy(f),
-        key =
-          (await this.secrets.get(policy.confirmationKeyRef)) ??
-          fail("CONFIRMATION_KEY_REQUIRED");
-      if (Buffer.from(key, "base64url").length !== 32)
-        fail("INVALID_CONFIRMATION_KEY");
       const issued = Math.floor(Date.now() / 1000),
         expiry = Math.min(issued + 120, Math.floor(intent.expiresAt / 1000));
       if (expiry <= issued) fail("CONFIRMATION_EXPIRED");
-      const body = [
-        {
-          alg: "HS256",
-          typ: "frontvia-purchase-confirmation+jwt",
-          kid: policy.confirmationKid,
-        },
-        {
-          ...intent.snapshot,
-          idempotency_key: intent.key,
-          nonce: intent.nonce,
-          iat: issued,
-          exp: expiry,
-        },
-      ]
-        .map((v) => Buffer.from(JSON.stringify(v)).toString("base64url"))
-        .join(".");
-      intent.token = `${body}.${createHmac("sha256", Buffer.from(key, "base64url")).update(body).digest("base64url")}`;
+      const claims = {
+        ...intent.snapshot,
+        idempotency_key: intent.key,
+        nonce: intent.nonce,
+        iat: issued,
+        exp: expiry,
+      };
+      if (this.purchaseProfile(f) === personalProfile) {
+        if (!this.pap.signResourceStatement)
+          fail("PURCHASE_CONFIRMATION_UNAVAILABLE");
+        intent.token = this.pap.signResourceStatement(
+          f.connectionRef,
+          "frontvia-personal-purchase+jwt",
+          claims,
+        );
+      } else {
+        const policy = this.policy(f),
+          key =
+            (policy.confirmationKeyRef &&
+              (await this.secrets.get(policy.confirmationKeyRef))) ??
+            fail("CONFIRMATION_KEY_REQUIRED");
+        if (!policy.confirmationKid) fail("CONFIRMATION_KEY_REQUIRED");
+        if (Buffer.from(key, "base64url").length !== 32)
+          fail("INVALID_CONFIRMATION_KEY");
+        const body = [
+          {
+            alg: "HS256",
+            typ: "frontvia-purchase-confirmation+jwt",
+            kid: policy.confirmationKid,
+          },
+          claims,
+        ]
+          .map((v) => Buffer.from(JSON.stringify(v)).toString("base64url"))
+          .join(".");
+        intent.token = `${body}.${createHmac("sha256", Buffer.from(key, "base64url")).update(body).digest("base64url")}`;
+      }
       const c: Command = {
         key: intent.key,
         method: "commerce.checkouts.confirm",
@@ -904,6 +1096,7 @@ export class CustomerService {
         c.status = "done";
         c.result = d;
         delete f.pending;
+        this.retireFailedConfirmation(f, c, d.operation);
       }
       this.save(f);
       await this.refresh(f);

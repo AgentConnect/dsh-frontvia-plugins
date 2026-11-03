@@ -45,8 +45,10 @@ export async function apply(
   if (!key) key = randomBytes(32).toString("base64url");
   await secrets.set(c.storageKeyRef, key);
   for (const site of c.sites) {
-    const value = await secrets.get(site.confirmationKeyRef);
-    if (value) await secrets.set(site.confirmationKeyRef, value);
+    const value =
+      site.confirmationKeyRef && (await secrets.get(site.confirmationKeyRef));
+    if (value && site.confirmationKeyRef)
+      await secrets.set(site.confirmationKeyRef, value);
   }
   const vault = new Vault(join(c.dataDir, "customer.sqlite"), key);
   ctx.effect(() => () => vault.close());
@@ -81,10 +83,26 @@ export async function apply(
           try {
             const a = uiSchemas[operation].parse(message.payload) as any;
             let value: any;
+            if (operation === "personal-status")
+              value = await ctx.pap.personalStatus();
+            if (operation === "personal-code")
+              value = await ctx.pap.requestPersonalCode(a.phone);
+            if (operation === "personal-verify")
+              value = await ctx.pap.verifyPersonalCode(a.code);
+            if (operation === "personal-logout")
+              value = await ctx.pap.logoutPersonal();
             if (operation === "list")
               value = { flows: service.list(), sites: ctx.pap.sites() };
             if (operation === "view")
-              value = await service.view(a.sessionId, a.flowId);
+              value = service.consultation.owns(a.flowId)
+                ? await service.consultation.view(a.sessionId, a.flowId)
+                : await service.view(a.sessionId, a.flowId);
+            if (operation === "original")
+              value = await service.consultation.original(
+                a.sessionId,
+                a.flowId,
+                a.sourceRef,
+              );
             if (operation === "contact")
               value = await service.contact(
                 a.sessionId,
@@ -100,12 +118,16 @@ export async function apply(
             if (operation === "recover") {
               await service.tool(
                 a.sessionId,
-                "frontvia_orders",
+                service.consultation.owns(a.flowId)
+                  ? "frontvia_consultation"
+                  : "frontvia_orders",
                 { flowId: a.flowId, action: "recover" },
                 "ui-recovery",
                 request.signal,
               );
-              value = await service.view(a.sessionId, a.flowId);
+              value = service.consultation.owns(a.flowId)
+                ? await service.consultation.view(a.sessionId, a.flowId)
+                : await service.view(a.sessionId, a.flowId);
             }
             result = { ok: true, value };
           } catch (e) {
