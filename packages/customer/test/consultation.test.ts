@@ -169,9 +169,12 @@ test("CNY lost confirmation preserves the original key and cannot be replaced by
 
 test("CNY changed amount, expiry, conversation version or withdrawn capability requires new review", async () => {
   for (const change of ["amount", "expiry", "version", "capability"]) {
-    const f = fixture();
+    const f = fixture(true);
     try {
       const { flowId, view } = await purchaseFlow(f);
+      const readsBefore = f.remote.calls.filter(
+        (call) => call.method === "consultation.capabilities.get",
+      ).length;
       if (change === "amount")
         f.remote.shopping.summary.totals.grand_total.amount_minor = "10501";
       if (change === "expiry") f.remote.shopping.expires_at = 1;
@@ -186,6 +189,13 @@ test("CNY changed amount, expiry, conversation version or withdrawn capability r
         /SHOPPING_REVIEW_REQUIRED|SHOPPING_UNAVAILABLE/,
       );
       assert.equal(f.remote.submits, 1);
+      assert.equal(
+        f.remote.calls.filter(
+          (call) => call.method === "consultation.capabilities.get",
+        ).length,
+        readsBefore + 1,
+        "owner confirmation refreshes authority even while display metadata is cached",
+      );
     } finally {
       f.close();
     }

@@ -449,7 +449,7 @@ export class ConsultationService {
   async confirmShopping(sessionId: string, flowId: string, intentId: string) {
     return this.serial.run(flowId, async () => {
       const f = this.flow(sessionId, flowId);
-      await this.capabilities(f);
+      await this.capabilities(f, true);
       if (!shoppingSupported(f.capabilities)) fail("SHOPPING_UNAVAILABLE");
       // Duplicate clicks and restarts return the original receipt. Lost responses
       // stay pending until explicit recovery sends the identical saved request.
