@@ -2,6 +2,11 @@ import { createHash, randomUUID } from "node:crypto";
 import { Vault, Serial, fail, canonical } from "dsh-pap/core";
 import { modelData, type PapPort } from "./core.js";
 import {
+  shoppingSupported,
+  shoppingView,
+  consultationModelData,
+} from "./conversation-shopping.js";
+import {
   HELP_REASON_LIMIT,
   ORIGINAL_BYTES_LIMIT,
   ORIGINAL_BASE64_LIMIT,
@@ -28,6 +33,8 @@ type Flow = {
   answers: Record<string, any>;
   knowledge?: any;
   updatedAt: string;
+  shoppingIntent?: { id: string; hash: string };
+  shoppingConfirmations?: Record<string, string>;
 };
 const digest = (v: unknown) =>
   createHash("sha256").update(canonical(v)).digest("hex");
@@ -154,7 +161,7 @@ export class ConsultationService {
   private result(f: Flow, data: any) {
     return {
       flowId: f.id,
-      data: modelData(data),
+      data: modelData(consultationModelData(data)),
       ui: {
         kind: "frontvia-customer",
         card: "consultation",
@@ -274,6 +281,9 @@ export class ConsultationService {
       if (f.pending) fail("RESOLVE_PENDING_OPERATION");
       let method: string, params: any;
       if (args.action === "ask") {
+        // Exact purchase consent is an owner UI action, never a model tool call.
+        if (/^\s*确认购买\s/u.test(args.text ?? ""))
+          fail("PURCHASE_OWNER_CONFIRMATION_REQUIRED");
         method = "consultation.messages.submit";
         if (
           f.conversation?.conversation_id &&
@@ -373,6 +383,7 @@ export class ConsultationService {
       const f = this.flow(sessionId, flowId);
       await this.capabilities(f);
       const conversation = await this.current(f);
+      const shopping = this.shopping(f, conversation);
       if (f.knowledge?.dependencies?.length) {
         try {
           this.allowed(f, "consultation.knowledge.access");
@@ -396,9 +407,81 @@ export class ConsultationService {
         kind: "consultation",
         capabilities: f.capabilities,
         conversation,
+        shopping,
         knowledge: f.knowledge,
         pending: !!f.pending,
       };
+    });
+  }
+  private shopping(f: Flow, conversation: any) {
+    const shopping = shoppingSupported(f.capabilities)
+      ? shoppingView(
+          conversation.shopping,
+          this.pap.sites().find((s) => s.id === f.siteId),
+        )
+      : null;
+    if (
+      shopping?.state === "requires_confirmation" &&
+      !f.pending &&
+      conversation.status === "answered"
+    ) {
+      const hash = digest([
+        conversation.conversation_id,
+        conversation.version,
+        shopping,
+      ]);
+      if (f.shoppingIntent?.hash !== hash)
+        f.shoppingIntent = { id: randomUUID(), hash };
+      shopping.intentId = f.shoppingIntent.id;
+    } else delete f.shoppingIntent;
+    this.save(f);
+    return shopping;
+  }
+  async confirmShopping(sessionId: string, flowId: string, intentId: string) {
+    return this.serial.run(flowId, async () => {
+      const f = this.flow(sessionId, flowId);
+      await this.capabilities(f);
+      if (!shoppingSupported(f.capabilities)) fail("SHOPPING_UNAVAILABLE");
+      // Duplicate clicks and restarts return the original receipt. Lost responses
+      // stay pending until explicit recovery sends the identical saved request.
+      const oldKey = f.shoppingConfirmations?.[intentId];
+      if (oldKey) {
+        if (f.pending) fail("RESOLVE_PENDING_OPERATION");
+        return this.result(
+          f,
+          f.commands[oldKey]?.result ?? fail("PENDING_COMMAND_MISSING"),
+        );
+      }
+      if (f.pending) fail("RESOLVE_PENDING_OPERATION");
+      if (f.shoppingIntent?.id !== intentId) fail("SHOPPING_REVIEW_REQUIRED");
+      const previous = f.shoppingIntent;
+      const conversation = await this.current(f);
+      const shopping = this.shopping(f, conversation);
+      if (
+        !shopping?.intentId ||
+        shopping.intentId !== intentId ||
+        f.shoppingIntent?.hash !== previous.hash
+      )
+        fail("SHOPPING_REVIEW_REQUIRED");
+      const key = digest([f.id, "owner-shopping-confirm", intentId]);
+      const params = {
+        text: shopping.confirmation.text,
+        conversation_id: conversation.conversation_id,
+        expected_version: conversation.version,
+        idempotency_key: key,
+      };
+      const command: Command = {
+        method: "consultation.messages.submit",
+        params,
+        inputHash: digest(params),
+        status: "pending",
+      };
+      f.commands[key] = command;
+      (f.shoppingConfirmations ??= {})[intentId] = key;
+      f.pending = key;
+      delete f.shoppingIntent;
+      this.save(f);
+      return this.result(f, await this.send(f, command));
     });
   }
   async original(sessionId: string, flowId: string, sourceRef: string) {
