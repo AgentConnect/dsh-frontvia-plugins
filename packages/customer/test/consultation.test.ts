@@ -7,6 +7,261 @@ import { randomBytes, createHash } from "node:crypto";
 import { Vault, PapError } from "dsh-pap/core";
 import { CustomerService, type PapPort } from "../src/core.js";
 import { schemas, tools } from "../src/tools.js";
+import {
+  shoppingProfile,
+  shoppingView,
+  consultationModelData,
+} from "../src/conversation-shopping.js";
+
+const purchase = () => {
+  const m = (amount_minor: string) => ({ currency: "CNY", amount_minor });
+  return {
+    profile: shoppingProfile,
+    state: "requires_confirmation",
+    summary_id: "summary-1",
+    summary_digest: "digest-1",
+    expires_at: Math.floor(Date.now() / 1000) + 600,
+    confirmation: { text: "确认购买 ABCDEF0123456789" },
+    checkout: null,
+    payment: null,
+    summary: {
+      lines: [
+        {
+          title: "折叠旅行包",
+          variant_title: "黑色",
+          quantity: 1,
+          line_total: m("9900"),
+        },
+      ],
+      shipping_address: {
+        country: "CN",
+        recipient: "测试收件人",
+        phone: "13800138000",
+        region: "上海",
+        city: "上海",
+        line1: "测试路 1 号",
+      },
+      totals: {
+        complete: true,
+        items_subtotal: m("9900"),
+        shipping_total: m("600"),
+        discount_total: m("0"),
+        tax_total: m("0"),
+        duties_total: m("0"),
+        fees_total: m("0"),
+        grand_total: m("10500"),
+      },
+    },
+  };
+};
+async function purchaseFlow(f: ReturnType<typeof fixture>) {
+  f.remote.shoppingCapability = true;
+  const flowId = await f.flow();
+  await f.service.tool(
+    "session",
+    "frontvia_consultation",
+    { flowId, action: "ask", text: "购买一件旅行包" },
+    "prepare",
+  );
+  f.remote.convo.status = "answered";
+  f.remote.shopping = purchase();
+  return { flowId, view: await f.service.consultation.view("session", flowId) };
+}
+
+test("CNY confirmation is owner-only, bound to displayed quote/version, and idempotent across restart", async () => {
+  const f = fixture();
+  try {
+    const { flowId, view } = await purchaseFlow(f);
+    const intent = view.shopping.intentId;
+    await assert.rejects(
+      f.service.tool(
+        "session",
+        "frontvia_consultation",
+        {
+          flowId,
+          action: "ask",
+          text: "确认购买 ABCDEF0123456789",
+          expected_version: f.remote.convo.version,
+        },
+        "model-consent",
+      ),
+      /PURCHASE_OWNER_CONFIRMATION_REQUIRED/,
+    );
+    assert.equal(f.remote.submits, 1);
+    await f.service.consultation.confirmShopping("session", flowId, intent);
+    const submit = f.remote.calls
+      .filter((c) => c.method === "consultation.messages.submit")
+      .at(-1);
+    assert.equal(submit.params.text, "确认购买 ABCDEF0123456789");
+    assert.equal(submit.params.expected_version, 1);
+    f.restart();
+    await f.service.consultation.confirmShopping("session", flowId, intent);
+    assert.equal(f.remote.submits, 2);
+    await assert.rejects(
+      f.service.consultation.confirmShopping(
+        "different-session",
+        flowId,
+        intent,
+      ),
+      /FLOW_NOT_OWNED/,
+    );
+    f.remote.personalAccess = false;
+    await assert.rejects(
+      f.service.consultation.confirmShopping("session", flowId, intent),
+      /PERSONAL_ACCOUNT_CHANGED/,
+    );
+  } finally {
+    f.close();
+  }
+});
+
+test("CNY lost confirmation preserves the original key and cannot be replaced by another purchase", async () => {
+  const f = fixture();
+  try {
+    const { flowId, view } = await purchaseFlow(f);
+    f.remote.lose = true;
+    await assert.rejects(
+      f.service.consultation.confirmShopping(
+        "session",
+        flowId,
+        view.shopping.intentId,
+      ),
+      /NETWORK_UNCERTAIN/,
+    );
+    const original = structuredClone(
+      f.remote.calls.filter((c) => c.method.endsWith("messages.submit")).at(-1)
+        .params,
+    );
+    f.restart();
+    await assert.rejects(
+      f.service.consultation.confirmShopping(
+        "session",
+        flowId,
+        view.shopping.intentId,
+      ),
+      /RESOLVE_PENDING_OPERATION/,
+    );
+    await assert.rejects(
+      f.service.tool(
+        "session",
+        "frontvia_consultation",
+        { flowId, action: "ask", text: "再买一个", expected_version: 2 },
+        "new-purchase",
+      ),
+      /RESOLVE_PENDING_OPERATION/,
+    );
+    await f.service.tool(
+      "session",
+      "frontvia_consultation",
+      { flowId, action: "recover" },
+      "recover",
+    );
+    assert.deepEqual(
+      f.remote.calls.filter((c) => c.method.endsWith("messages.submit")).at(-1)
+        .params,
+      original,
+    );
+    assert.equal(f.remote.submits, 2);
+  } finally {
+    f.close();
+  }
+});
+
+test("CNY changed amount, expiry, conversation version or withdrawn capability requires new review", async () => {
+  for (const change of ["amount", "expiry", "version", "capability"]) {
+    const f = fixture();
+    try {
+      const { flowId, view } = await purchaseFlow(f);
+      if (change === "amount")
+        f.remote.shopping.summary.totals.grand_total.amount_minor = "10501";
+      if (change === "expiry") f.remote.shopping.expires_at = 1;
+      if (change === "version") f.remote.convo.version++;
+      if (change === "capability") f.remote.shoppingCapability = false;
+      await assert.rejects(
+        f.service.consultation.confirmShopping(
+          "session",
+          flowId,
+          view.shopping.intentId,
+        ),
+        /SHOPPING_REVIEW_REQUIRED|SHOPPING_UNAVAILABLE/,
+      );
+      assert.equal(f.remote.submits, 1);
+    } finally {
+      f.close();
+    }
+  }
+});
+
+test("CNY refresh reads current payment, isolates bearer link from model, and rejects foreign payment origins", async () => {
+  const f = fixture();
+  try {
+    const { flowId } = await purchaseFlow(f);
+    const expiry = new Date(Date.now() + 600000).toISOString();
+    const url = `https://shop.test/companies/a/pay/checkout-1?expires=${Math.floor(Date.parse(expiry) / 1000)}&access=private-bearer`;
+    f.remote.shopping = {
+      ...purchase(),
+      state: "payment_pending",
+      checkout: {
+        id: "checkout-1",
+        status: "requires_action",
+        expires_at: expiry,
+        payment_summary: { status: "requires_action" },
+      },
+      payment: { url, expires_at: expiry },
+      confirmation: null,
+    };
+    f.remote.convo.messages = [
+      {
+        id: "answer",
+        actor: "agent",
+        text: `订单已建立\n${url}\n确认购买 ABCDEF0123456789`,
+      },
+    ];
+    const view = await f.service.consultation.view("session", flowId);
+    assert.equal(view.shopping.payment.url, url);
+    const result = await f.service.tool(
+      "session",
+      "frontvia_consultation",
+      { flowId, action: "get" },
+      "read",
+    );
+    assert(!JSON.stringify(result).includes("private-bearer"));
+    assert(!JSON.stringify(result).includes("ABCDEF0123456789"));
+    f.remote.shopping.state = "paid";
+    f.remote.shopping.checkout.payment_summary.status = "paid";
+    assert.equal(
+      (await f.service.consultation.view("session", flowId)).shopping.payment,
+      null,
+    );
+    assert.equal(
+      f.remote.submits,
+      1,
+      "reload does not submit a question, purchase or payment",
+    );
+    f.remote.shopping.state = "payment_pending";
+    f.remote.shopping.payment.url = url.replace("shop.test", "attacker.test");
+    await assert.rejects(
+      f.service.consultation.view("session", flowId),
+      /SHOPPING_PAYMENT_LINK_INVALID/,
+    );
+    const incomplete = purchase();
+    delete (incomplete.summary.totals as any).shipping_total;
+    assert.throws(
+      () =>
+        shoppingView(incomplete, { issuer: "https://shop.test/companies/a" }),
+      /SHOPPING_RESPONSE_INVALID/,
+    );
+    assert(
+      !JSON.stringify(
+        consultationModelData({
+          nested: [{ text: url, confirmation_code: "SECRET" }],
+        }),
+      ).includes("SECRET"),
+    );
+  } finally {
+    f.close();
+  }
+});
 
 function fixture(cache = false) {
   const dir = mkdtempSync(join(tmpdir(), "customer-consultation-")),
@@ -49,6 +304,8 @@ function fixture(cache = false) {
     submits: 0,
     convo: null as any,
     ops: new Map<string, any>(),
+    shopping: undefined as any,
+    shoppingCapability: false,
   };
   const respond = (data: any) => ({ result: { data: structuredClone(data) } });
   const pap = {
@@ -92,6 +349,16 @@ function fixture(cache = false) {
           profile: "frontvia.merchant_consultation.v1",
           availability: "supported",
           knowledge: remote.knowledge ? "supported" : "unavailable",
+          shopping: remote.shoppingCapability
+            ? {
+                profile: shoppingProfile,
+                availability: "supported",
+                country: "CN",
+                currency: "CNY",
+                confirmation: "owner_message",
+                payment: "hosted_alipay",
+              }
+            : undefined,
           methods: remote.allowed
             ? [
                 "consultation.messages.submit",
@@ -133,6 +400,7 @@ function fixture(cache = false) {
         assert.equal(params.conversation_id, "conversation");
         return respond({
           ...remote.convo,
+          shopping: remote.shopping,
           prepared_answers: [
             { kind: "consultation", prepared_id: "prepared", generation: 1 },
           ],
