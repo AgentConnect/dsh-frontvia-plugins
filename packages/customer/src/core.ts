@@ -7,6 +7,7 @@ import {
   type PapService,
   type Secrets,
 } from "dsh-pap/core";
+import { ReadCache, SharedReads } from "./read-cache.js";
 import { z } from "zod";
 import { ConsultationService, consultationSite } from "./consultation.js";
 export type CustomerConfig = {
@@ -23,7 +24,7 @@ export type PapPort = Pick<
   PapService,
   "apiVersion" | "sites" | "status" | "connect" | "identity" | "request"
 > &
-  Partial<Pick<PapService, "canAccess" | "signResourceStatement">>;
+  Partial<Pick<PapService, "canAccess" | "signResourceStatement" | "capabilityCacheKey">>;
 type Command = {
   key: string;
   method: string;
@@ -128,6 +129,8 @@ export function modelData(value: any): any {
   return typeof value === "string" ? value.slice(0, 2000) : value;
 }
 export class CustomerService {
+  private capabilitiesCache = new ReadCache();
+  private views = new SharedReads();
   readonly consultation: ConsultationService;
   private serial = new Serial();
   constructor(
@@ -196,14 +199,16 @@ export class CustomerService {
       `commerce.${method}`,
       params,
       signal,
-    );
-    if (r.error)
+    ).catch(error => { this.capabilitiesCache.clear(); throw error; });
+    if (r.error) {
+      this.capabilitiesCache.clear();
       fail(
         typeof r.error.data?.type === "string" &&
           /^[A-Z_]{1,70}$/.test(r.error.data.type)
           ? r.error.data.type
           : `COMMERCE_${r.error.code}`,
       );
+    }
     if (!r.result || !("data" in r.result)) fail("INVALID_COMMERCE_RESPONSE");
     return r.result.data;
   }
@@ -220,8 +225,10 @@ export class CustomerService {
     )
       fail("METHOD_UNAVAILABLE");
   }
-  private async currentCapabilities(f: Flow) {
-    const cap = await this.read(f, "capabilities.get");
+  private async currentCapabilities(f: Flow, fresh = false) {
+    const key = this.pap.capabilityCacheKey?.(f.connectionRef);
+    const cap = await this.capabilitiesCache.get(key ? `${f.siteId}:${key}` : undefined,
+      () => this.read(f, "capabilities.get"), fresh);
     if (cap.store_id !== f.storeId || !Array.isArray(cap.methods))
       fail("STORE_BINDING_MISMATCH");
     f.capabilities = cap;
@@ -312,7 +319,8 @@ export class CustomerService {
               updatedAt: "",
             };
         if (f.connectionRef !== c.connectionRef) fail("IDENTITY_CHANGED");
-        const cap = await this.read(f, "capabilities.get");
+        await this.currentCapabilities(f);
+        const cap = f.capabilities;
         if (cap.store_id !== policy.storeId) fail("STORE_BINDING_MISMATCH");
         f.capabilities = cap;
         const connections = cap.methods?.some(
@@ -404,7 +412,7 @@ export class CustomerService {
     callId: string,
     signal?: AbortSignal,
   ) {
-    await this.currentCapabilities(f);
+    await this.currentCapabilities(f, true);
     this.requireMethod(f, method);
     if (
       !f.capabilities?.business_profiles?.some(
@@ -489,6 +497,7 @@ export class CustomerService {
     callId: string,
     signal?: AbortSignal,
   ) {
+    this.views.clear();
     if (name === "frontvia_consultation" || name === "frontvia_knowledge")
       return this.consultation.tool(
         sessionId,
@@ -511,7 +520,9 @@ export class CustomerService {
     return this.serial.run(flowId, async () => {
       const f = this.flow(sessionId, flowId);
       this.policy(f);
-      await this.currentCapabilities(f);
+      // Every write rechecks in write(); recovery may dispatch the original
+      // command directly, so it also requires fresh discovery here.
+      await this.currentCapabilities(f, name === "frontvia_orders" && args.action === "recover");
       const invocationKey = digest(callId),
         inputHash = digest([name, args]);
       f.invocations ??= {};
@@ -799,8 +810,8 @@ export class CustomerService {
     }
     return { ...page, items: orders };
   }
-  private async refresh(f: Flow) {
-    await this.currentCapabilities(f);
+  private async refresh(f: Flow, fresh = false) {
+    await this.currentCapabilities(f, fresh);
     if (f.cart)
       f.cart = await this.read(f, "carts.get", { cart_id: f.cart.id });
     if (f.quote)
@@ -867,11 +878,13 @@ export class CustomerService {
     return this.refresh(f);
   }
   async view(sessionId: string, flowId: string) {
-    return this.serial.run(flowId, async () => {
-      const f = this.flow(sessionId, flowId);
-      await this.refresh(f);
-      return this.humanView(f);
-    });
+    const f = this.flow(sessionId, flowId);
+    const generation = this.pap.capabilityCacheKey?.(f.connectionRef) ?? "uncached";
+    return this.views.run(`${sessionId}:${flowId}:${generation}`, () => this.serial.run(flowId, async () => {
+      const current = this.flow(sessionId, flowId);
+      await this.refresh(current);
+      return this.humanView(current);
+    }));
   }
   private retireFailedConfirmation(f: Flow, command: Command, operation: any) {
     if (
@@ -923,6 +936,7 @@ export class CustomerService {
     patch: unknown,
     actionId: string,
   ) {
+    this.views.clear();
     const contact = contactSchema.parse(patch);
     return this.serial.run(flowId, async () => {
       const f = this.flow(sessionId, flowId);
@@ -984,10 +998,11 @@ export class CustomerService {
     };
   }
   async review(sessionId: string, flowId: string) {
+    this.views.clear();
     return this.serial.run(flowId, async () => {
       const f = this.flow(sessionId, flowId);
       if (f.pending) fail("RESOLVE_PENDING_OPERATION");
-      await this.refresh(f);
+      await this.refresh(f, true);
       if (f.intent?.token) return this.humanView(f);
       if (!f.purchaseReady) fail("PURCHASE_CONFIRMATION_UNAVAILABLE");
       const snapshot = this.snapshot(f),
@@ -1015,6 +1030,7 @@ export class CustomerService {
   }
   /** Called only from the owner UI adapter, never registered as a tool. */
   async confirm(sessionId: string, flowId: string, intentId: string) {
+    this.views.clear();
     return this.serial.run(flowId, async () => {
       const f = this.flow(sessionId, flowId),
         intent = f.intent;
@@ -1025,7 +1041,7 @@ export class CustomerService {
       }
       if (f.pending) fail("RESOLVE_PENDING_OPERATION");
       if (intent.expiresAt <= Date.now()) fail("CONFIRMATION_EXPIRED");
-      await this.refresh(f);
+      await this.refresh(f, true);
       if (!f.purchaseReady) fail("PURCHASE_CONFIRMATION_UNAVAILABLE");
       if (
         canonical(this.snapshot(f)) !== canonical(intent.snapshot) ||
@@ -1099,7 +1115,7 @@ export class CustomerService {
         this.retireFailedConfirmation(f, c, d.operation);
       }
       this.save(f);
-      await this.refresh(f);
+      await this.refresh(f, true);
       return this.humanView(f);
     });
   }

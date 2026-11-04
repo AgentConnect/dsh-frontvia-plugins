@@ -8,7 +8,7 @@ import { Vault, PapError } from "dsh-pap/core";
 import { CustomerService, type PapPort } from "../src/core.js";
 import { schemas, tools } from "../src/tools.js";
 
-function fixture() {
+function fixture(cache = false) {
   const dir = mkdtempSync(join(tmpdir(), "customer-consultation-")),
     key = randomBytes(32).toString("base64url"),
     db = join(dir, "state.sqlite");
@@ -53,6 +53,7 @@ function fixture() {
   const respond = (data: any) => ({ result: { data: structuredClone(data) } });
   const pap = {
     apiVersion: 1,
+    ...(cache ? {capabilityCacheKey: () => remote.personalAccess ? "one" : undefined} : {}),
     sites: () => [
       {
         id: "consult",
@@ -757,4 +758,21 @@ test("exported consultation tool submits a second question with the server integ
   } finally {
     f.close();
   }
+});
+
+test("consultation metadata reuse never caches source authority or allows a revoked write", async () => {
+ const f=fixture(true);try{
+  const flow=await f.flow();const count=()=>f.remote.calls.filter(v=>v.method==='consultation.capabilities.get').length;
+  await Promise.all(Array.from({length:5},()=>f.service.consultation.view('session',flow)));
+  assert.equal(count(),1);
+  await f.service.tool('session','frontvia_knowledge',{flowId:flow,action:'lookup',query:'returns'},'lookup');
+  await f.service.consultation.view('session',flow);
+  assert(f.remote.calls.some(v=>v.method==='consultation.knowledge.access'));
+  f.remote.current=false;
+  const value=await f.service.consultation.view('session',flow);assert.equal(value.knowledge,undefined);
+  f.remote.allowed=false;
+  await assert.rejects(f.service.tool('session','frontvia_consultation',{flowId:flow,action:'ask',text:'hello'},'ask'),/METHOD_UNAVAILABLE/);
+  assert.equal(f.remote.submits,0);
+  f.remote.personalAccess=false;await assert.rejects(f.service.consultation.view('session',flow),/PERSONAL_ACCOUNT_CHANGED/);
+ }finally{f.close();}
 });

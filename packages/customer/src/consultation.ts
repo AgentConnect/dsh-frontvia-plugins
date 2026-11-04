@@ -1,3 +1,4 @@
+import { ReadCache, SharedReads } from "./read-cache.js";
 import { createHash, randomUUID } from "node:crypto";
 import { Vault, Serial, fail, canonical } from "dsh-pap/core";
 import { modelData, type PapPort } from "./core.js";
@@ -36,6 +37,8 @@ export const consultationSite = (site: any) =>
   site.description.methods.includes("consultation.capabilities.get");
 export class ConsultationService {
   private serial = new Serial();
+  private capabilitiesCache = new ReadCache();
+  private views = new SharedReads();
   constructor(
     private pap: PapPort,
     private vault: Vault,
@@ -85,8 +88,9 @@ export class ConsultationService {
       method === "consultation.knowledge.original"
         ? { maxResponseBytes: ORIGINAL_RESPONSE_LIMIT }
         : undefined,
-    );
+    ).catch(error => { this.capabilitiesCache.clear(); throw error; });
     if (response.error) {
+      this.capabilitiesCache.clear();
       const type = response.error.data?.type ?? response.error.message;
       fail(
         typeof type === "string" && /^[A-Z_]{1,70}$/.test(type)
@@ -98,8 +102,10 @@ export class ConsultationService {
       fail("INVALID_CONSULTATION_RESPONSE");
     return response.result.data;
   }
-  private async capabilities(f: Flow) {
-    const cap = await this.rpc(f, "consultation.capabilities.get");
+  private async capabilities(f: Flow, fresh = false) {
+    const key = this.pap.capabilityCacheKey?.(f.connectionRef);
+    const cap = await this.capabilitiesCache.get(key ? `${f.siteId}:${key}` : undefined,
+      () => this.rpc(f, "consultation.capabilities.get"), fresh);
     if (
       cap.profile !== "frontvia.merchant_consultation.v1" ||
       cap.availability !== "supported" ||
@@ -230,9 +236,10 @@ export class ConsultationService {
     callId: string,
     signal?: AbortSignal,
   ) {
+    this.views.clear();
     return this.serial.run(flowId, async () => {
       const f = this.flow(sessionId, flowId);
-      await this.capabilities(f);
+      await this.capabilities(f, name !== "frontvia_knowledge" && !["get", "answer_get"].includes(args.action));
       if (name === "frontvia_knowledge") return this.knowledge(f, args, signal);
       if (args.action === "recover") {
         signal?.throwIfAborted();
@@ -369,7 +376,9 @@ export class ConsultationService {
     return this.result(f, data);
   }
   async view(sessionId: string, flowId: string) {
-    return this.serial.run(flowId, async () => {
+    const binding = this.flow(sessionId, flowId);
+    const generation = this.pap.capabilityCacheKey?.(binding.connectionRef) ?? "uncached";
+    return this.views.run(`${sessionId}:${flowId}:${generation}`, () => this.serial.run(flowId, async () => {
       const f = this.flow(sessionId, flowId);
       await this.capabilities(f);
       const conversation = await this.current(f);
@@ -399,7 +408,7 @@ export class ConsultationService {
         knowledge: f.knowledge,
         pending: !!f.pending,
       };
-    });
+    }));
   }
   async original(sessionId: string, flowId: string, sourceRef: string) {
     return this.serial.run(flowId, async () => {

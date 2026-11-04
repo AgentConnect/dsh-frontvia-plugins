@@ -11,6 +11,7 @@ import {
 import { Vault, Serial, fail, canonical } from "./storage.js";
 import {
   httpsTransport,
+  PinnedAgents,
   publicTransport,
   type Transport,
   type Target,
@@ -88,6 +89,7 @@ export class PapService {
   private serial = new Serial();
   readonly personal: PersonalAccount;
   private wire: Transport;
+  private agents = new PinnedAgents();
   private inspectionWire?: Transport;
   private previews = new Map<
     string,
@@ -110,7 +112,8 @@ export class PapService {
     )
       fail("INVALID_CLIENT_CONFIGURATION");
     this.inspectionWire = transport;
-    const fixed = httpsTransport(config.targets, config.caFile);
+    const agents = this.agents;
+    const fixed = httpsTransport(config.targets, config.caFile, agents);
     this.wire =
       transport ??
       (async (request) => {
@@ -130,10 +133,11 @@ export class PapService {
           ...(config.personal
             ? [config.personal.origin, ...config.personal.tokenOrigins]
             : []),
-        ])(request);
+        ], undefined, agents)(request);
       });
     this.personal = new PersonalAccount(config.personal, vault, this.wire);
   }
+  close() { this.agents.close(); }
   private configuredSites(): Site[] {
     return [
       ...this.config.sites,
@@ -424,6 +428,13 @@ export class PapService {
       return false;
     }
   }
+  /** Opaque host-only metadata generation; not a credential or authorization. */
+  capabilityCacheKey(ref: string): string | undefined {
+    const c = this.load(ref);
+    if (!this.public(c).connected || (c.expiresAt ?? 0) <= now() + 10) return;
+    return hash(canonical([c.id, c.user, c.personalGeneration, c.expiresAt, c.accessToken,
+      c.signedIn, this.siteRevision(this.site(c.siteId))]));
+  }
   /** Host-only subject binding; never returned by Agent tools. */
   identity(ref: string) {
     const c = this.load(ref),
@@ -594,7 +605,15 @@ export class PapService {
         .find(
           (c) => c.siteId === siteId && c.personalIdentity === personalIdentity,
         );
-      if (c) this.load(c.id);
+      if (c) {
+        const ref = c.id;
+        const reusable = await this.serial.run(ref, async () => {
+          const current = this.load(ref);
+          return this.public(current).connected && (current.expiresAt ?? 0) > now() + 10
+            ? this.public(current) : null;
+        });
+        if (reusable) return reusable;
+      }
       const { metadata } = await this.discover(siteId);
       if (generation) this.personal.assert(generation);
       if (!c) {

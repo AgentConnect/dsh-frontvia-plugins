@@ -391,3 +391,12 @@ test("RPC response budget applies to one host request and does not alter authent
     f.close();
   }
 });
+
+test("valid connection reuse avoids discovery and token issuance but explicit disconnect reconnects", async()=>{
+ const f=fixture();try{
+  const first=await f.service.connect('a'),count=f.record.calls.length;
+  const second=await f.service.connect('a');assert.equal(first.connectionRef,second.connectionRef);assert.equal(f.record.calls.length,count);
+  await f.service.disconnect(first.connectionRef);
+  await f.service.connect('a');assert(f.record.calls.length>count);
+ }finally{f.close();}
+});
