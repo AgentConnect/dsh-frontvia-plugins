@@ -6,7 +6,7 @@ import { tmpdir } from "node:os";
 import { randomBytes, createHash } from "node:crypto";
 import { Vault, PapError } from "dsh-pap/core";
 import { CustomerService, type PapPort } from "../src/core.js";
-import { schemas } from "../src/tools.js";
+import { schemas, tools } from "../src/tools.js";
 
 function fixture() {
   const dir = mkdtempSync(join(tmpdir(), "customer-consultation-")),
@@ -691,6 +691,69 @@ test("exact source metadata carries explicit original availability to its own UI
       assert.equal(source.sourceRef, ref);
       assert.deepEqual(source.original, metadata);
     }
+  } finally {
+    f.close();
+  }
+});
+
+test("exported consultation tool submits a second question with the server integer version after restart", async () => {
+  const f = fixture();
+  try {
+    const flowId = await f.flow();
+    const invoke = (args: any, callId: string) =>
+      tools(f.service)
+        .find((t) => t.name === "frontvia_consultation")!
+        .execute({ flowId, ...args }, {
+          agent: { id: "session" },
+          callId,
+          signal: new AbortController().signal,
+        } as any) as Promise<any>;
+    const first = await invoke(
+      { action: "ask", text: "信任的三个维度是什么？" },
+      "first",
+    );
+    assert.equal(first.error, undefined);
+    f.remote.convo.status = "answered";
+    f.restart();
+    const current = await invoke({ action: "get" }, "read-current");
+    assert.equal(current.data.version, 1);
+    const second = await invoke(
+      {
+        action: "ask",
+        text: "它是否也面向企业？",
+        expected_version: current.data.version,
+      },
+      "followup",
+    );
+    assert.equal(second.error, undefined);
+    assert.equal(f.remote.submits, 2);
+    const writes = f.remote.calls.filter(
+      (c) => c.method === "consultation.messages.submit",
+    );
+    assert.equal(
+      writes[1].params.conversation_id,
+      writes[0].params.conversation_id ?? "conversation",
+    );
+    assert.equal(writes[1].params.expected_version, 1);
+    assert.equal(writes[1].params.text, "它是否也面向企业？");
+    await assert.rejects(
+      invoke(
+        { action: "ask", text: "不能把字符串版本写入", expected_version: "2" },
+        "invalid-version",
+      ),
+      /expected_version.*integer/,
+    );
+    assert.equal(f.remote.submits, 2);
+    const invalid = await invoke(
+      { action: "ask", text: "负版本无效", expected_version: -1 },
+      "negative-version",
+    );
+    assert.equal(invalid.error.code, "INVALID_TOOL_ARGUMENTS");
+    assert.equal(f.remote.submits, 2);
+    assert.equal(
+      (await f.service.consultation.view("session", flowId)).pending,
+      false,
+    );
   } finally {
     f.close();
   }

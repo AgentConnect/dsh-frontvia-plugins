@@ -1,5 +1,20 @@
 import React, { useEffect, useId, useRef, useState } from "react";
-import { Button, Card, Field, FieldLabel, Input, Spinner } from "./ui.js";
+import { CircleCheck, LogOut, Smartphone, UserRound } from "lucide-react";
+import {
+  Badge,
+  Button,
+  Card,
+  CardContent,
+  CardDescription,
+  CardHeader,
+  CardTitle,
+  Field,
+  FieldGroup,
+  FieldLabel,
+  Input,
+  Skeleton,
+  Spinner,
+} from "./ui.js";
 import { useAccountRevision } from "./account.js";
 
 export type PersonalStatus = {
@@ -72,21 +87,29 @@ export function FrontviaAccountPanel({
     );
   return (
     <Card className="fv-personal" aria-label="个人账号" aria-busy={loading}>
-      <h3>个人账号</h3>
-      {loading ? (
-        <p role="status">
-          <Spinner /> 正在读取账号状态…
-        </p>
-      ) : (
-        <>
-          <p role="alert">{error}</p>
-          <div>
-            <Button variant="outline" onClick={() => void refresh()}>
-              重试
-            </Button>
+      <CardHeader>
+        <div className="fv-service-icon">
+          <UserRound aria-hidden />
+        </div>
+        <CardTitle>个人账号</CardTitle>
+      </CardHeader>
+      <CardContent>
+        {loading ? (
+          <div role="status">
+            <Skeleton className="fv-skeleton-title" />
+            <span className="fv-sr-only">正在读取账号状态…</span>
           </div>
-        </>
-      )}
+        ) : (
+          <>
+            <p role="alert">{error}</p>
+            <div>
+              <Button variant="outline" onClick={() => void refresh()}>
+                重试
+              </Button>
+            </div>
+          </>
+        )}
+      </CardContent>
     </Card>
   );
 }
@@ -114,10 +137,18 @@ export function PersonalPanel({
   if (!status.configured)
     return (
       <Card className="fv-personal">
-        <h3>个人账号</h3>
-        <p className="fv-description">
-          尚未配置个人账号服务。配置 Frontvia 身份服务后，即可使用手机号登录。
-        </p>
+        <CardHeader>
+          <div className="fv-service-icon">
+            <UserRound aria-hidden />
+          </div>
+          <CardTitle>个人账号</CardTitle>
+          <Badge>尚未配置</Badge>
+        </CardHeader>
+        <CardContent>
+          <CardDescription>
+            尚未配置个人账号服务。配置 Frontvia 身份服务后，即可使用手机号登录。
+          </CardDescription>
+        </CardContent>
       </Card>
     );
   const challenge =
@@ -149,106 +180,145 @@ export function PersonalPanel({
   };
   return (
     <Card className="fv-personal" aria-label="个人账号">
-      <div>
-        <h3>个人账号</h3>
-        <p className="fv-description">
-          使用手机号登录或注册 Frontvia 个人账号，再到 PAP 连接中连接商家
-          Agent。换号后请新建聊天。
-        </p>
-      </div>
-      {status.signedIn ? (
-        <div className="fv-personal-actions">
-          <p role="status">已登录 · {status.phone}</p>
-          <Button
-            variant="outline"
-            disabled={!!busy || disabled}
-            onClick={() => void run("personal-logout")}
-          >
-            退出登录
-          </Button>
+      <CardHeader>
+        <div className="fv-service-icon">
+          <UserRound aria-hidden />
         </div>
-      ) : status.logoutPending ? (
-        <div className="fv-personal-actions">
-          <p>本机已退出，服务端退出待确认。</p>
-          <Button
-            disabled={!!busy || disabled}
-            onClick={() => void run("personal-logout")}
-          >
-            重试退出
-          </Button>
-        </div>
-      ) : (
-        <form
-          onSubmit={(e) => {
-            e.preventDefault();
-            void run(
-              challenge ? "personal-verify" : "personal-code",
-              challenge ? { code } : { phone: phone.trim() },
-            );
-          }}
-        >
-          <Field>
-            <FieldLabel htmlFor={`${id}-phone`}>
-              手机号（含国家代码）
-            </FieldLabel>
-            <Input
-              id={`${id}-phone`}
-              type="tel"
-              autoComplete="tel"
-              placeholder="+86"
-              value={phone}
-              disabled={!!busy || disabled}
-              onChange={(e) => setPhone(e.target.value)}
-            />
-          </Field>
-          {challenge && (
-            <Field>
-              <FieldLabel htmlFor={`${id}-code`}>
-                发送至 {challenge.phone} 的验证码
-              </FieldLabel>
-              <Input
-                id={`${id}-code`}
-                inputMode="numeric"
-                autoComplete="one-time-code"
-                maxLength={6}
-                value={code}
-                disabled={!!busy || disabled}
-                onChange={(e) => setCode(e.target.value)}
-              />
-            </Field>
-          )}
-          <div className="fv-personal-actions">
-            <Button
-              type="submit"
-              disabled={
-                !!busy ||
-                disabled ||
-                (challenge
-                  ? !/^\d{6}$/.test(code)
-                  : !/^\+[1-9][0-9]{7,14}$/.test(phone.trim()))
+        <div className="fv-account-copy">
+          <div className="fv-account-title">
+            <CardTitle>个人账号</CardTitle>
+            <Badge
+              variant={
+                status.signedIn
+                  ? "success"
+                  : status.logoutPending
+                    ? "warning"
+                    : "secondary"
               }
             >
-              {busy ? <Spinner /> : null}
-              {challenge ? "登录 / 注册" : "获取验证码"}
-            </Button>
-            {challenge && (
-              <Button
-                variant="ghost"
-                disabled={!!busy || disabled || wait > 0 || !phone.trim()}
-                onClick={() =>
-                  void run("personal-code", { phone: phone.trim() })
-                }
-              >
-                {wait ? `${wait} 秒后可重发` : "重新获取验证码"}
-              </Button>
-            )}
+              {status.signedIn ? (
+                <>
+                  <CircleCheck aria-hidden />
+                  已登录
+                </>
+              ) : status.logoutPending ? (
+                "退出待确认"
+              ) : (
+                "未登录"
+              )}
+            </Badge>
           </div>
-        </form>
-      )}
-      {error && (
-        <p role="alert" className="fv-field-error">
-          {error}
-        </p>
+          <CardDescription>
+            {status.signedIn
+              ? "此身份用于连接商家。切换账号后，请新建聊天。"
+              : "用手机号登录或注册，即可使用你的 Frontvia 个人身份。"}
+          </CardDescription>
+        </div>
+        {status.signedIn && (
+          <div className="fv-account-session">
+            <span className="fv-account-phone" role="status">
+              <Smartphone aria-hidden />
+              {status.phone}
+            </span>
+            <Button
+              variant="ghost"
+              size="sm"
+              disabled={!!busy || disabled}
+              onClick={() => void run("personal-logout")}
+            >
+              {busy ? <Spinner /> : <LogOut data-icon="inline-start" />}退出登录
+            </Button>
+          </div>
+        )}
+      </CardHeader>
+      {(!status.signedIn || error) && (
+        <CardContent>
+          {status.signedIn ? null : status.logoutPending ? (
+            <div className="fv-personal-actions">
+              <p>本机已退出，服务端退出待确认。</p>
+              <Button
+                disabled={!!busy || disabled}
+                onClick={() => void run("personal-logout")}
+              >
+                重试退出
+              </Button>
+            </div>
+          ) : (
+            <form
+              onSubmit={(e) => {
+                e.preventDefault();
+                void run(
+                  challenge ? "personal-verify" : "personal-code",
+                  challenge ? { code } : { phone: phone.trim() },
+                );
+              }}
+            >
+              <FieldGroup>
+                <Field>
+                  <FieldLabel htmlFor={`${id}-phone`}>
+                    手机号（含国家代码）
+                  </FieldLabel>
+                  <Input
+                    id={`${id}-phone`}
+                    type="tel"
+                    autoComplete="tel"
+                    placeholder="+86"
+                    value={phone}
+                    disabled={!!busy || disabled}
+                    onChange={(e) => setPhone(e.target.value)}
+                  />
+                </Field>
+                {challenge && (
+                  <Field>
+                    <FieldLabel htmlFor={`${id}-code`}>
+                      发送至 {challenge.phone} 的验证码
+                    </FieldLabel>
+                    <Input
+                      id={`${id}-code`}
+                      inputMode="numeric"
+                      autoComplete="one-time-code"
+                      maxLength={6}
+                      value={code}
+                      disabled={!!busy || disabled}
+                      onChange={(e) => setCode(e.target.value)}
+                    />
+                  </Field>
+                )}
+              </FieldGroup>
+              <div className="fv-personal-actions">
+                <Button
+                  type="submit"
+                  disabled={
+                    !!busy ||
+                    disabled ||
+                    (challenge
+                      ? !/^\d{6}$/.test(code)
+                      : !/^\+[1-9][0-9]{7,14}$/.test(phone.trim()))
+                  }
+                >
+                  {busy ? <Spinner /> : null}
+                  {challenge ? "登录 / 注册" : "获取验证码"}
+                </Button>
+                {challenge && (
+                  <Button
+                    variant="ghost"
+                    disabled={!!busy || disabled || wait > 0 || !phone.trim()}
+                    onClick={() =>
+                      void run("personal-code", { phone: phone.trim() })
+                    }
+                  >
+                    {wait ? `${wait} 秒后可重发` : "重新获取验证码"}
+                  </Button>
+                )}
+              </div>
+            </form>
+          )}
+          {error && (
+            <p role="alert" className="fv-field-error">
+              {error}
+            </p>
+          )}
+        </CardContent>
       )}
     </Card>
   );

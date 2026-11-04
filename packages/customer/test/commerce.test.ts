@@ -9,6 +9,7 @@ import { CustomerService, modelData, type PapPort } from "../src/core.js";
 import { schemas, tools } from "../src/tools.js";
 import { uiSchemas } from "../src/ui-contract.js";
 import { shoppingReference } from "../src/client/history.js";
+import { shoppingStep } from "../src/client/shopping-progress.js";
 const copy = (v: any) => structuredClone(v);
 function fixture() {
   const dir = mkdtempSync(join(tmpdir(), "dsh-customer-test-")),
@@ -368,6 +369,7 @@ test("sidebar list selection opens the owning flow through the strict UI contrac
     const args = uiSchemas.view.parse(ui);
     const view = await f.service.view(args.sessionId, args.flowId);
     assert.equal(view.flowId, flow);
+    assert.equal(shoppingStep(view), "quote");
     assert.equal(view.cart.shipping_address.line1, "Secret Street");
     assert.ok(uiSchemas.review.safeParse(ui).success);
     assert.ok(uiSchemas.recover.safeParse(ui).success);
@@ -376,6 +378,53 @@ test("sidebar list selection opens the owning flow through the strict UI contrac
       f.service.view("other-session", args.flowId),
       /FLOW_NOT_OWNED/,
     );
+  } finally {
+    f.close();
+  }
+});
+test("resuming a shopping record follows the current cart instead of its old card hint", async () => {
+  const f = fixture();
+  try {
+    const flow = await f.flow();
+    const view = () => f.service.view("session-a", flow);
+    assert.equal(shoppingStep(await view()), "products");
+    await f.service.tool(
+      "session-a",
+      "frontvia_products",
+      { flowId: flow, action: "search" },
+      "browse",
+    );
+    assert.equal(shoppingStep(await view()), "products");
+    await f.service.tool(
+      "session-a",
+      "frontvia_cart",
+      { flowId: flow, action: "add", variant_id: "variant", quantity: 1 },
+      "add",
+    );
+    assert.equal(shoppingStep(await view()), "cart");
+    // The cart still exists after its final item is removed remotely.
+    f.remote.cart.lines = [];
+    f.restart();
+    const empty = await view();
+    assert.ok(empty.cart.id);
+    assert.equal(shoppingStep(empty), "products");
+    assert.equal(f.remote.confirms, 0);
+  } finally {
+    f.close();
+  }
+});
+test("resuming a quoted record keeps expired pricing visible without confirming", async () => {
+  const f = fixture();
+  try {
+    const flow = await prepare(f);
+    const review = await f.service.review("session-a", flow);
+    assert.equal(review.intent?.submitted, false);
+    assert.equal(shoppingStep(review), "quote");
+    f.remote.quote.expires_at = "2000-01-01T00:00:00Z";
+    f.restart();
+    const expired = await f.service.view("session-a", flow);
+    assert.equal(shoppingStep(expired), "quote");
+    assert.equal(f.remote.confirms, 0);
   } finally {
     f.close();
   }
@@ -553,6 +602,10 @@ for (const lostReceipt of [false, true]) {
       const saved = f.service.flow("session-a", flow);
       assert.equal(saved.pending, undefined);
       assert.equal(saved.intent, undefined);
+      assert.equal(
+        shoppingStep(await f.service.view("session-a", flow)),
+        "quote",
+      );
       assert.equal(saved.commands[originalKey].status, "done");
       assert.equal(
         saved.commands[originalKey].params.idempotency_key,
@@ -659,6 +712,7 @@ test("failed confirmation with uncertain effects stays blocked without new conse
       review.intent!.id,
     );
     assert.equal(result.pending, true);
+    assert.equal(shoppingStep(result), "order");
     assert.equal(result.intent!.submitted, true);
     f.restart();
     await f.service.tool(
@@ -868,6 +922,7 @@ test("lost confirmation receipt survives restart; original operation recovered w
     f.restart();
     const r = await f.service.confirm("session-a", flow, v.intent!.id);
     assert.equal(r.order.id, "order");
+    assert.equal(shoppingStep(r), "order");
     assert.equal(f.remote.confirms, 1);
   } finally {
     f.close();
@@ -1238,6 +1293,56 @@ test("cart availability matches fresh authority and unavailable add stops before
     assert.equal((await f.service.view("session-a", flowId)).cartReady, false);
     delete f.remote.methodAvailability["commerce.carts.lines.add"];
     assert.equal((await f.service.view("session-a", flowId)).cartReady, true);
+  } finally {
+    f.close();
+  }
+});
+
+test("exported cart tool preserves opaque string versions while consultation uses numeric revisions", async () => {
+  const f = fixture();
+  try {
+    const flowId = await f.flow();
+    const tool = tools(f.service).find((t) => t.name === "frontvia_cart")!;
+    const invoke = (args: any, callId: string) =>
+      tool.execute({ flowId, ...args }, {
+        agent: { id: "session-a" },
+        callId,
+      } as any) as Promise<any>;
+    assert.equal(
+      (
+        await invoke(
+          { action: "add", variant_id: "variant", quantity: 1 },
+          "first-line",
+        )
+      ).error,
+      undefined,
+    );
+    assert.equal(f.remote.cart.version, "v1");
+    const result = await invoke(
+      {
+        action: "add",
+        variant_id: "variant",
+        quantity: 1,
+        expected_version: "v1",
+      },
+      "next-line",
+    );
+    assert.equal(result.error, undefined);
+    assert.equal(f.remote.cart.version, "v2");
+    const writes = f.remote.writes;
+    await assert.rejects(
+      invoke(
+        {
+          action: "add",
+          variant_id: "variant",
+          quantity: 1,
+          expected_version: 2,
+        },
+        "numeric-commerce-version",
+      ),
+      /expected_version.*string/,
+    );
+    assert.equal(f.remote.writes, writes);
   } finally {
     f.close();
   }

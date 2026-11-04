@@ -169,7 +169,11 @@ export function tools(service: CustomerService) {
         variant_id: { type: "string" },
         line_id: { type: "string" },
         quantity: { type: "integer" },
-        expected_version: { type: "string" },
+        // Consultation revisions are integers; commerce revisions are opaque strings.
+        // defineTool captures this schema in execute before the provider projection below.
+        expected_version: {
+          type: name === "frontvia_consultation" ? "integer" : "string",
+        },
         group_id: { type: "string" },
         option_id: { type: "string" },
         order_id: { type: "string" },
