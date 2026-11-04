@@ -52,3 +52,36 @@ node scripts/cny-ui-fixture.mjs
 本次增量不新增数据库迁移；服务端需要 main 已有的 Platform 0053 和 Agent 027 迁移。
 上线需配套更新两端，且目标店铺明确配置 CN/CNY、对话购物、真实 Provider、收款方及回调。
 旧服务端没有结构化购物能力时，插件保留咨询行为，不猜测是否支持购买。
+
+## 2026-11-04 新加坡部署与客户端更新
+
+用户授权改部署后，服务端使用 `ssh sgt-via-ali` 的现有 `frontvia-dev` 实例及其受保护通企付配置。
+商户号、App ID 和签名密钥仅在服务器内与原配置比对，未下载、打印或提交；未更改渠道配置。
+
+- 服务端实际运行提交：`37fc7446891e5b795bbefbc48602bbfec865dcd0`，保留部署分支历史并包含最新 main。
+- 插件功能提交：`4d43fef`；两个仓库的 `codex/cny-dsh-integration` 已推送，服务端部署分支也已更新。
+- 当前实例已是 Platform 0053 / Agent 027；候选全部迁移及 Medusa lockfile 与原制品一致，本次未执行数据库迁移。
+- 停写备份：服务器 `backups/data-1793790834`，三个数据库分别归档、摘要和 pg_restore 目录校验通过，另备份受保护输入配置。
+- 实际运行二进制 SHA256：`17d54547e64e77bdab9773e7575e2c0152d4d2ec632eac06e060de8ab3c10839`；与构建回执及运行进程路径一致。
+- 主服务、Knowledge HTTP 和 Worker 均 active；商家 `/`、买方 `/`、Admin `/app`、店铺 `/health/ready` 与发现文档均 HTTP 200。
+
+初次部署遇到 GitHub SSH 公钥认证间歇失败，旧应用已恢复。最终使用同一密钥经
+[GitHub 官方 443 端口](https://docs.github.com/en/authentication/troubleshooting-ssh/using-ssh-over-the-https-port)
+建立并复用本次操作专属连接，仍严格校验 smartGrey 身份、已推送分支和完整提交。
+未修改全局 SSH 配置或跳过部署门禁；结束后已关闭该连接，失败记录与备份保留。
+
+本机原 4349 DSH 已更新 Customer bundle，账号、配置和密钥未更改。九份原会话完整保留；
+宿主重启后有两份会话追加记录，原文件字节前缀全部保留，未覆盖历史。
+因原个人登录属于 ali，新增隔离的 `frontvia-cny` Profile（4350）连接新加坡，使用独立加密存储，
+复用原已公开的客户端签名身份，不向新加坡转发 ali 个人令牌。已通过正式发现和导入加入咨询资源，
+CNY 购物沿此咨询资源进行。该入口需独立登录 Frontvia，模型账号也需在该隔离宿主中配置。
+
+上线后以仓库声明的保留测试身份通过真实 OTP API、PAP/DPoP 连接和能力读取，结果为：
+`frontvia.conversation_purchase.v1`、`supported`、`CN/CNY`、`owner_message`、`hosted_alipay`。
+实际 DSH 浏览器完成登录、连接、退出、刷新；1440×1000 桌面和 390×844 深色手机视口无横向溢出，
+无 pageerror。验收后测试账号已退出。Browser 插件未提供，使用已有 Playwright 运行时；
+截图和临时脚本仅在本机 `/tmp/frontvia-cny-evidence`，不提交用户运行数据。
+
+这是部署、身份、能力和页面验收。未在新实例创建购买、发起真实支付宝交易、扣款或退款，
+也未调用真实模型；完整下单到付款的真渠道验收仍需由用户确认订单并本人付款。
+保留测试验证码不证明真实短信投递。原本地三场景支付集成使用模拟渠道，其边界不变。
