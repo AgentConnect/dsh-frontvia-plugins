@@ -1,6 +1,7 @@
 import { useAccountRevision } from "./account.js";
 import { accountRequest } from "./account-request.js";
-import { FrontviaAccountPanel } from "./personal-panel.js";
+import { ServicePage } from "./service-page.js";
+import { shoppingStep } from "./shopping-progress.js";
 import React, { useEffect, useId, useState } from "react";
 import {
   ArrowRight,
@@ -21,7 +22,7 @@ import {
   ShoppingCart,
   Truck,
 } from "lucide-react";
-import { historyDefinition, shoppingReference } from "./history.js";
+import { historyDefinition } from "./history.js";
 import { ToolFeedback } from "./tool-feedback.js";
 import {
   Alert,
@@ -55,6 +56,7 @@ import styles from "./styles.css";
 import { ConsultationCard } from "./consultation.js";
 export const inject = [
   "slots",
+  "layout",
   "connection",
   "uiConversation",
   "sessions",
@@ -335,14 +337,18 @@ export function apply(ctx: any) {
   function Shopping({
     ui,
     sendToAgent,
+    resume = false,
   }: {
     ui: UI;
     sendToAgent?: (s: string) => Promise<unknown>;
+    resume?: boolean;
   }) {
     const [data, setData] = useState<any>(),
       [busy, setBusy] = useState(""),
       [error, setError] = useState(""),
-      [tab, setTab] = useState(ui.card === "connection" ? "products" : ui.card),
+      [tab, setTab] = useState<string | undefined>(
+        resume ? undefined : ui.card === "connection" ? "products" : ui.card,
+      ),
       [tick, setTick] = useState(Date.now());
     const [form, setForm] = useState<Contact>(blankContact),
       [fieldErrors, setFieldErrors] = useState<Partial<Contact>>({});
@@ -352,6 +358,9 @@ export function apply(ctx: any) {
       let live = true;
       setData(undefined);
       setForm(blankContact);
+      setTab(
+        resume ? undefined : ui.card === "connection" ? "products" : ui.card,
+      );
       call("view", ui)
         .then((v) => {
           if (live) {
@@ -445,7 +454,11 @@ export function apply(ctx: any) {
       });
     };
     return (
-      <section className="fv" aria-label="Frontvia 购物卡片" aria-busy={!!busy}>
+      <section
+        className={`fv${resume ? "" : " fv-inline"}`}
+        aria-label="Frontvia 购物卡片"
+        aria-busy={!!busy}
+      >
         <style>{styles}</style>
         <Card>
           <CardHeader>
@@ -472,7 +485,10 @@ export function apply(ctx: any) {
               </Button>
             </div>
           </CardHeader>
-          <Tabs value={tab} onValueChange={setTab}>
+          <Tabs
+            value={tab ?? (data ? shoppingStep(data) : "")}
+            onValueChange={setTab}
+          >
             <TabsList aria-label="购物步骤">
               {[
                 { value: "products", label: "选购商品", Icon: ShoppingBag },
@@ -1152,89 +1168,15 @@ export function apply(ctx: any) {
     );
   }
   function Panel() {
-    const accountRevision = useAccountRevision();
-    const [rows, setRows] = useState<any[]>([]),
-      [selected, setSelected] = useState<any>(),
-      [error, setError] = useState(""),
-      [loading, setLoading] = useState(true);
-    useEffect(() => {
-      let live = true;
-      setRows([]);
-      setSelected(undefined);
-      setLoading(true);
-      setError("");
-      call("list")
-        .then((v) => {
-          if (live) setRows(v.flows);
-        })
-        .catch(() => {
-          if (live) setError("Frontvia 服务未就绪，请检查插件及本机配置。");
-        })
-        .finally(() => {
-          if (live) setLoading(false);
-        });
-      return () => {
-        live = false;
-      };
-    }, [accountRevision]);
     return (
-      <div className="fv-viewport">
-        <div className="fv">
-          <style>{styles}</style>
-          <FrontviaAccountPanel call={call} />
-          <Card>
-            <CardHeader>
-              <div className="fv-brand">
-                <ShoppingBag aria-hidden />
-              </div>
-              <div>
-                <CardTitle>你的 Frontvia 服务</CardTitle>
-                <CardDescription>
-                  继续商家咨询、知识查询或购物；在 PAP 连接中添加商家服务。
-                </CardDescription>
-              </div>
-            </CardHeader>
-            <CardContent>
-              {error && (
-                <Alert variant="destructive">
-                  <Info aria-hidden />
-                  <AlertDescription>{error}</AlertDescription>
-                </Alert>
-              )}
-              {loading ? (
-                <Skeleton className="fv-skeleton-block" />
-              ) : rows.length ? (
-                <div className="fv-progress-list">
-                  {rows.map((f) => (
-                    <Button
-                      variant="outline"
-                      key={f.flowId}
-                      onClick={() => setSelected(shoppingReference(f))}
-                    >
-                      <span>
-                        {f.siteId} · {new Date(f.updatedAt).toLocaleString()}
-                      </span>
-                      <ArrowRight data-icon="inline-end" />
-                    </Button>
-                  ))}
-                </div>
-              ) : (
-                !error && (
-                  <Empty>
-                    <ShoppingBag aria-hidden />
-                    <EmptyTitle>连接商家，开始咨询</EmptyTitle>
-                    <EmptyDescription>
-                      登录后，在 PAP
-                      连接中添加并连接商家，再新建聊天开始咨询。服务记录会保留在这里。
-                    </EmptyDescription>
-                  </Empty>
-                )
-              )}
-            </CardContent>
-          </Card>
-          {selected && <FlowCard key={selected.flowId} ui={selected} />}
-        </div>
-      </div>
+      <>
+        <style>{styles}</style>
+        <ServicePage
+          call={call}
+          openConnections={() => ctx.layout.selectPanel("pap-connections")}
+          renderFlow={(ui) => <FlowCard key={ui.flowId} ui={ui} resume />}
+        />
+      </>
     );
   }
   function Tail({ turn, sendToAgent }: any) {
@@ -1251,17 +1193,22 @@ export function apply(ctx: any) {
   function FlowCard({
     ui,
     sendToAgent,
+    resume = false,
   }: {
     ui: UI;
     sendToAgent?: (s: string) => Promise<unknown>;
+    resume?: boolean;
   }) {
     return ui.card === "consultation" ? (
-      <section className="fv" aria-label="Frontvia 商家咨询">
+      <section
+        className={`fv${resume ? "" : " fv-inline"}`}
+        aria-label="Frontvia 商家咨询"
+      >
         <style>{styles}</style>
         <ConsultationCard ui={ui} call={call} sendToAgent={sendToAgent} />
       </section>
     ) : (
-      <Shopping ui={ui} sendToAgent={sendToAgent} />
+      <Shopping ui={ui} sendToAgent={sendToAgent} resume={resume} />
     );
   }
   ctx.slots.inject("main", () =>

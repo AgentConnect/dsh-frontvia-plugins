@@ -29,6 +29,11 @@
   container-type: inline-size;
   text-align: left;
 }
+/* Embedded cards inherit the host turn's content width, just like its text. */
+.fv.fv-inline {
+  max-width: none;
+  margin-inline: 0;
+}
 .fv-viewport {
   flex: 1;
   height: 100%;
@@ -818,19 +823,9 @@
   grid-column: 2;
 }
 
-.fv .fv-personal {
-  padding: 24px;
-  display: grid;
-  gap: 16px;
-  margin-bottom: 24px;
-}
-.fv .fv-personal h3 {
-  font-size: 18px;
-  font-weight: 400;
-  margin: 0 0 8px;
-}
 .fv .fv-personal form {
-  display: grid;
+  display: flex;
+  flex-direction: column;
   gap: 16px;
   max-width: 420px;
 }
@@ -866,4 +861,324 @@
 .fv .fv-tool-price {
   color: var(--fv-muted);
   white-space: nowrap;
+}
+
+/* Service home shares PAP's spacing and quiet rows (Beautiful UI Task Rows),
+   using the existing shadcn compositions and host-owned theme tokens. */
+.fv.fv-home {
+  --fv-surface: color-mix(in srgb, var(--fv-text) 3%, var(--fv-bg));
+  max-width: 1000px;
+  margin: 0 auto;
+  padding: 40px 40px 32px;
+  box-sizing: border-box;
+}
+.fv .fv-page-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 24px;
+  margin-bottom: 30px;
+}
+.fv .fv-eyebrow {
+  color: var(--fv-muted);
+  font-size: 11px;
+  letter-spacing: 0.08em;
+  margin-bottom: 5px;
+}
+.fv .fv-page-header h2 {
+  font-size: 26px;
+  line-height: 1.4;
+  letter-spacing: -0.035em;
+}
+.fv .fv-page-description {
+  color: var(--fv-muted);
+  font-size: 13px;
+  margin-top: 6px;
+}
+.fv .fv-page-actions {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+.fv-home .fv-card {
+  border-radius: 12px;
+  box-shadow: none;
+}
+.fv .fv-service-icon {
+  display: grid;
+  place-items: center;
+  flex-shrink: 0;
+  width: 38px;
+  height: 38px;
+  border: 1px solid var(--fv-border);
+  border-radius: 10px;
+  background: var(--fv-surface);
+  color: var(--fv-muted);
+}
+.fv .fv-personal {
+  padding: 0;
+  display: flex;
+  gap: 0;
+  margin-bottom: 32px;
+}
+.fv .fv-personal h3 {
+  font-size: 15px;
+  margin: 0;
+}
+.fv .fv-personal .fv-card-header {
+  padding: 20px;
+}
+.fv .fv-personal .fv-card-content {
+  padding: 0 20px 20px;
+}
+.fv .fv-personal .fv-field-group {
+  grid-template-columns: 1fr;
+}
+.fv .fv-account-copy {
+  flex: 1;
+  min-width: 0;
+}
+.fv .fv-account-title {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 10px;
+}
+.fv .fv-account-session {
+  display: flex;
+  align-items: flex-end;
+  flex-direction: column;
+  gap: 6px;
+}
+.fv .fv-account-phone {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  font-size: 13px;
+  white-space: nowrap;
+}
+.fv .fv-account-phone svg {
+  width: 14px;
+  height: 14px;
+  color: var(--fv-muted);
+}
+.fv .fv-history-section {
+  min-width: 0;
+}
+.fv .fv-section-heading h3 {
+  font-size: 16px;
+}
+.fv .fv-history-tabs > .fv-tabs-list {
+  display: flex;
+  width: fit-content;
+  max-width: 100%;
+  margin: 0 0 18px;
+  padding: 3px;
+  gap: 3px;
+}
+.fv .fv-history-tabs .fv-tabs-trigger {
+  padding: 6px 12px;
+  gap: 8px;
+}
+.fv .fv-tab-count {
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+  opacity: 0.65;
+}
+.fv .fv-record-list {
+  border: 1px solid var(--fv-border);
+  border-radius: 12px;
+  overflow: clip;
+}
+.fv .fv-record {
+  appearance: none;
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  width: 100%;
+  padding: 20px;
+  border: 0;
+  background: var(--fv-bg);
+  color: var(--fv-text);
+  cursor: pointer;
+  text-align: left;
+  transition: background 120ms;
+}
+.fv .fv-record + .fv-record {
+  border-top: 1px solid var(--fv-border);
+}
+.fv .fv-record:hover,
+.fv .fv-record[aria-expanded="true"] {
+  background: var(--fv-surface);
+}
+.fv .fv-record:focus-visible {
+  outline-offset: -3px;
+}
+.fv .fv-record-copy {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-width: 0;
+  gap: 4px;
+}
+.fv .fv-record-title {
+  font-size: 14px;
+  overflow-wrap: anywhere;
+}
+.fv .fv-record-description {
+  font-size: 12px;
+  color: var(--fv-muted);
+  overflow-wrap: anywhere;
+}
+.fv .fv-record-time {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 5px;
+  color: var(--fv-muted);
+  font-size: 11px;
+}
+.fv .fv-record-time svg {
+  width: 12px;
+  height: 12px;
+}
+.fv .fv-record-meta {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 12px;
+  flex-shrink: 0;
+}
+.fv .fv-record-action {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  color: var(--fv-muted);
+  font-size: 12px;
+}
+.fv .fv-record-action svg {
+  width: 14px;
+  height: 14px;
+}
+.fv .fv-history-caption {
+  color: var(--fv-muted);
+  font-size: 11px;
+  margin-top: 12px;
+  line-height: 1.8;
+}
+.fv .fv-history-loading {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+.fv .fv-history-loading .fv-skeleton {
+  height: 112px;
+}
+.fv .fv-selected-flow {
+  margin-top: 32px;
+  scroll-margin-top: 24px;
+  outline: none;
+}
+.fv .fv-selected-flow > .fv-section-heading {
+  align-items: center;
+}
+.fv .fv-selected-flow > .fv {
+  max-width: none;
+  margin: 0;
+}
+.fv .fv-start-guide {
+  margin-top: 32px;
+}
+.fv .fv-guide-heading {
+  display: flex;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin: 24px 0 14px;
+}
+.fv .fv-guide-heading h3 {
+  font-size: 13px;
+}
+.fv .fv-guide-heading > span {
+  font-size: 11px;
+  color: var(--fv-muted);
+}
+.fv .fv-guide-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 12px;
+}
+.fv .fv-guide-card {
+  border-color: transparent;
+  background: var(--fv-surface);
+}
+.fv .fv-guide-card .fv-card-header {
+  padding: 16px 16px 0;
+  gap: 8px;
+  color: var(--fv-muted);
+}
+.fv .fv-guide-card .fv-card-title {
+  font-size: 13px;
+}
+.fv .fv-guide-card .fv-card-content {
+  padding: 8px 16px 16px;
+}
+.fv .fv-guide-card .fv-description {
+  margin-top: 0;
+}
+@media (max-width: 700px) {
+  .fv.fv-home {
+    padding: 24px 18px;
+  }
+}
+@container (max-width: 640px) {
+  .fv .fv-page-header {
+    align-items: flex-start;
+    flex-direction: column;
+    gap: 16px;
+  }
+  .fv .fv-page-actions {
+    flex-direction: row-reverse;
+  }
+  .fv .fv-personal .fv-card-header {
+    flex-wrap: wrap;
+    align-items: flex-start;
+  }
+  .fv .fv-account-session {
+    flex-direction: row;
+    justify-content: space-between;
+    align-items: center;
+    flex: 1 0 100%;
+    border-top: 1px solid var(--fv-border);
+    padding-top: 14px;
+  }
+  .fv .fv-record {
+    padding: 16px;
+    gap: 12px;
+    flex-wrap: wrap;
+  }
+  .fv .fv-record-copy {
+    flex-basis: calc(100% - 60px);
+  }
+  .fv .fv-record-meta {
+    flex: 1 0 100%;
+    flex-direction: row;
+    align-items: center;
+    justify-content: space-between;
+    padding-left: 50px;
+  }
+  .fv .fv-history-tabs .fv-tabs-trigger {
+    padding: 6px 9px;
+    gap: 6px;
+  }
+  .fv .fv-guide-grid {
+    grid-template-columns: 1fr;
+    gap: 8px;
+  }
+  .fv .fv-guide-card .fv-card-header {
+    padding-top: 14px;
+  }
+  .fv .fv-guide-card .fv-card-content {
+    padding-bottom: 14px;
+  }
 }

@@ -137,9 +137,11 @@ export function ConsultationCard({
                   ? "原请求结果待核对"
                   : data.conversation?.status === "pending"
                     ? "商家正在处理"
-                    : data.conversation?.status === "needs_human"
-                      ? "等待人工回复"
-                      : "当前会话"}
+                    : data.conversation?.status === "failed"
+                      ? "本次答复未完成"
+                      : data.conversation?.status === "needs_human"
+                        ? "等待人工回复"
+                        : "当前会话"}
               </span>
               <Badge>
                 {data.capabilities?.knowledge === "supported"
@@ -147,6 +149,14 @@ export function ConsultationCard({
                   : "暂未开放知识"}
               </Badge>
             </div>
+            {data.conversation?.status === "failed" && (
+              <Alert variant="destructive">
+                <Info aria-hidden />
+                <AlertDescription>
+                  商家未能完成本次答复，问题和已有记录已保留。你可以在聊天中重新提问。
+                </AlertDescription>
+              </Alert>
+            )}
             {(data.conversation?.messages ?? []).length ? (
               data.conversation.messages.map((m: any) => (
                 <article className="fv-consult-message" key={m.id}>
