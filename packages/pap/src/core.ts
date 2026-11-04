@@ -758,6 +758,7 @@ export class PapService {
     method: string,
     params: unknown,
     signal?: AbortSignal,
+    options?: { maxResponseBytes: number },
   ) {
     return this.serial.run(ref, async () => {
       signal?.throwIfAborted();
@@ -793,6 +794,7 @@ export class PapService {
         body: JSON.stringify({ jsonrpc: "2.0", id, method, params }),
         signal,
         timeoutMs: 45000,
+        maxResponseBytes: options?.maxResponseBytes,
       });
       if (generation) this.personal.assert(generation);
       this.load(ref);

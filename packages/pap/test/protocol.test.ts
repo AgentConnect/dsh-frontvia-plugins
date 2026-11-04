@@ -1,4 +1,6 @@
 import { test } from "node:test";
+import { Context } from "@deepseek-ai/cordis";
+import { PapProvider } from "../src/index.js";
 import assert from "node:assert/strict";
 import { mkdtempSync, readFileSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -359,6 +361,31 @@ test("expired sessions renew before resource access and explicit disconnect is n
     await assert.rejects(
       f.service.request(c.connectionRef, "example.read", {}),
       /CONNECTION_DISCONNECTED/,
+    );
+  } finally {
+    f.close();
+  }
+});
+
+test("RPC response budget applies to one host request and does not alter authentication or later reads", async () => {
+  const f = fixture();
+  try {
+    const connection = await f.service.connect("a");
+    const provider = new PapProvider(new Context(), f.service);
+    await provider.request(
+      connection.connectionRef,
+      "example.original",
+      {},
+      undefined,
+      { maxResponseBytes: 1414488 },
+    );
+    assert.equal(f.record.calls.at(-1).maxResponseBytes, 1414488);
+    await f.service.request(connection.connectionRef, "example.read", {});
+    assert.equal(f.record.calls.at(-1).maxResponseBytes, undefined);
+    assert(
+      f.record.calls
+        .filter((r) => r.url.includes("auth.test"))
+        .every((r) => r.maxResponseBytes === undefined),
     );
   } finally {
     f.close();

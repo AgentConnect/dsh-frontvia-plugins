@@ -42,6 +42,10 @@ function fixture() {
     lose: false,
     reject: "",
     tamper: false,
+    originalBytes: bytes,
+    originalMetadata: { available: true } as any,
+    originalSize: undefined as number | undefined,
+    originalEncoding: undefined as string | undefined,
     submits: 0,
     convo: null as any,
     ops: new Map<string, any>(),
@@ -74,8 +78,14 @@ function fixture() {
     }),
     status: () => [],
     connect: async () => ({ connectionRef: "consult-connection" }),
-    request: async (_ref: string, method: string, params: any) => {
-      remote.calls.push({ method, params: structuredClone(params) });
+    request: async (
+      _ref: string,
+      method: string,
+      params: any,
+      _signal?: AbortSignal,
+      options?: any,
+    ) => {
+      remote.calls.push({ method, params: structuredClone(params), options });
       if (method === "consultation.capabilities.get")
         return respond({
           profile: "frontvia.merchant_consultation.v1",
@@ -147,17 +157,19 @@ function fixture() {
         return respond({
           filename: "policy.txt",
           content_type: "text/plain",
-          bytes_base64: bytes.toString("base64"),
-          size: bytes.length,
+          bytes_base64:
+            remote.originalEncoding ?? remote.originalBytes.toString("base64"),
+          size: remote.originalSize ?? remote.originalBytes.length,
           sha256: remote.tamper
             ? "bad"
-            : createHash("sha256").update(bytes).digest("hex"),
+            : createHash("sha256").update(remote.originalBytes).digest("hex"),
         });
       if (method === "consultation.knowledge.source") {
         assert.deepEqual(params, locator);
         return respond({
           data: {
             source: { ...locator, title: "Returns", text: "Seven days" },
+            original: remote.originalMetadata,
           },
           dependencies: [locator],
         });
@@ -502,6 +514,183 @@ test("personal logout hides consultation history and rejects cached views until 
     f.remote.personalAccess = true;
     assert.equal(f.service.list()[0].flowId, id);
     assert.equal((await f.service.consultation.view("session", id)).flowId, id);
+  } finally {
+    f.close();
+  }
+});
+
+test("help accepts 300 UTF-16 units, rejects longer input before persistence, and resumes legacy rejected commands", async () => {
+  const f = fixture();
+  try {
+    const id = await f.flow();
+    const call = (args: any, key: string) =>
+      f.service.tool(
+        "session",
+        "frontvia_consultation",
+        { flowId: id, ...args },
+        key,
+      );
+    await call({ action: "ask", text: "Help with returns" }, "ask");
+    for (const reason of ["中".repeat(300), "😀".repeat(150)]) {
+      const args = { flowId: id, action: "help", reason };
+      assert(schemas.frontvia_consultation.safeParse(args).success);
+      await call(args, reason.slice(0, 2));
+    }
+    const before = f.vault.get<any>(`consultation:${id}`);
+    for (const reason of [
+      "a".repeat(301),
+      "中".repeat(1000),
+      "😀".repeat(150) + "a",
+      " ",
+      null,
+    ]) {
+      const args = { flowId: id, action: "help", reason };
+      assert.equal(
+        schemas.frontvia_consultation.safeParse(args).success,
+        false,
+      );
+      await assert.rejects(call(args, "invalid"), /INVALID_PARAMS/);
+    }
+    let stored = f.vault.get<any>(`consultation:${id}`);
+    assert.deepEqual(stored.commands, before.commands);
+    assert.equal(stored.pending, undefined);
+    assert.equal(
+      f.remote.calls.filter((c) => c.method === "consultation.help.request")
+        .length,
+      2,
+    );
+    // Reopen an encrypted command written by the old 1000-character client.
+    stored.commands.legacy = {
+      method: "consultation.help.request",
+      params: {
+        conversation_id: "conversation",
+        idempotency_key: "original-key",
+        reason: "a".repeat(301),
+      },
+      inputHash: "old-client",
+      status: "pending",
+    };
+    stored.pending = "legacy";
+    f.vault.set(`consultation:${id}`, stored);
+    f.restart();
+    f.remote.reject = "INVALID_PARAMS";
+    await assert.rejects(
+      call({ action: "recover" }, "recover"),
+      /INVALID_PARAMS/,
+    );
+    stored = f.vault.get<any>(`consultation:${id}`);
+    assert.equal(stored.pending, undefined);
+    assert.equal(stored.commands.legacy.status, "done");
+    assert.equal(stored.commands.legacy.params.idempotency_key, "original-key");
+    f.remote.reject = "";
+    await call(
+      {
+        action: "ask",
+        text: "Corrected question",
+        expected_version: f.remote.convo.version,
+      },
+      "next-question",
+    );
+    await call({ action: "help", reason: "Please help" }, "next-help");
+    assert.equal(
+      (await f.service.consultation.view("session", id)).pending,
+      false,
+    );
+  } finally {
+    f.close();
+  }
+});
+
+test("original download budgets cover 700 KiB and 1 MiB, reject over-limit, malformed and withdrawn files", async () => {
+  const f = fixture();
+  try {
+    const id = await f.flow();
+    const lookup = await f.service.tool(
+      "session",
+      "frontvia_knowledge",
+      { flowId: id, action: "lookup", query: "returns" },
+      "lookup",
+    );
+    const ref = lookup.data.data.sources[0].sourceRef;
+    for (const size of [700 * 1024, 900 * 1024, 1024 * 1024]) {
+      f.remote.originalBytes = Buffer.alloc(size, 0xab);
+      const file = await f.service.consultation.original("session", id, ref);
+      assert.deepEqual(
+        Buffer.from(file.bytes_base64, "base64"),
+        f.remote.originalBytes,
+      );
+      const request = f.remote.calls.at(-1);
+      assert.equal(
+        request.options.maxResponseBytes,
+        4 * Math.ceil((1024 * 1024) / 3) + 16 * 1024,
+      );
+    }
+    // 1 MiB + 1 can have the SAME padded Base64 length as 1 MiB.
+    f.remote.originalBytes = Buffer.alloc(1024 * 1024 + 1);
+    await assert.rejects(
+      f.service.consultation.original("session", id, ref),
+      /INVALID_ORIGINAL_RESPONSE/,
+    );
+    f.remote.originalBytes = Buffer.from("valid");
+    for (const size of [-1, 1.5, 1024 * 1024 + 1, 4]) {
+      f.remote.originalSize = size;
+      await assert.rejects(
+        f.service.consultation.original("session", id, ref),
+        /INVALID_ORIGINAL_RESPONSE/,
+      );
+    }
+    f.remote.originalSize = undefined;
+    f.remote.originalEncoding = f.remote.originalBytes.toString("base64") + "!";
+    await assert.rejects(
+      f.service.consultation.original("session", id, ref),
+      /INVALID_ORIGINAL_RESPONSE/,
+    );
+    f.remote.originalEncoding = undefined;
+    f.remote.current = false;
+    await assert.rejects(
+      f.service.consultation.original("session", id, ref),
+      /KNOWLEDGE_SOURCE_EXPIRED/,
+    );
+    assert(
+      f.remote.calls
+        .filter((c) => c.method !== "consultation.knowledge.original")
+        .every((c) => c.options === undefined),
+    );
+  } finally {
+    f.close();
+  }
+});
+
+test("exact source metadata carries explicit original availability to its own UI source", async () => {
+  const f = fixture();
+  try {
+    const id = await f.flow();
+    const lookup = await f.service.tool(
+      "session",
+      "frontvia_knowledge",
+      { flowId: id, action: "lookup", query: "returns" },
+      "lookup",
+    );
+    const ref = lookup.data.data.sources[0].sourceRef;
+    for (const metadata of [
+      { available: true, size: 7 },
+      { available: false, reason: "not_file" },
+      { available: false, reason: "original_too_large" },
+      undefined,
+    ]) {
+      f.remote.originalMetadata = metadata;
+      await f.service.tool(
+        "session",
+        "frontvia_knowledge",
+        { flowId: id, action: "source", sourceRef: ref },
+        "source",
+      );
+      f.restart();
+      const source = (await f.service.consultation.view("session", id))
+        .knowledge.data.source;
+      assert.equal(source.sourceRef, ref);
+      assert.deepEqual(source.original, metadata);
+    }
   } finally {
     f.close();
   }

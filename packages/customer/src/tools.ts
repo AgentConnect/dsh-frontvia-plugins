@@ -2,6 +2,7 @@ import { defineTool } from "@deepseek-ai/dsh-tools";
 import { z } from "zod";
 import { PapError } from "dsh-pap/core";
 import type { CustomerService } from "./core.js";
+import { HELP_REASON_LIMIT } from "./consultation-limits.js";
 const ref = z.string().min(1).max(128),
   cursor = z.string().min(1).max(4096),
   flow = { flowId: ref },
@@ -24,7 +25,7 @@ export const schemas = {
       .object({
         ...flow,
         action: z.literal("help"),
-        reason: z.string().trim().min(1).max(1000),
+        reason: z.string().trim().min(1).max(HELP_REASON_LIMIT),
       })
       .strict(),
     z.object({ ...flow, action: z.literal("recover") }).strict(),

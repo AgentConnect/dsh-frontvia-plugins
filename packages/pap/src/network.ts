@@ -17,6 +17,7 @@ export type WireRequest = {
   body?: string;
   signal?: AbortSignal;
   timeoutMs?: number;
+  maxResponseBytes?: number;
 };
 export type Transport = (request: WireRequest) => Promise<any>;
 export function httpsTransport(targets: Target[], caFile?: string): Transport {
@@ -27,7 +28,14 @@ export function httpsTransport(targets: Target[], caFile?: string): Transport {
     body,
     signal,
     timeoutMs = 10000,
+    maxResponseBytes = 1024 * 1024,
   }) => {
+    if (
+      !Number.isSafeInteger(maxResponseBytes) ||
+      maxResponseBytes < 1 ||
+      maxResponseBytes > 2 * 1024 * 1024
+    )
+      fail("INVALID_RESPONSE_LIMIT");
     const url = new URL(raw),
       target = targets.find((t) => t.origin === url.origin);
     if (
@@ -62,10 +70,19 @@ export function httpsTransport(targets: Target[], caFile?: string): Transport {
           let size = 0;
           res.on("data", (b: Buffer) => {
             size += b.length;
-            if (size > 1024 * 1024) res.destroy(new PapError("RESPONSE_LIMIT"));
-            else chunks.push(b);
+            if (size > maxResponseBytes) {
+              const error = new PapError("RESPONSE_LIMIT");
+              reject(error);
+              res.destroy(error);
+            } else chunks.push(b);
           });
-          res.on("error", () => reject(new PapError("NETWORK_FAILURE")));
+          res.on("error", (error) =>
+            reject(
+              error instanceof PapError
+                ? error
+                : new PapError("NETWORK_FAILURE"),
+            ),
+          );
           res.on("end", () => {
             try {
               const value = chunks.length

@@ -35,10 +35,34 @@ test("pinned HTTPS verifies host certificate, preserves RPC business errors and 
     ],
     { stdio: "ignore" },
   );
+  let originalBytes = 700 * 1024;
   const server = https.createServer(
     { key: readFileSync(key), cert: readFileSync(cert) },
     (req, res) => {
       assert.equal(req.headers.host, "merchant.test");
+      if (req.url === "/original") {
+        res.writeHead(200, { "content-type": "application/json" });
+        // Stream the actual Base64 JSON envelope through the bounded reader.
+        const body = JSON.stringify({
+          jsonrpc: "2.0",
+          id: "original",
+          result: {
+            data: {
+              filename: "large.pdf",
+              size: originalBytes,
+              bytes_base64: Buffer.alloc(originalBytes, 0xab).toString(
+                "base64",
+              ),
+              sha256: "a".repeat(64),
+              content_type: "application/pdf",
+            },
+          },
+        });
+        for (let offset = 0; offset < body.length; offset += 8192)
+          res.write(body.slice(offset, offset + 8192));
+        res.end();
+        return;
+      }
       res.writeHead(400, { "content-type": "application/json" });
       res.end(
         JSON.stringify({
@@ -73,7 +97,29 @@ test("pinned HTTPS verifies host certificate, preserves RPC business errors and 
     }),
   };
   try {
-    const value = await httpsTransport([target], cert)(request);
+    const wire = httpsTransport([target], cert);
+    const original = { ...request, url: target.origin + "/original" };
+    const maxResponseBytes = 4 * Math.ceil((1024 * 1024) / 3) + 16 * 1024;
+    for (const size of [700 * 1024, 900 * 1024, 1024 * 1024]) {
+      originalBytes = size;
+      const downloaded = await wire({ ...original, maxResponseBytes });
+      assert.equal(
+        Buffer.from(downloaded.result.data.bytes_base64, "base64").length,
+        size,
+      );
+    }
+    await assert.rejects(wire(original), /RESPONSE_LIMIT/);
+    originalBytes = 1100 * 1024;
+    await assert.rejects(
+      wire({ ...original, maxResponseBytes }),
+      /RESPONSE_LIMIT/,
+    );
+    for (const limit of [Infinity, NaN, -1, 0, 2 * 1024 * 1024 + 1])
+      await assert.rejects(
+        wire({ ...original, maxResponseBytes: limit }),
+        /INVALID_RESPONSE_LIMIT/,
+      );
+    const value = await wire(request);
     assert.equal(value.error.data.type, "VERSION_CONFLICT");
     assert.equal(value.id, "original");
     await assert.rejects(

@@ -95,8 +95,14 @@ export class PapProvider extends Service {
   disconnect(ref: string) {
     return this.ready().disconnect(ref);
   }
-  request(ref: string, method: string, params: unknown, signal?: AbortSignal) {
-    return this.ready().request(ref, method, params, signal);
+  request(
+    ref: string,
+    method: string,
+    params: unknown,
+    signal?: AbortSignal,
+    options?: { maxResponseBytes: number },
+  ) {
+    return this.ready().request(ref, method, params, signal, options);
   }
 }
 declare module "@deepseek-ai/cordis" {

@@ -1,6 +1,12 @@
 import { createHash, randomUUID } from "node:crypto";
 import { Vault, Serial, fail, canonical } from "dsh-pap/core";
 import { modelData, type PapPort } from "./core.js";
+import {
+  HELP_REASON_LIMIT,
+  ORIGINAL_BYTES_LIMIT,
+  ORIGINAL_BASE64_LIMIT,
+  ORIGINAL_RESPONSE_LIMIT,
+} from "./consultation-limits.js";
 
 type Command = {
   method: string;
@@ -76,6 +82,9 @@ export class ConsultationService {
       method,
       params,
       signal,
+      method === "consultation.knowledge.original"
+        ? { maxResponseBytes: ORIGINAL_RESPONSE_LIMIT }
+        : undefined,
     );
     if (response.error) {
       const type = response.error.data?.type ?? response.error.message;
@@ -175,6 +184,8 @@ export class ConsultationService {
       const sourceRef = digest(locator);
       f.sources[sourceRef] = locator;
       hit.sourceRef = sourceRef;
+      if (hit === value?.data?.source && value.data.original)
+        hit.original = value.data.original;
     }
     for (const pointer of value?.prepared_answers ?? []) {
       const answerRef = digest(pointer);
@@ -283,6 +294,12 @@ export class ConsultationService {
         };
       } else if (args.action === "help") {
         method = "consultation.help.request";
+        if (
+          typeof args.reason !== "string" ||
+          !args.reason.trim() ||
+          args.reason.length > HELP_REASON_LIMIT
+        )
+          fail("INVALID_PARAMS");
         if (!f.conversation?.conversation_id) fail("CONVERSATION_REQUIRED");
         params = {
           conversation_id: f.conversation.conversation_id,
@@ -397,12 +414,18 @@ export class ConsultationService {
       );
       if (
         typeof data.bytes_base64 !== "string" ||
-        data.bytes_base64.length > 800000 ||
-        !Number.isSafeInteger(data.size)
+        data.bytes_base64.length > ORIGINAL_BASE64_LIMIT ||
+        !Number.isSafeInteger(data.size) ||
+        data.size < 0 ||
+        data.size > ORIGINAL_BYTES_LIMIT
       )
         fail("INVALID_ORIGINAL_RESPONSE");
       const bytes = Buffer.from(data.bytes_base64, "base64");
-      if (bytes.length !== data.size || digestBytes(bytes) !== data.sha256)
+      if (
+        bytes.length !== data.size ||
+        bytes.toString("base64") !== data.bytes_base64 ||
+        digestBytes(bytes) !== data.sha256
+      )
         fail("INVALID_ORIGINAL_RESPONSE");
       return {
         filename: String(data.filename)

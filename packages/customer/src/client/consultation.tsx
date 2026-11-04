@@ -201,15 +201,17 @@ export function ConsultationCard({
                         >
                           读取来源
                         </Button>
-                        <Button
-                          variant="outline"
-                          size="sm"
-                          disabled={!!busy}
-                          onClick={() => void download(s.sourceRef)}
-                        >
-                          <Download aria-hidden />
-                          下载原文件
-                        </Button>
+                        {s.original?.available === true && (
+                          <Button
+                            variant="outline"
+                            size="sm"
+                            disabled={!!busy}
+                            onClick={() => void download(s.sourceRef)}
+                          >
+                            <Download aria-hidden />
+                            下载原文件
+                          </Button>
+                        )}
                       </div>
                     )}
                   </article>
