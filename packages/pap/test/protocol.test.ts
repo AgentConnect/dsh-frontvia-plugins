@@ -1,4 +1,6 @@
 import { test } from "node:test";
+import { Context } from "@deepseek-ai/cordis";
+import { PapProvider } from "../src/index.js";
 import assert from "node:assert/strict";
 import { mkdtempSync, readFileSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -145,6 +147,9 @@ function fixture() {
     transport,
     db,
     secret,
+    get vault() {
+      return vault;
+    },
     get service() {
       return service;
     },
@@ -156,6 +161,104 @@ function fixture() {
     },
   };
 }
+test("stored connections reject changed authority before credential or network use", async (t) => {
+  for (const field of [
+    "clientId",
+    "callback",
+    "issuer",
+    "resource",
+    "domain",
+  ] as const) {
+    await t.test(field, async () => {
+      const f = fixture();
+      try {
+        const c = await f.service.connect("a"),
+          ref = c.connectionRef;
+        const original = structuredClone(f.config);
+        const identity = f.service.identity(ref);
+        if (field === "clientId" || field === "callback")
+          f.config[field] += "-other";
+        else f.config.sites[0][field] += "-other";
+        f.restart();
+        const before = f.record.calls.length;
+        const status = f.service.status(ref);
+        assert.ok(!Array.isArray(status));
+        assert.equal(status.connected, false);
+        assert.equal(status.bindingError, "CONNECTION_BINDING_CHANGED");
+        assert.throws(
+          () => f.service.identity(ref),
+          /CONNECTION_BINDING_CHANGED/,
+        );
+        for (const action of [
+          () => f.service.request(ref, "example.read", {}),
+          () => f.service.connect("a"),
+          () => f.service.renew(ref),
+          () => f.service.authorize(ref, []),
+          () => f.service.callback(ref, original.callback),
+          () => f.service.disconnect(ref),
+        ])
+          await assert.rejects(action(), /CONNECTION_BINDING_CHANGED/);
+        assert.equal(f.record.calls.length, before);
+        Object.assign(f.config, original);
+        f.restart();
+        assert.deepEqual(f.service.identity(ref), identity);
+        await f.service.request(ref, "example.read", {});
+      } finally {
+        f.close();
+      }
+    });
+  }
+});
+test("legacy unbound and removed-site records remain visible but cannot send credentials", async () => {
+  const f = fixture();
+  try {
+    const c = await f.service.connect("a"),
+      key = `connection:${c.connectionRef}`;
+    const stored = f.vault.get<any>(key);
+    delete stored.binding;
+    f.vault.set(key, stored);
+    f.restart();
+    const before = f.record.calls.length;
+    const status = f.service.status(c.connectionRef);
+    assert.ok(!Array.isArray(status));
+    assert.equal(status.bindingError, "CONNECTION_BINDING_REQUIRED");
+    await assert.rejects(f.service.connect("a"), /CONNECTION_BINDING_REQUIRED/);
+    await assert.rejects(
+      f.service.request(c.connectionRef, "example.read", {}),
+      /CONNECTION_BINDING_REQUIRED/,
+    );
+    assert.deepEqual(f.vault.get(key), stored);
+    f.config.sites = [];
+    f.restart();
+    assert.equal(
+      (f.service.status() as any[])[0].bindingError,
+      "SITE_NOT_APPROVED",
+    );
+    await assert.rejects(
+      f.service.request(c.connectionRef, "example.read", {}),
+      /SITE_NOT_APPROVED/,
+    );
+    assert.equal(f.record.calls.length, before);
+  } finally {
+    f.close();
+  }
+});
+test("display label changes preserve the original identity and usable connection", async () => {
+  const f = fixture();
+  try {
+    const c = await f.service.connect("a"),
+      identity = f.service.identity(c.connectionRef);
+    f.config.sites[0].label = "Renamed shop";
+    f.restart();
+    const status = f.service.status(c.connectionRef);
+    assert.ok(!Array.isArray(status));
+    assert.equal(status.label, "Renamed shop");
+    assert.deepEqual(f.service.identity(c.connectionRef), identity);
+    await f.service.request(c.connectionRef, "example.read", {});
+  } finally {
+    f.close();
+  }
+});
 test("actual ES256 assertions and DPoP; encrypted stable identity survives restart", async () => {
   const f = fixture();
   try {
@@ -258,6 +361,31 @@ test("expired sessions renew before resource access and explicit disconnect is n
     await assert.rejects(
       f.service.request(c.connectionRef, "example.read", {}),
       /CONNECTION_DISCONNECTED/,
+    );
+  } finally {
+    f.close();
+  }
+});
+
+test("RPC response budget applies to one host request and does not alter authentication or later reads", async () => {
+  const f = fixture();
+  try {
+    const connection = await f.service.connect("a");
+    const provider = new PapProvider(new Context(), f.service);
+    await provider.request(
+      connection.connectionRef,
+      "example.original",
+      {},
+      undefined,
+      { maxResponseBytes: 1414488 },
+    );
+    assert.equal(f.record.calls.at(-1).maxResponseBytes, 1414488);
+    await f.service.request(connection.connectionRef, "example.read", {});
+    assert.equal(f.record.calls.at(-1).maxResponseBytes, undefined);
+    assert(
+      f.record.calls
+        .filter((r) => r.url.includes("auth.test"))
+        .every((r) => r.maxResponseBytes === undefined),
     );
   } finally {
     f.close();

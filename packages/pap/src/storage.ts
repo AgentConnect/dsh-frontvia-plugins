@@ -102,6 +102,17 @@ export class Vault {
       .map((r) => String(r.id))
       .filter((k) => k.startsWith(prefix));
   }
+  transaction<T>(fn: () => T): T {
+    this.db.exec("BEGIN IMMEDIATE");
+    try {
+      const result = fn();
+      this.db.exec("COMMIT");
+      return result;
+    } catch (error) {
+      this.db.exec("ROLLBACK");
+      throw error;
+    }
+  }
   close() {
     this.db.close();
     this.lease.close();

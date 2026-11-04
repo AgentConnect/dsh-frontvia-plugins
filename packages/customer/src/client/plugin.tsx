@@ -1,3 +1,6 @@
+import { useAccountRevision } from "./account.js";
+import { accountRequest } from "./account-request.js";
+import { FrontviaAccountPanel } from "./personal-panel.js";
 import React, { useEffect, useId, useState } from "react";
 import {
   ArrowRight,
@@ -18,7 +21,8 @@ import {
   ShoppingCart,
   Truck,
 } from "lucide-react";
-import { historyDefinition, readResult } from "./history.js";
+import { historyDefinition, shoppingReference } from "./history.js";
+import { ToolFeedback } from "./tool-feedback.js";
 import {
   Alert,
   AlertDescription,
@@ -48,6 +52,7 @@ import {
 } from "./ui.js";
 // @ts-ignore esbuild loads CSS as text.
 import styles from "./styles.css";
+import { ConsultationCard } from "./consultation.js";
 export const inject = [
   "slots",
   "connection",
@@ -78,6 +83,9 @@ const image = (p: any) => {
   }
 };
 const errorText: Record<string, string> = {
+  PERSONAL_ACCOUNT_CHANGED: "请登录原个人账号后查看此记录。",
+  PERSONAL_LOGIN_REQUIRED: "请先到 Frontvia 服务登录个人账号。",
+  PERSONAL_CHAT_ACCOUNT_CHANGED: "此聊天已用于另一账号，请新建聊天后连接商家。",
   FLOW_NOT_OWNED: "这份购物进度不属于当前会话，请回到原聊天查看。",
   NETWORK_FAILURE: "暂时无法连接商店，请稍后刷新。",
   NETWORK_TIMEOUT: "商店响应超时，请稍后刷新。",
@@ -88,8 +96,20 @@ const errorText: Record<string, string> = {
   RESOLVE_PENDING_OPERATION: "上次操作结果尚未明确，请先核对原结果。",
   ORIGINAL_RESULT_UNKNOWN: "暂未查到原操作结果，请稍后再次核对，不要重复购买。",
   CONNECTION_DISCONNECTED: "连接已断开，请在 PAP 连接页重新连接。",
+  CONNECTION_BINDING_CHANGED:
+    "PAP 连接配置已变化，请先在连接页核对原配置。购物记录已保留。",
+  CONNECTION_BINDING_REQUIRED:
+    "旧 PAP 连接缺少身份绑定信息，请在连接页查看处理说明。购物记录已保留。",
   CONFIRMATION_NOT_COMPLETED: "确认结果尚未明确，请核对原操作。",
   CONFIRMATION_RESULT_UNKNOWN: "确认回执未收到，请先核对原结果，不要重新购买。",
+  CONFIRMATION_FAILED_NO_EFFECTS:
+    "此次确认失败且未产生交易，请重新核对报价后再决定是否购买。",
+  METHOD_UNAVAILABLE: "商家当前未开放这项操作，可以继续使用已开放的服务。",
+  METHOD_NOT_ADVERTISED: "商家未发布这项接口，请刷新服务配置。",
+  PURCHASE_PROFILE_UNAVAILABLE:
+    "商家尚未为当前客户端开通购买能力，可先浏览商品。",
+  PURCHASE_CONFIRMATION_UNAVAILABLE:
+    "购买确认通道尚未就绪，请核对商家授权和本机确认凭据。",
 };
 const contactFields = [
   {
@@ -302,15 +322,16 @@ function Order({ order }: { order: any }) {
   );
 }
 export function apply(ctx: any) {
-  const call = async (op: string, payload: any = {}) => {
-    const r = await ctx.connection.rpc.call(
-      "/api",
-      `frontvia-customer/${op}`,
-      payload,
-    );
-    if (!r.ok) throw new Error(r.error.code);
-    return r.value;
-  };
+  const call = (op: string, payload: any = {}) =>
+    accountRequest(async () => {
+      const r = await ctx.connection.rpc.call(
+        "/api",
+        `frontvia-customer/${op}`,
+        payload,
+      );
+      if (!r.ok) throw new Error(r.error.code);
+      return r.value;
+    });
   function Shopping({
     ui,
     sendToAgent,
@@ -321,13 +342,16 @@ export function apply(ctx: any) {
     const [data, setData] = useState<any>(),
       [busy, setBusy] = useState(""),
       [error, setError] = useState(""),
-      [tab, setTab] = useState(ui.card),
+      [tab, setTab] = useState(ui.card === "connection" ? "products" : ui.card),
       [tick, setTick] = useState(Date.now());
     const [form, setForm] = useState<Contact>(blankContact),
       [fieldErrors, setFieldErrors] = useState<Partial<Contact>>({});
     const formId = useId();
+    const accountRevision = useAccountRevision();
     useEffect(() => {
       let live = true;
+      setData(undefined);
+      setForm(blankContact);
       call("view", ui)
         .then((v) => {
           if (live) {
@@ -341,7 +365,7 @@ export function apply(ctx: any) {
       return () => {
         live = false;
       };
-    }, [ui.flowId, ui.sessionId]);
+    }, [ui.flowId, ui.sessionId, accountRevision]);
     useEffect(() => {
       const t = setInterval(() => setTick(Date.now()), 1000);
       return () => clearInterval(t);
@@ -350,7 +374,17 @@ export function apply(ctx: any) {
       setBusy(op);
       setError("");
       try {
-        setData(await call(op, { ...ui, ...payload }));
+        const value = await call(op, { ...ui, ...payload });
+        setData(value);
+        if (
+          op === "confirm" &&
+          !value.pending &&
+          value.operation?.status === "failed" &&
+          value.operation.effects === "none"
+        ) {
+          setError("CONFIRMATION_FAILED_NO_EFFECTS");
+          return false;
+        }
       } catch (e: any) {
         setError(op === "confirm" ? "CONFIRMATION_RESULT_UNKNOWN" : e.message);
         if (op === "confirm") setData((v: any) => ({ ...v, pending: true }));
@@ -423,7 +457,9 @@ export function apply(ctx: any) {
               <CardDescription>挑选好物，安心下单</CardDescription>
             </div>
             <div className="fv-header-actions">
-              <Badge>测试商店 · Mock</Badge>
+              <Badge>
+                {data?.mockPayment ? "测试商店 · Mock" : "商家购物服务"}
+              </Badge>
               <Button
                 variant="ghost"
                 size="icon"
@@ -451,6 +487,16 @@ export function apply(ctx: any) {
               ))}
             </TabsList>
             <CardContent>
+              {(data?.cartReady === false || data?.purchaseReady === false) && (
+                <Alert>
+                  <Info aria-hidden />
+                  <AlertDescription>
+                    {data?.cartReady === false
+                      ? "当前连接仅支持浏览商品，尚未开通购物车和结算。个人账号已登录不代表购物能力已开通。"
+                      : "可以加入购物车。购买确认尚未就绪，请先完成购买服务配置。"}
+                  </AlertDescription>
+                </Alert>
+              )}
               {error && (
                 <Alert variant="destructive">
                   <Info aria-hidden />
@@ -598,14 +644,17 @@ export function apply(ctx: any) {
                               </div>
                               <Button
                                 size="sm"
-                                disabled={!!busy || !sendToAgent}
+                                disabled={
+                                  !!busy || !sendToAgent || !data.cartReady
+                                }
                                 onClick={() =>
                                   ask(
                                     `将规格 ${v.id} 加购 1 件。已有购物车请先读取最新版本。完成后展示购物车卡片。`,
                                   )
                                 }
                               >
-                                加购 1 件<ShoppingCart data-icon="inline-end" />
+                                {data.cartReady ? "加购 1 件" : "暂不可加购"}
+                                <ShoppingCart data-icon="inline-end" />
                               </Button>
                             </div>
                           ))}
@@ -944,7 +993,10 @@ export function apply(ctx: any) {
                               </p>
                               <Button
                                 disabled={
-                                  !!busy || data.pending || quoteExpired
+                                  !!busy ||
+                                  data.pending ||
+                                  quoteExpired ||
+                                  !data.purchaseReady
                                 }
                                 onClick={() =>
                                   action("confirm", {
@@ -972,7 +1024,10 @@ export function apply(ctx: any) {
                               </p>
                               <Button
                                 disabled={
-                                  !!busy || data.pending || quoteExpired
+                                  !!busy ||
+                                  data.pending ||
+                                  quoteExpired ||
+                                  !data.purchaseReady
                                 }
                                 onClick={() => action("review")}
                               >
@@ -1085,8 +1140,10 @@ export function apply(ctx: any) {
                   <Spinner />
                   正在处理…
                 </span>
+              ) : data?.mockPayment ? (
+                "测试环境 · Mock 支付"
               ) : (
-                "测试环境 · 不产生真实扣款"
+                "支付方式和金额请以结算信息为准"
               )}
             </span>
           </CardFooter>
@@ -1095,69 +1152,88 @@ export function apply(ctx: any) {
     );
   }
   function Panel() {
+    const accountRevision = useAccountRevision();
     const [rows, setRows] = useState<any[]>([]),
       [selected, setSelected] = useState<any>(),
       [error, setError] = useState(""),
       [loading, setLoading] = useState(true);
     useEffect(() => {
+      let live = true;
+      setRows([]);
+      setSelected(undefined);
+      setLoading(true);
+      setError("");
       call("list")
-        .then((v) => setRows(v.flows))
-        .catch(() => setError("购物服务未就绪，请检查 PAP 插件及本机配置。"))
-        .finally(() => setLoading(false));
-    }, []);
+        .then((v) => {
+          if (live) setRows(v.flows);
+        })
+        .catch(() => {
+          if (live) setError("Frontvia 服务未就绪，请检查插件及本机配置。");
+        })
+        .finally(() => {
+          if (live) setLoading(false);
+        });
+      return () => {
+        live = false;
+      };
+    }, [accountRevision]);
     return (
-      <div className="fv">
-        <style>{styles}</style>
-        <Card>
-          <CardHeader>
-            <div className="fv-brand">
-              <ShoppingBag aria-hidden />
-            </div>
-            <div>
-              <CardTitle>你的 Frontvia 购物</CardTitle>
-              <CardDescription>
-                继续之前的购物，或在聊天中开始新的选购。
-              </CardDescription>
-            </div>
-          </CardHeader>
-          <CardContent>
-            {error && (
-              <Alert variant="destructive">
-                <Info aria-hidden />
-                <AlertDescription>{error}</AlertDescription>
-              </Alert>
-            )}
-            {loading ? (
-              <Skeleton className="fv-skeleton-block" />
-            ) : rows.length ? (
-              <div className="fv-progress-list">
-                {rows.map((f) => (
-                  <Button
-                    variant="outline"
-                    key={f.flowId}
-                    onClick={() => setSelected({ ...f, card: "cart" })}
-                  >
-                    <span>
-                      {f.siteId} · {new Date(f.updatedAt).toLocaleString()}
-                    </span>
-                    <ArrowRight data-icon="inline-end" />
-                  </Button>
-                ))}
+      <div className="fv-viewport">
+        <div className="fv">
+          <style>{styles}</style>
+          <FrontviaAccountPanel call={call} />
+          <Card>
+            <CardHeader>
+              <div className="fv-brand">
+                <ShoppingBag aria-hidden />
               </div>
-            ) : (
-              !error && (
-                <Empty>
-                  <ShoppingBag aria-hidden />
-                  <EmptyTitle>从一句话开始购物</EmptyTitle>
-                  <EmptyDescription>
-                    在聊天中说“搜索商品并帮我下单”，购物进度会保留在这里。
-                  </EmptyDescription>
-                </Empty>
-              )
-            )}
-          </CardContent>
-        </Card>
-        {selected && <Shopping key={selected.flowId} ui={selected} />}
+              <div>
+                <CardTitle>你的 Frontvia 服务</CardTitle>
+                <CardDescription>
+                  继续商家咨询、知识查询或购物；在 PAP 连接中添加商家服务。
+                </CardDescription>
+              </div>
+            </CardHeader>
+            <CardContent>
+              {error && (
+                <Alert variant="destructive">
+                  <Info aria-hidden />
+                  <AlertDescription>{error}</AlertDescription>
+                </Alert>
+              )}
+              {loading ? (
+                <Skeleton className="fv-skeleton-block" />
+              ) : rows.length ? (
+                <div className="fv-progress-list">
+                  {rows.map((f) => (
+                    <Button
+                      variant="outline"
+                      key={f.flowId}
+                      onClick={() => setSelected(shoppingReference(f))}
+                    >
+                      <span>
+                        {f.siteId} · {new Date(f.updatedAt).toLocaleString()}
+                      </span>
+                      <ArrowRight data-icon="inline-end" />
+                    </Button>
+                  ))}
+                </div>
+              ) : (
+                !error && (
+                  <Empty>
+                    <ShoppingBag aria-hidden />
+                    <EmptyTitle>连接商家，开始咨询</EmptyTitle>
+                    <EmptyDescription>
+                      登录后，在 PAP
+                      连接中添加并连接商家，再新建聊天开始咨询。服务记录会保留在这里。
+                    </EmptyDescription>
+                  </Empty>
+                )
+              )}
+            </CardContent>
+          </Card>
+          {selected && <FlowCard key={selected.flowId} ui={selected} />}
+        </div>
       </div>
     );
   }
@@ -1165,12 +1241,28 @@ export function apply(ctx: any) {
     const cards = turn.data.get("frontvia-customer-cards")?.cards ?? [];
     const c = cards.at(-1);
     return c ? (
-      <Shopping
+      <FlowCard
         key={`${c.ui.flowId}:${c.callId}`}
         ui={c.ui}
         sendToAgent={sendToAgent}
       />
     ) : null;
+  }
+  function FlowCard({
+    ui,
+    sendToAgent,
+  }: {
+    ui: UI;
+    sendToAgent?: (s: string) => Promise<unknown>;
+  }) {
+    return ui.card === "consultation" ? (
+      <section className="fv" aria-label="Frontvia 商家咨询">
+        <style>{styles}</style>
+        <ConsultationCard ui={ui} call={call} sendToAgent={sendToAgent} />
+      </section>
+    ) : (
+      <Shopping ui={ui} sendToAgent={sendToAgent} />
+    );
   }
   ctx.slots.inject("main", () =>
     ctx.slots.register({ name: "main", key: "frontvia-customer" }, Panel),
@@ -1181,7 +1273,7 @@ export function apply(ctx: any) {
         name: "sidebar.panellist",
         id: "frontvia-customer",
         order: 31,
-        label: () => "Frontvia 购物",
+        label: () => "Frontvia 服务",
       },
       () => <span aria-hidden>◇</span>,
     ),
@@ -1210,20 +1302,13 @@ export function apply(ctx: any) {
       "frontvia_cart",
       "frontvia_checkout",
       "frontvia_orders",
+      "frontvia_consultation",
+      "frontvia_knowledge",
     ])
       ctx.slots.register(
         { name: "tool.call.toolview", key },
         ({ phase, block }: any) => (
-          <p role="status">
-            {phase !== "result"
-              ? "正在查询 Frontvia…"
-              : readResult(block)
-                ? "购物结果已更新，详情见回复下方卡片。"
-                : block.content
-                    ?.filter((b: any) => b.type === "text")
-                    .map((b: any) => b.text)
-                    .join("\n")}
-          </p>
+          <ToolFeedback name={key} phase={phase} block={block} />
         ),
       );
   });

@@ -32,17 +32,59 @@ export class PapProvider extends Service {
   sites() {
     return this.core?.sites() ?? [];
   }
+  removedSites() {
+    return this.core?.removedSites() ?? [];
+  }
+  removeSite(siteId: string, revision: string) {
+    return this.ready().removeSite(siteId, revision);
+  }
+  restoreSite(siteId: string, revision: string) {
+    return this.ready().restoreSite(siteId, revision);
+  }
   status(ref?: string) {
     return this.core ? this.core.status(ref) : [];
   }
+  canAccess(ref: string) {
+    return this.ready().canAccess(ref);
+  }
   identity(ref: string) {
     return this.ready().identity(ref);
+  }
+  signResourceStatement(
+    ref: string,
+    typ: string,
+    claims: Record<string, unknown>,
+  ) {
+    return this.ready().signResourceStatement(ref, typ, claims);
   }
   discover(site: string) {
     return this.ready().discover(site);
   }
   connect(site: string) {
     return this.ready().connect(site);
+  }
+  clientStatus() {
+    return this.ready().clientStatus();
+  }
+  // Host-only account operations for the Frontvia owner UI. Keep the existing
+  // encrypted session owner so PAP grants and account switching share one fence.
+  personalStatus() {
+    return this.ready().personal.refresh();
+  }
+  requestPersonalCode(phone: string) {
+    return this.ready().personal.requestCode(phone);
+  }
+  verifyPersonalCode(code: string) {
+    return this.ready().personal.verify(code);
+  }
+  logoutPersonal() {
+    return this.ready().personal.logout();
+  }
+  inspect(input: unknown) {
+    return this.ready().inspect(input);
+  }
+  importResources(previewId: string, resources: string[]) {
+    return this.ready().importResources(previewId, resources);
   }
   authorize(ref: string, scopes: string[]) {
     return this.ready().authorize(ref, scopes);
@@ -53,8 +95,14 @@ export class PapProvider extends Service {
   disconnect(ref: string) {
     return this.ready().disconnect(ref);
   }
-  request(ref: string, method: string, params: unknown, signal?: AbortSignal) {
-    return this.ready().request(ref, method, params, signal);
+  request(
+    ref: string,
+    method: string,
+    params: unknown,
+    signal?: AbortSignal,
+    options?: { maxResponseBytes: number },
+  ) {
+    return this.ready().request(ref, method, params, signal, options);
   }
 }
 declare module "@deepseek-ai/cordis" {
@@ -97,6 +145,10 @@ export async function apply(ctx: Context, config: Config = {}) {
     "disconnect",
     "authorize",
     "callback",
+    "inspect",
+    "import",
+    "remove",
+    "restore",
   ])
     ctx.effect(() =>
       ctx.connection.fetch.register({
@@ -119,13 +171,42 @@ export async function apply(ctx: Context, config: Config = {}) {
           try {
             const a = message.payload as any;
             let value: any;
-            if (operation === "status")
+            if (operation === "status") {
+              const personal = core ? await core.personal.refresh() : undefined;
               value = {
                 configured: !!core,
                 sites: service.sites(),
+                removedSites: service.removedSites(),
                 connections: service.status(),
+                personal: personal && {
+                  configured: personal.configured,
+                  signedIn: personal.signedIn,
+                  phone: personal.phone,
+                  expiresAt: personal.expiresAt,
+                  logoutPending: personal.logoutPending,
+                },
+                client: core ? await service.clientStatus() : undefined,
               };
-            else if (operation === "connect")
+            } else if (operation === "inspect")
+              value = await service.inspect(a.configuration);
+            else if (operation === "import")
+              value = await service.importResources(a.previewId, a.resources);
+            else if (operation === "remove" || operation === "restore") {
+              if (
+                !a ||
+                Object.keys(a).sort().join(",") !== "revision,siteId" ||
+                typeof a.siteId !== "string" ||
+                !a.siteId ||
+                a.siteId.length > 128 ||
+                typeof a.revision !== "string" ||
+                !/^[A-Za-z0-9_-]{43}$/.test(a.revision)
+              )
+                fail("INVALID_CONFIGURATION_ACTION");
+              value =
+                operation === "remove"
+                  ? await service.removeSite(a.siteId, a.revision)
+                  : await service.restoreSite(a.siteId, a.revision);
+            } else if (operation === "connect")
               value = await service.connect(String(a.siteId));
             else if (operation === "disconnect")
               value = await service.disconnect(String(a.connectionRef));

@@ -41,7 +41,7 @@ const env = {
   DSH_TELEMETRY_DISABLED: "1",
 };
 patchText +=
-  '- id: preset-standard\n  config:\n    id: standard\n    order: 1\n    plugins:\n      - id: persona\n        name: "@deepseek-ai/dsh-persona"\n        config:\n          prefix: "你是 Frontvia 购物助手。使用已安装的五组 Frontvia 工具帮助用户购物，购买必须由用户点击卡片确认。"\n';
+  '- id: preset-standard\n  config:\n    id: standard\n    order: 1\n    plugins:\n      - id: persona\n        name: "@deepseek-ai/dsh-persona"\n        config:\n          prefix: "你是 Frontvia 客户助手。使用已安装的 Frontvia 工具访问商家发布并授权的咨询、公开知识与购物服务。先查询连接与服务能力，按资源选择流程；购买必须由用户点击卡片确认。"\n';
 for (const id of ["preset-ptc", "preset-minimal", "preset-cordis"])
   patchText += `- id: ${id}\n  disabled: true\n`;
 if (process.argv.includes("--real-model")) {

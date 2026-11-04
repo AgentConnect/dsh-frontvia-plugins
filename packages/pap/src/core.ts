@@ -1,3 +1,4 @@
+import { PersonalAccount, type PersonalConfig } from "./personal.js";
 import {
   createHash,
   createPrivateKey,
@@ -7,8 +8,20 @@ import {
   randomUUID,
   sign,
 } from "node:crypto";
-import { Vault, Serial, fail } from "./storage.js";
-import { httpsTransport, type Transport, type Target } from "./network.js";
+import { Vault, Serial, fail, canonical } from "./storage.js";
+import {
+  httpsTransport,
+  publicTransport,
+  type Transport,
+  type Target,
+} from "./network.js";
+import {
+  inspectImport,
+  importSchema,
+  type ImportedSite,
+  type ResourceDescription,
+} from "./discovery.js";
+export type { ImportedSite, ResourceDescription } from "./discovery.js";
 export { Vault, Serial, PapError, fail, canonical } from "./storage.js";
 export type { Transport, Target } from "./network.js";
 export type Secrets = {
@@ -21,6 +34,11 @@ export type Site = {
   domain: string;
   issuer: string;
   resource: string;
+  imported?: boolean;
+  description?: ResourceDescription;
+  service?: ImportedSite["service"];
+  allowedClientIds?: string[];
+  discoveryUrl?: string;
 };
 export type PapConfig = {
   clientId: string;
@@ -31,13 +49,23 @@ export type PapConfig = {
   targets: Target[];
   caFile?: string;
   dataDir: string;
+  personal?: PersonalConfig;
 };
 type Connection = {
   id: string;
   siteId: string;
   user: string;
+  personalIdentity?: string;
+  personalGeneration?: string;
   proofKey: string;
   metadata: any;
+  binding?: {
+    clientId: string;
+    callback: string;
+    domain: string;
+    issuer: string;
+    resource: string;
+  };
   sessionId?: string;
   accessToken?: string;
   refreshToken?: string;
@@ -58,7 +86,13 @@ export function jwt(key: string, header: any, claims: any) {
 export class PapService {
   readonly apiVersion = 1;
   private serial = new Serial();
+  readonly personal: PersonalAccount;
   private wire: Transport;
+  private inspectionWire?: Transport;
+  private previews = new Map<
+    string,
+    { expires: number; sites: ImportedSite[] }
+  >();
   constructor(
     readonly config: PapConfig,
     private secrets: Secrets,
@@ -75,50 +109,320 @@ export class PapService {
       )
     )
       fail("INVALID_CLIENT_CONFIGURATION");
-    this.wire = transport ?? httpsTransport(config.targets, config.caFile);
+    this.inspectionWire = transport;
+    const fixed = httpsTransport(config.targets, config.caFile);
+    this.wire =
+      transport ??
+      (async (request) => {
+        if (
+          config.targets.some((t) => t.origin === new URL(request.url).origin)
+        )
+          return fixed(request);
+        const origins = this.allSites()
+          .filter((s) => s.imported)
+          .flatMap((s) => [
+            new URL(`https://${s.domain}`).origin,
+            new URL(s.issuer).origin,
+            new URL(s.resource).origin,
+          ]);
+        return publicTransport([
+          ...origins,
+          ...(config.personal
+            ? [config.personal.origin, ...config.personal.tokenOrigins]
+            : []),
+        ])(request);
+      });
+    this.personal = new PersonalAccount(config.personal, vault, this.wire);
+  }
+  private configuredSites(): Site[] {
+    return [
+      ...this.config.sites,
+      ...(this.vault.get<ImportedSite[]>("imported-sites") ?? []),
+    ];
+  }
+  private allSites(): Site[] {
+    const removed = this.vault.get<string[]>("removed-sites") ?? [];
+    return this.configuredSites().filter((s) => !removed.includes(s.id));
+  }
+  private siteRevision(site: Site) {
+    return hash(
+      canonical(site) +
+        "\0" +
+        (this.vault.get<string>(`site-generation:${site.id}`) ?? "initial"),
+    );
   }
   private site(id: string) {
     return (
-      this.config.sites.find((x) => x.id === id) ?? fail("SITE_NOT_APPROVED")
+      this.allSites().find((x) => x.id === id) ?? fail("SITE_NOT_APPROVED")
     );
   }
-  private load(ref: string) {
+  private stored(ref: string) {
     return (
       this.vault.get<Connection>(`connection:${ref}`) ??
       fail("CONNECTION_REQUIRED")
     );
   }
+  private binding(siteId: string) {
+    const { domain, issuer, resource } = this.site(siteId);
+    return {
+      clientId: this.config.clientId,
+      callback: this.config.callback,
+      domain,
+      issuer,
+      resource,
+    };
+  }
+  private bindingError(c: Connection) {
+    if (c.personalIdentity || this.config.personal) {
+      try {
+        if (c.personalIdentity !== this.personal.identity())
+          return "PERSONAL_ACCOUNT_CHANGED";
+      } catch {
+        return "PERSONAL_LOGIN_REQUIRED";
+      }
+    }
+    if (!this.allSites().some((s) => s.id === c.siteId))
+      return "SITE_NOT_APPROVED";
+    if (!c.binding) return "CONNECTION_BINDING_REQUIRED";
+    const expected = this.binding(c.siteId);
+    if (
+      Object.entries(expected).some(
+        ([key, value]) => c.binding![key as keyof typeof expected] !== value,
+      )
+    )
+      return "CONNECTION_BINDING_CHANGED";
+  }
+  private load(ref: string) {
+    const c = this.stored(ref),
+      error = this.bindingError(c);
+    if (error) fail(error);
+    return c;
+  }
   private save(c: Connection) {
     this.vault.set(`connection:${c.id}`, c);
   }
   private public(c: Connection) {
-    const site = this.site(c.siteId);
+    const site = this.allSites().find((s) => s.id === c.siteId),
+      bindingError = this.bindingError(c);
     return {
       connectionRef: c.id,
-      siteId: site.id,
-      label: site.label,
-      domain: site.domain,
-      issuer: site.issuer,
-      resource: site.resource,
+      siteId: c.siteId,
+      label: site?.label ?? c.siteId,
+      domain: c.binding?.domain ?? site?.domain,
+      issuer: c.binding?.issuer ?? site?.issuer,
+      resource: c.binding?.resource ?? site?.resource,
+      ...(bindingError ? { bindingError } : {}),
       signedIn: !!c.signedIn,
+      ...(c.personalIdentity ? { personalSignedIn: true } : {}),
       connected:
-        !c.disconnected && !!c.accessToken && (c.expiresAt ?? 0) > now(),
+        !bindingError &&
+        !c.disconnected &&
+        (!c.personalIdentity ||
+          c.personalGeneration === this.personal.current().generation) &&
+        !!c.accessToken &&
+        (c.expiresAt ?? 0) > now(),
       expiresAt: c.expiresAt,
     };
   }
   sites() {
-    return this.config.sites.map((s) => ({
+    return this.allSites().map((s) => ({
       id: s.id,
+      revision: this.siteRevision(s),
       label: s.label,
       domain: s.domain,
+      issuer: s.issuer,
+      resource: s.resource,
+      description: s.description,
+      service: s.service,
+      clientAllowed: undefined,
     }));
+  }
+  removedSites() {
+    const removed = this.vault.get<string[]>("removed-sites") ?? [];
+    return this.configuredSites()
+      .filter((s) => removed.includes(s.id))
+      .map((s) => ({
+        id: s.id,
+        label: s.label,
+        domain: s.domain,
+        resource: s.resource,
+        revision: this.siteRevision(s),
+      }));
+  }
+  /** Owner UI only. Retain identity/history references; never cancel remote orders. */
+  async removeSite(siteId: string, expectedRevision: string) {
+    return this.serial.run("imports", () =>
+      this.serial.run(`site:${siteId}`, async () => {
+        const refs = this.vault
+          .keys("connection:")
+          .filter((key) => this.vault.get<Connection>(key)!.siteId === siteId);
+        const lockConnections = async (index: number): Promise<void> => {
+          if (index < refs.length)
+            return this.serial.run(
+              refs[index].slice("connection:".length),
+              () => lockConnections(index + 1),
+            );
+          const site = this.site(siteId);
+          if (this.siteRevision(site) !== expectedRevision)
+            fail("SITE_REVISION_CHANGED");
+          this.vault.transaction(() => {
+            for (const key of refs) {
+              const connection = this.vault.get<Connection>(key)!;
+              delete connection.accessToken;
+              delete connection.refreshToken;
+              delete connection.pending;
+              connection.disconnected = true;
+              this.save(connection);
+            }
+            this.vault.set("removed-sites", [
+              ...new Set([
+                ...(this.vault.get<string[]>("removed-sites") ?? []),
+                siteId,
+              ]),
+            ]);
+            this.vault.set(`site-generation:${siteId}`, randomUUID());
+          });
+          // A preview made before removal cannot silently re-enable the service.
+          this.previews.clear();
+        };
+        await lockConnections(0);
+        return { removed: true, siteId };
+      }),
+    );
+  }
+  async restoreSite(siteId: string, expectedRevision: string) {
+    return this.serial.run("imports", () =>
+      this.serial.run(`site:${siteId}`, async () => {
+        const removed = this.vault.get<string[]>("removed-sites") ?? [];
+        const site = this.configuredSites().find((s) => s.id === siteId);
+        if (!site || !removed.includes(siteId)) fail("SITE_NOT_REMOVED");
+        if (this.siteRevision(site) !== expectedRevision)
+          fail("SITE_REVISION_CHANGED");
+        this.vault.transaction(() => {
+          this.vault.set(
+            "removed-sites",
+            removed.filter((id) => id !== siteId),
+          );
+          this.vault.set(`site-generation:${siteId}`, randomUUID());
+        });
+        return { restored: true, siteId };
+      }),
+    );
+  }
+  async clientStatus() {
+    return {
+      clientId: this.config.clientId,
+      callback: this.config.callback,
+      signingKeyConfigured: !!(await this.secrets.get(
+        this.config.signingKeyRef,
+      )),
+    };
+  }
+  /** Owner UI only. Discovery is not authentication or business authorization. */
+  async inspect(input: unknown) {
+    const config = importSchema.parse(input),
+      origins = [
+        new URL(config.discovery_url).origin,
+        ...config.sites.map((s) => new URL(s.issuer).origin),
+      ];
+    const sites = await inspectImport(
+      config,
+      this.inspectionWire ??
+        ((request) =>
+          this.config.targets.some(
+            (t) => t.origin === new URL(request.url).origin,
+          )
+            ? httpsTransport(this.config.targets, this.config.caFile)(request)
+            : publicTransport(origins)(request)),
+    );
+    const previewId = randomUUID();
+    for (const [key, p] of this.previews)
+      if (p.expires < Date.now()) this.previews.delete(key);
+    if (this.previews.size >= 10)
+      this.previews.delete(this.previews.keys().next().value!);
+    this.previews.set(previewId, { expires: Date.now() + 600000, sites });
+    return {
+      previewId,
+      client: await this.clientStatus(),
+      sites: sites.map((s) => ({
+        ...s,
+        clientAllowed: undefined,
+      })),
+      verification: "discovered",
+    };
+  }
+  async importResources(previewId: string, resources: string[]) {
+    return this.serial.run("imports", async () => {
+      const preview = this.previews.get(previewId);
+      if (!preview || preview.expires < Date.now())
+        fail("IMPORT_PREVIEW_EXPIRED");
+      if (
+        !Array.isArray(resources) ||
+        !resources.length ||
+        resources.length > 20 ||
+        new Set(resources).size !== resources.length
+      )
+        fail("INVALID_IMPORT_SELECTION");
+      const selected = resources.map(
+        (resource) =>
+          preview.sites.find((s) => s.resource === resource) ??
+          fail("INVALID_IMPORT_SELECTION"),
+      );
+      const prior = this.vault.get<ImportedSite[]>("imported-sites") ?? [];
+      for (const site of selected) {
+        const same = this.configuredSites().find((s) => s.id === site.id);
+        if (
+          same &&
+          (!same.imported ||
+            same.issuer !== site.issuer ||
+            same.resource !== site.resource ||
+            same.domain !== site.domain)
+        )
+          fail("SITE_BINDING_CONFLICT");
+      }
+      const next = [
+        ...prior.filter((s) => !selected.some((n) => n.id === s.id)),
+        ...selected,
+      ];
+      if (next.length > 100) fail("SITE_LIMIT");
+      this.vault.transaction(() => {
+        this.vault.set("imported-sites", next);
+        this.vault.set(
+          "removed-sites",
+          (this.vault.get<string[]>("removed-sites") ?? []).filter(
+            (id) => !selected.some((s) => s.id === id),
+          ),
+        );
+        for (const site of selected)
+          this.vault.set(`site-generation:${site.id}`, randomUUID());
+      });
+      this.previews.delete(previewId);
+      return { sites: this.sites(), verification: "discovered" };
+    });
   }
   status(ref?: string) {
     return ref
-      ? this.public(this.load(ref))
+      ? (() => {
+          const c = this.stored(ref);
+          if (!this.visible(c)) fail("PERSONAL_ACCOUNT_CHANGED");
+          return this.public(c);
+        })()
       : this.vault
           .keys("connection:")
-          .map((k) => this.public(this.vault.get<Connection>(k)!));
+          .map((k) => this.vault.get<Connection>(k)!)
+          .filter((c) => this.visible(c))
+          .map((c) => this.public(c));
+  }
+  canAccess(ref: string) {
+    return this.visible(this.stored(ref));
+  }
+  private visible(c: Connection) {
+    if (!c.personalIdentity && !this.config.personal) return true;
+    try {
+      return c.personalIdentity === this.personal.identity();
+    } catch {
+      return false;
+    }
   }
   /** Host-only subject binding; never returned by Agent tools. */
   identity(ref: string) {
@@ -127,10 +431,37 @@ export class PapService {
     return {
       clientId: this.config.clientId,
       userId: c.user,
+      ...(c.personalIdentity ? { personalSignedIn: true } : {}),
       issuer: s.issuer,
       resource: s.resource,
       signedIn: !!c.signedIn,
     };
+  }
+  /** Host-only, resource-bound statement. No key material leaves the PAP owner. */
+  signResourceStatement(
+    ref: string,
+    typ: string,
+    claims: Record<string, unknown>,
+  ) {
+    const c = this.load(ref),
+      site = this.site(c.siteId);
+    if (!c.personalIdentity) fail("PERSONAL_LOGIN_REQUIRED");
+    if (
+      typ !== "frontvia-personal-purchase+jwt" ||
+      claims.client_id !== this.config.clientId ||
+      claims.issuer !== site.issuer ||
+      claims.resource !== site.resource
+    )
+      fail("STATEMENT_BINDING_MISMATCH");
+    return jwt(
+      c.proofKey,
+      {
+        alg: "ES256",
+        typ,
+        jwk: createPublicKey(c.proofKey).export({ format: "jwk" }),
+      },
+      claims,
+    );
   }
   async discover(siteId: string) {
     const s = this.site(siteId),
@@ -208,6 +539,9 @@ export class PapService {
     );
   }
   private async token(c: Connection, fields: Record<string, string>) {
+    const generation = c.personalIdentity
+      ? this.personal.current().generation
+      : undefined;
     const auth = await this.fields(c);
     delete (auth as Partial<typeof auth>).assertion;
     const endpoint = c.metadata.token_endpoint;
@@ -229,7 +563,8 @@ export class PapService {
       value.expires_in <= 0
     )
       fail("INVALID_TOKEN_RESPONSE");
-    if (c.sessionId && c.sessionId !== value.session_id)
+    if (generation) this.personal.assert(generation);
+    if (!c.personalIdentity && c.sessionId && c.sessionId !== value.session_id)
       fail("SESSION_CHANGED");
     if (c.signedIn && !value.signed_in) fail("SESSION_DOWNGRADE");
     Object.assign(c, {
@@ -238,6 +573,7 @@ export class PapService {
       signedIn: value.signed_in,
       expiresAt: now() + value.expires_in,
       disconnected: false,
+      personalGeneration: generation,
     });
     if (value.refresh_token) c.refreshToken = value.refresh_token;
     this.save(c);
@@ -245,54 +581,101 @@ export class PapService {
   }
   async connect(siteId: string) {
     return this.serial.run(`site:${siteId}`, async () => {
-      const { metadata } = await this.discover(siteId);
+      const personalIdentity = this.config.personal
+        ? this.personal.identity()
+        : undefined;
+      const generation = this.config.personal
+        ? this.personal.current().generation
+        : undefined;
+      const site = this.site(siteId);
       let c = this.vault
         .keys("connection:")
         .map((k) => this.vault.get<Connection>(k)!)
-        .find((c) => c.siteId === siteId);
+        .find(
+          (c) => c.siteId === siteId && c.personalIdentity === personalIdentity,
+        );
+      if (c) this.load(c.id);
+      const { metadata } = await this.discover(siteId);
+      if (generation) this.personal.assert(generation);
       if (!c) {
         c = {
           id: randomUUID(),
           siteId,
-          user: random(),
+          user: personalIdentity
+            ? hash(personalIdentity + "\0" + site.issuer)
+            : this.subject(site.issuer),
+          personalIdentity,
           proofKey: generateKeyPairSync("ec", {
             namedCurve: "prime256v1",
             privateKeyEncoding: { type: "pkcs8", format: "pem" },
             publicKeyEncoding: { type: "spki", format: "pem" },
           }).privateKey,
           metadata,
+          binding: this.binding(siteId),
         };
         this.save(c);
-      } else {
-        c.metadata = metadata;
-        this.save(c);
       }
-      if (c.disconnected && c.signedIn)
-        fail("ACCOUNT_REAUTHORIZATION_REQUIRED");
-      return this.renew(c.id);
-    });
-  }
-  async renew(ref: string) {
-    return this.serial.run(ref, async () => {
-      const c = this.load(ref);
-      if (c.signedIn) {
-        if (!c.refreshToken || c.disconnected)
-          fail("ACCOUNT_REAUTHORIZATION_REQUIRED");
-        return this.token(c, {
-          grant_type: "refresh_token",
-          refresh_token: c.refreshToken,
-          session_id: c.sessionId!,
-        });
-      }
-      return this.token(c, {
-        grant_type: "urn:ietf:params:oauth:grant-type:jwt-bearer",
-        assertion: (await this.fields(c)).assertion,
-        resource: this.site(c.siteId).resource,
-        ...(c.sessionId ? { session_id: c.sessionId } : {}),
+      const ref = c.id;
+      return this.serial.run(ref, async () => {
+        const current = this.load(ref);
+        current.metadata = metadata;
+        this.save(current);
+        return this.renewConnection(current);
       });
     });
   }
+  private subject(issuer: string) {
+    const key = `subject:${hash(this.config.clientId + "\0" + issuer)}`;
+    let user = this.vault.get<string>(key);
+    if (!user) {
+      user =
+        this.vault
+          .keys("connection:")
+          .map((k) => this.vault.get<Connection>(k)!)
+          .find(
+            (c) =>
+              c.binding?.clientId === this.config.clientId &&
+              c.binding?.issuer === issuer,
+          )?.user ?? random();
+      this.vault.set(key, user);
+    }
+    return user;
+  }
+  async renew(ref: string) {
+    return this.serial.run(ref, () => {
+      const c = this.load(ref);
+      if (c.disconnected) fail("CONNECTION_DISCONNECTED");
+      return this.renewConnection(c);
+    });
+  }
+  private async renewConnection(c: Connection) {
+    if (c.personalIdentity) {
+      this.load(c.id);
+      return this.token(c, {
+        grant_type: "urn:frontvia:params:oauth:grant-type:personal",
+        personal_token: this.personal.token(c.metadata.token_endpoint),
+        resource: this.site(c.siteId).resource,
+      });
+    }
+    if (c.signedIn) {
+      if (!c.refreshToken || c.disconnected)
+        fail("ACCOUNT_REAUTHORIZATION_REQUIRED");
+      return this.token(c, {
+        grant_type: "refresh_token",
+        refresh_token: c.refreshToken,
+        session_id: c.sessionId!,
+      });
+    }
+    return this.token(c, {
+      grant_type: "urn:ietf:params:oauth:grant-type:jwt-bearer",
+      assertion: (await this.fields(c)).assertion,
+      resource: this.site(c.siteId).resource,
+      ...(c.sessionId ? { session_id: c.sessionId } : {}),
+    });
+  }
   async authorize(ref: string, scopes: string[]) {
+    if (this.load(ref).personalIdentity)
+      fail("PERSONAL_COMMERCE_AUTHORIZATION_UNAVAILABLE");
     return this.serial.run(ref, async () => {
       const c = this.load(ref);
       if (!c.sessionId) fail("SESSION_REQUIRED");
@@ -375,32 +758,53 @@ export class PapService {
     method: string,
     params: unknown,
     signal?: AbortSignal,
+    options?: { maxResponseBytes: number },
   ) {
-    let c = this.load(ref);
-    if (c.disconnected) fail("CONNECTION_DISCONNECTED");
-    if (!c.accessToken || (c.expiresAt ?? 0) <= now() + 10) {
-      await this.renew(ref);
-      c = this.load(ref);
-    }
-    const url = this.site(c.siteId).resource,
-      id = randomUUID();
-    const reply = await this.wire({
-      url,
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        Authorization: `DPoP ${c.accessToken}`,
-        DPoP: this.proof(c, url, c.accessToken),
-      },
-      body: JSON.stringify({ jsonrpc: "2.0", id, method, params }),
-      signal,
+    return this.serial.run(ref, async () => {
+      signal?.throwIfAborted();
+      let c = this.load(ref);
+      const site = this.site(c.siteId);
+      if (site.description && !site.description.methods.includes(method))
+        fail("METHOD_NOT_ADVERTISED");
+      if (c.disconnected) fail("CONNECTION_DISCONNECTED");
+      if (
+        c.personalIdentity &&
+        c.personalGeneration !== this.personal.current().generation
+      ) {
+        delete c.accessToken;
+        delete c.sessionId;
+      }
+      const generation = c.personalIdentity
+        ? this.personal.current().generation
+        : undefined;
+      if (!c.accessToken || (c.expiresAt ?? 0) <= now() + 10) {
+        await this.renewConnection(c);
+        c = this.load(ref);
+      }
+      const url = this.site(c.siteId).resource,
+        id = randomUUID();
+      const reply = await this.wire({
+        url,
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `DPoP ${c.accessToken}`,
+          DPoP: this.proof(c, url, c.accessToken),
+        },
+        body: JSON.stringify({ jsonrpc: "2.0", id, method, params }),
+        signal,
+        timeoutMs: 45000,
+        maxResponseBytes: options?.maxResponseBytes,
+      });
+      if (generation) this.personal.assert(generation);
+      this.load(ref);
+      if (
+        reply?.jsonrpc !== "2.0" ||
+        reply.id !== id ||
+        Boolean("result" in reply) === Boolean("error" in reply)
+      )
+        fail("INVALID_RPC_RESPONSE");
+      return reply;
     });
-    if (
-      reply?.jsonrpc !== "2.0" ||
-      reply.id !== id ||
-      Boolean("result" in reply) === Boolean("error" in reply)
-    )
-      fail("INVALID_RPC_RESPONSE");
-    return reply;
   }
 }

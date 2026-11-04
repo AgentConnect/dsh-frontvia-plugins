@@ -29,6 +29,32 @@
   container-type: inline-size;
   text-align: left;
 }
+.fv-viewport {
+  flex: 1;
+  height: 100%;
+  min-height: 0;
+  min-width: 0;
+  overflow: auto;
+}
+.fv .fv-consult-message {
+  border: 1px solid var(--fv-border);
+  border-radius: 10px;
+  padding: 16px;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+.fv .fv-consult-actions {
+  display: flex;
+  gap: 12px;
+  flex-wrap: wrap;
+  margin-top: 20px;
+}
+.fv h4 svg {
+  width: 16px;
+  height: 16px;
+  vertical-align: middle;
+  margin-right: 6px;
+}
 .fv *,
 .fv *::before,
 .fv *::after {
@@ -790,4 +816,54 @@
 }
 .fv .fv-summary .fv-line-price {
   grid-column: 2;
+}
+
+.fv .fv-personal {
+  padding: 24px;
+  display: grid;
+  gap: 16px;
+  margin-bottom: 24px;
+}
+.fv .fv-personal h3 {
+  font-size: 18px;
+  font-weight: 400;
+  margin: 0 0 8px;
+}
+.fv .fv-personal form {
+  display: grid;
+  gap: 16px;
+  max-width: 420px;
+}
+.fv .fv-personal-actions {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 12px;
+}
+.fv.fv-tool-feedback {
+  margin: 8px 0;
+  display: grid;
+  gap: 8px;
+}
+.fv.fv-tool-feedback ul {
+  list-style: none;
+  padding: 0;
+  margin: 0;
+  border: 1px solid var(--fv-border);
+  border-radius: 10px;
+}
+.fv.fv-tool-feedback li {
+  display: flex;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 8px 16px;
+  padding: 10px 14px;
+  overflow-wrap: anywhere;
+}
+.fv.fv-tool-feedback li + li {
+  border-top: 1px solid var(--fv-border);
+}
+.fv .fv-tool-price {
+  color: var(--fv-muted);
+  white-space: nowrap;
 }

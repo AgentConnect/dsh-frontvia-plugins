@@ -1,3 +1,19 @@
+/** Only pass the UI route's public reference, never list-row metadata. */
+export function shoppingReference(flow: {
+  flowId: string;
+  sessionId: string;
+  kind?: string;
+}) {
+  return {
+    flowId: flow.flowId,
+    sessionId: flow.sessionId,
+    card:
+      flow.kind === "consultation"
+        ? ("consultation" as const)
+        : ("cart" as const),
+  };
+}
+
 export function readResult(message: any) {
   for (const b of message?.content ?? []) {
     if (b.type === "text") {

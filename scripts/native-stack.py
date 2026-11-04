@@ -1,10 +1,11 @@
 #!/usr/bin/env python3
 """Owned native Frontvia/PAP test stack. Never reuses a business identity or stops shared services."""
-import os, sys, json, secrets, signal, time, subprocess, threading, importlib.util, hashlib, hmac, base64, socket, shutil, traceback
+import re, os, sys, json, secrets, signal, time, subprocess, threading, importlib.util, hashlib, hmac, base64, socket, shutil, traceback
 from pathlib import Path
 ROOT=Path(__file__).resolve().parents[1]
 FRONT=Path(os.environ.get('FRONTVIA_SOURCE','/Users/howard/workspace/frontvia-core')).resolve()
-OUT=ROOT/'.local/native';OUT.mkdir(parents=True,exist_ok=True,mode=0o700)
+PERSONAL=os.environ.get('FRONTVIA_NATIVE_PERSONAL')=='1'
+OUT=Path(os.environ.get('FRONTVIA_NATIVE_OUT',ROOT/'.local/native')).resolve();OUT.mkdir(parents=True,exist_ok=True,mode=0o700)
 if (OUT/'owner.json').exists():
  prior=json.loads((OUT/'owner.json').read_text()).get('pid')
  if prior:
@@ -14,7 +15,7 @@ if (OUT/'owner.json').exists():
 (OUT/'stop').unlink(missing_ok=True)
 os.umask(0o077)
 os.environ.setdefault('FRONTVIA_PG_OWNER_CONFIG',str(ROOT/'.local/postgres/postgres-owner.json'))
-os.environ['FRONTVIA_B1_BUILD_DIR']=str(FRONT/'ecommerce/medusa-app/.local/dsh-plugin-build')
+os.environ.setdefault('FRONTVIA_B1_BUILD_DIR',str(FRONT/'ecommerce/medusa-app/.local/dsh-plugin-build'))
 FIX=OUT/'fixtures';FIX.mkdir(mode=0o700,exist_ok=True)
 os.environ['FRONTVIA_TEST_FIXTURES_DIRECTORY']=str(FIX)
 for name in ['ca.pem','server.pem','server-key.pem','c2-key.pem','c2-agent.json','c2-jwks.json']:
@@ -31,6 +32,21 @@ metadata=json.loads((FRONT/'platform/.local/fixtures/c1-agent.json').read_text()
 (FIX/'c1-agent.json').write_text(json.dumps(metadata))
 sys.path.insert(0,str(FRONT/'web/scripts'))
 spec=importlib.util.spec_from_file_location('dsh_subject',FRONT/'web/scripts/test-subject-buyer.py');subject=importlib.util.module_from_spec(spec);spec.loader.exec_module(subject);subject.CLIENT_ID=client_id
+class PersonalEnvironment(subject.SubjectEnvironment):
+ def cli(self,*args,**kwargs):
+  if args==('db','migrate'):
+   origin=f'https://company-a.test:{self.port}'
+   content=self.config.read_text()
+   content+='\n[personal]\nallowed_origins = ['+json.dumps(origin)+']\nrate_key_version = "v1"\noperator_credential_hash = '+json.dumps(b64(hashlib.sha256(secrets.token_bytes(32)).digest()))+'\n'
+   content+='\n[personal.test_otp]\nphones=["+12025550101","+12025550102"]\nemails=["a@example.test","b@example.test"]\ncode="246810"\n'
+   content+='\n[personal.sending.smtp]\nhost="smtp.example.test"\nport=465\nusername="fixture"\npassword="fixture"\nfrom_email="fixture@example.test"\nfrom_name="Fixture"\n'
+   content+='\n[personal.sending.sms]\naccess_key_id="fixture"\naccess_key_secret="fixture"\ndomestic_endpoint="dysmsapi.aliyuncs.com"\ninternational_endpoint="dysmsapi.ap-southeast-1.aliyuncs.com"\nsign_name="fixture"\ntemplate_code="fixture"\nsender_id="fixture"\nmessage_template="{{code}}"\n'
+   self.config.write_text(content)
+  result=super().cli(*args,**kwargs)
+  if args==('seed-fixtures',):
+   # Personal access must work with no legacy client policy or HMAC key at all.
+   self.config.write_text(re.sub(r'^subject_purchase = .*\n','',self.config.read_text(),flags=re.M))
+  return result
 stop=threading.Event();run=None;e=None
 for sig in (signal.SIGINT,signal.SIGTERM):signal.signal(sig,lambda *_:stop.set())
 def protected(path,value):
@@ -53,12 +69,17 @@ try:
  for index,(title,price) in enumerate([('Travel Mug',1234),('Canvas Bag',1990)]):
   result=managed('products.create','dsh-create-'+str(index),dict(title=title,handle='dsh-'+run.id+'-'+str(index),sku='DSH-'+run.id+'-'+str(index),price_minor=price,stock_quantity=10));assert result['status']=='succeeded'
   pid=result['result']['product_id'];assert managed('products.publish','dsh-publish-'+str(index),{'product_id':pid})['status']=='succeeded';products.append({'title':title,'price_minor':price,'native_id':pid})
- e=subject.SubjectEnvironment(run,public_key);e.fixture_host='127.0.0.1';e.fixture_port=client_port;e.identity_client_port=None
- print(json.dumps({'stage':'platform-start','evidence':str(e.directory)}),flush=True);e.setup();e.activate_store();e.policy(True)
+ e=(PersonalEnvironment if PERSONAL else subject.SubjectEnvironment)(run,public_key);e.fixture_host='127.0.0.1';e.fixture_port=client_port;e.identity_client_port=None
+ print(json.dumps({'stage':'platform-start','evidence':str(e.directory)}),flush=True);e.setup();e.activate_store()
+ if not PERSONAL:e.policy(True)
  origin=f'https://company-a.test:{e.port}'
  refs={name:'DSH_'+name+'_'+run.id.upper() for name in ['PAP_SIGNING','PAP_STORAGE','CUSTOMER_STORAGE','CUSTOMER_CONFIRM']}
  pap=dict(clientId=client_id,callback=callback,signingKeyRef=refs['PAP_SIGNING'],keyId='c1',storageKeyRef=refs['PAP_STORAGE'],dataDir=str(OUT/('pap-data-'+run.id)),caFile=str(FIX/'ca.pem'),targets=[dict(origin=origin,address='127.0.0.1',port=e.port)],sites=[dict(id='test-shop',label='Frontvia Test Shop',domain=f'company-a.test:{e.port}',issuer=origin+'/companies/a',resource=e.resource)])
  customer=dict(dataDir=str(OUT/('customer-data-'+run.id)),storageKeyRef=refs['CUSTOMER_STORAGE'],sites=[dict(siteId='test-shop',storeId=run.target['store_id'],confirmationKeyRef=refs['CUSTOMER_CONFIRM'],confirmationKid=e.confirmation_kid)])
+ if PERSONAL:
+  pap['personal']=dict(origin=origin,requestOrigin=origin,tokenOrigins=[origin])
+  customer['sites'][0].pop('confirmationKeyRef');customer['sites'][0].pop('confirmationKid')
+ customer['sites'][0]['mockPayment']=True
  protected(OUT/'pap.json',pap);protected(OUT/'customer.json',customer)
  protected(OUT/'secrets.json',{refs['PAP_SIGNING']:(FIX/'c1-key.pem').read_text(),refs['PAP_STORAGE']:b64(secrets.token_bytes(32)),refs['CUSTOMER_STORAGE']:b64(secrets.token_bytes(32)),refs['CUSTOMER_CONFIRM']:e.confirmation_key})
  protected(OUT/'owner.json',dict(pid=os.getpid(),platform_evidence=str(e.directory),native_evidence=str(run.dir),database=run.database,platform_database=e.database))

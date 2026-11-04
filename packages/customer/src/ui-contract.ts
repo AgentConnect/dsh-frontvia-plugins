@@ -5,15 +5,26 @@ const common = {
   sessionId: ref,
   flowId: z.uuid(),
   kind: z.literal("frontvia-customer").optional(),
-  card: z.enum(["connection", "products", "cart", "quote", "order"]).optional(),
+  card: z
+    .enum(["connection", "products", "cart", "quote", "order", "consultation"])
+    .optional(),
 };
 // Purchase amount, buyer identity, signing material and tokens are intentionally
 // absent. The host derives these from its saved intent and current server data.
 export const uiSchemas = {
+  "personal-status": z.object({}).strict(),
+  "personal-code": z
+    .object({ phone: z.string().regex(/^\+[1-9][0-9]{7,14}$/) })
+    .strict(),
+  "personal-verify": z.object({ code: z.string().regex(/^\d{6}$/) }).strict(),
+  "personal-logout": z.object({}).strict(),
   list: z.object({}).strict(),
   view: z.object(common).strict(),
   review: z.object(common).strict(),
   recover: z.object(common).strict(),
+  original: z
+    .object({ ...common, sourceRef: z.string().regex(/^[a-f0-9]{64}$/) })
+    .strict(),
   contact: z
     .object({
       ...common,

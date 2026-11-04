@@ -1,3 +1,43 @@
 # dsh-frontvia-customer
 
-Frontvia shopping tools and native chat cards for official DeepSeek Harness 0.2.1-rc.3. Requires an activated dsh-pap bundle. Five Agent tool groups prepare shopping and query results; purchase confirmation is only on the owner UI route. First release targets isolated pre-registered client identities, US/USD and native Mock payment. See the repository README.
+Frontvia shopping tools and native chat cards for official DeepSeek Harness 0.2.1-rc.3. Requires an activated dsh-pap bundle. Five Agent tool groups prepare shopping and query results; purchase confirmation is only on the owner UI route. Phone personal accounts support consultation and US/USD shopping without per-client merchant approval. See the repository README for server prerequisites and Mock-payment acceptance boundaries.
+
+## 浏览商品与查询反馈
+
+“有什么商品”使用 `frontvia_products` 的 `browse` 操作，不发送搜索关键词。
+旧 `search` 的空白或缺省关键词也按浏览目录处理；有关键词时去除首尾空白。
+每次只返回一页，只有用户要求更多且服务返回 `page.has_more` 时才按游标翻页，
+不猜测关键词遍历目录，也不在概览时自动读取规格。模型获得返回数量和后续动作提示。
+
+聊天工具结果直接显示商品名称、价格、数量和是否还有下一页，整轮结束前即可查看。
+失败显示可读说明，不把协议错误 JSON 或内部引用直接呈现给用户；完整购物卡片继续
+保留在回复下方，连接后默认显示商品页。
+
+## 个人账号入口
+
+**Frontvia 服务** 页面提供手机号（含国家代码）、验证码登录/注册、重发倒计时、
+退出及退出重试。owner UI 接口为 `frontvia-customer/personal-status`、
+`frontvia-customer/personal-code`、`frontvia-customer/personal-verify`、
+`frontvia-customer/personal-logout`；严格校验输入，非 owner 不可调用，
+也不注册相应模型工具。PAP 页面只显示同一账号的脱敏身份和连接状态。
+登录、退出和换号会通知两页清除旧账号状态，迟到的旧结果不能恢复显示。
+原有 PAP 加密账号会话保持兼容，不搬迁或复制凭据。
+
+## 个人号咨询
+
+配合本次 PAP 插件的个人账号配置，`frontvia_connection` 和
+`frontvia_consultation` 复用同一手机号账号的公开咨询身份。个人账号无需商家
+成员权限或客户端审批。咨询记录按当前个人账号过滤，换号不可读取缓存结果；
+同一账号重登可以接续原聊天的咨询回执。不同账号须使用不同 DSH 聊天，避免
+把旧模型上下文带入新账号。购物和订单使用服务端验证的个人主体，不按手机号
+认领已有 Medusa 买方或订单。两插件应一起更新。
+
+## 个人号购物
+
+个人登录购物使用 `frontvia.personal_purchase.v1`：服务端支持该 profile 时，
+Customer 复用 PAP 当前个人连接的证明签名，购物车和确认不依赖商家逐客户端审批
+或本机 HMAC 购买密钥。确认仍只在用户卡片入口发起，Agent 工具不能代确认。
+游客不自动获得此能力；旧配置的签名购买 profile 保留原有凭据边界。
+
+购物卡片按当前 capabilities 控制加购入口，未开通时说明原因并禁止点击。
+只有明确配置 `mockPayment: true` 才标注 Mock 支付；否则显示结算提示。
