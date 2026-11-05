@@ -4,99 +4,99 @@ import {
   clientRequestSchema,
   type ConnectionRpcResult,
 } from "@deepseek-ai/dsh-client-connection";
-import { randomBytes } from "node:crypto";
-import { lstatSync, readFileSync } from "node:fs";
+import type {} from "@deepseek-ai/dsh-app-boot";
 import { join } from "node:path";
 import {
   PapService,
-  Vault,
+  defaultPersonalConfig,
+  profileStorage,
+  readProfileConfig,
+  openProfileVault,
   fail,
   PapError,
   type PapConfig,
+  type AccountOnlyConfig,
   type Secrets,
 } from "./core.js";
 export const name = "dsh-pap";
-export const inject = ["credentials", "connection"];
+export const inject = ["credentials", "connection", "profileContext"];
 export type Config = { configFile?: string };
 export class PapProvider extends Service {
   readonly apiVersion = 1;
   constructor(
     ctx: Context,
-    private core?: PapService,
+    private core: PapService,
   ) {
     super(ctx, "pap");
   }
-  private ready() {
-    return this.core ?? fail("PAP_CONFIGURATION_REQUIRED");
-  }
   sites() {
-    return this.core?.sites() ?? [];
+    return this.core.sites();
   }
   removedSites() {
-    return this.core?.removedSites() ?? [];
+    return this.core.removedSites();
   }
   removeSite(siteId: string, revision: string) {
-    return this.ready().removeSite(siteId, revision);
+    return this.core.removeSite(siteId, revision);
   }
   restoreSite(siteId: string, revision: string) {
-    return this.ready().restoreSite(siteId, revision);
+    return this.core.restoreSite(siteId, revision);
   }
   status(ref?: string) {
-    return this.core ? this.core.status(ref) : [];
+    return this.core.status(ref);
   }
   canAccess(ref: string) {
-    return this.ready().canAccess(ref);
+    return this.core.canAccess(ref);
   }
   capabilityCacheKey(ref: string) {
-    return this.ready().capabilityCacheKey(ref);
+    return this.core.capabilityCacheKey(ref);
   }
   identity(ref: string) {
-    return this.ready().identity(ref);
+    return this.core.identity(ref);
   }
   signResourceStatement(
     ref: string,
     typ: string,
     claims: Record<string, unknown>,
   ) {
-    return this.ready().signResourceStatement(ref, typ, claims);
+    return this.core.signResourceStatement(ref, typ, claims);
   }
   discover(site: string) {
-    return this.ready().discover(site);
+    return this.core.discover(site);
   }
   connect(site: string) {
-    return this.ready().connect(site);
+    return this.core.connect(site);
   }
   clientStatus() {
-    return this.ready().clientStatus();
+    return this.core.clientStatus();
   }
   // Host-only account operations for the Frontvia owner UI. Keep the existing
   // encrypted session owner so PAP grants and account switching share one fence.
   personalStatus() {
-    return this.ready().personal.refresh();
+    return this.core.personal.refresh();
   }
   requestPersonalCode(phone: string) {
-    return this.ready().personal.requestCode(phone);
+    return this.core.personal.requestCode(phone);
   }
   verifyPersonalCode(code: string) {
-    return this.ready().personal.verify(code);
+    return this.core.personal.verify(code);
   }
   logoutPersonal() {
-    return this.ready().personal.logout();
+    return this.core.personal.logout();
   }
   inspect(input: unknown) {
-    return this.ready().inspect(input);
+    return this.core.inspect(input);
   }
   importResources(previewId: string, resources: string[]) {
-    return this.ready().importResources(previewId, resources);
+    return this.core.importResources(previewId, resources);
   }
   authorize(ref: string, scopes: string[]) {
-    return this.ready().authorize(ref, scopes);
+    return this.core.authorize(ref, scopes);
   }
   callback(ref: string, url: string) {
-    return this.ready().callback(ref, url);
+    return this.core.callback(ref, url);
   }
   disconnect(ref: string) {
-    return this.ready().disconnect(ref);
+    return this.core.disconnect(ref);
   }
   request(
     ref: string,
@@ -105,7 +105,7 @@ export class PapProvider extends Service {
     signal?: AbortSignal,
     options?: { maxResponseBytes: number },
   ) {
-    return this.ready().request(ref, method, params, signal, options);
+    return this.core.request(ref, method, params, signal, options);
   }
 }
 declare module "@deepseek-ai/cordis" {
@@ -119,28 +119,32 @@ export async function apply(ctx: Context, config: Config = {}) {
       (await ctx.credentials.resolve(credentialRef(ref)))?.value,
     set: (ref, value) => ctx.credentials.set(credentialRef(ref), value),
   };
-  let core: PapService | undefined;
-  if (config.configFile) {
-    const st = lstatSync(config.configFile);
-    if (
-      st.isSymbolicLink() ||
-      !st.isFile() ||
-      st.uid !== process.getuid?.() ||
-      st.mode & 0o077
-    )
-      fail("PROTECTED_CONFIG_REQUIRED");
-    const c = JSON.parse(
-      readFileSync(config.configFile, "utf8"),
-    ) as PapConfig & { storageKeyRef: string };
-    let key = await secrets.get(c.storageKeyRef);
-    if (!key) key = randomBytes(32).toString("base64url");
-    await secrets.set(c.storageKeyRef, key);
-    const signing = await secrets.get(c.signingKeyRef);
-    if (signing) await secrets.set(c.signingKeyRef, signing);
-    const vault = new Vault(join(c.dataDir, "pap.sqlite"), key);
-    core = new PapService(c, secrets, vault);
-    ctx.effect(() => () => { core?.close(); vault.close(); });
+  const c: (PapConfig | AccountOnlyConfig) & { storageKeyRef: string } =
+    config.configFile
+      ? readProfileConfig<
+          (PapConfig | AccountOnlyConfig) & { storageKeyRef: string }
+        >(config.configFile)
+      : {
+          ...profileStorage(ctx.profileContext, "pap"),
+          targets: [],
+          personal: defaultPersonalConfig,
+        };
+  if ("signingKeyRef" in c) {
+    const key = await secrets.get(c.signingKeyRef);
+    if (key) await secrets.set(c.signingKeyRef, key);
   }
+  const vault = await openProfileVault(
+    join(c.dataDir, "pap.sqlite"),
+    c.storageKeyRef,
+    secrets,
+  );
+  ctx.effect(() => () => vault.close());
+  const policy =
+    c.clientId === undefined
+      ? { ...c, deviceSigningKeyRef: c.storageKeyRef + "_DEVICE" }
+      : c;
+  const core = new PapService(policy, secrets, vault);
+  ctx.effect(() => () => core.close());
   const service = new PapProvider(ctx, core);
   for (const operation of [
     "status",
@@ -175,20 +179,20 @@ export async function apply(ctx: Context, config: Config = {}) {
             const a = message.payload as any;
             let value: any;
             if (operation === "status") {
-              const personal = core ? await core.personal.refresh() : undefined;
+              const personal = await core.personal.refresh();
               value = {
-                configured: !!core,
+                configured: true,
                 sites: service.sites(),
                 removedSites: service.removedSites(),
                 connections: service.status(),
-                personal: personal && {
+                personal: {
                   configured: personal.configured,
                   signedIn: personal.signedIn,
                   phone: personal.phone,
                   expiresAt: personal.expiresAt,
                   logoutPending: personal.logoutPending,
                 },
-                client: core ? await service.clientStatus() : undefined,
+                client: await service.clientStatus(),
               };
             } else if (operation === "inspect")
               value = await service.inspect(a.configuration);

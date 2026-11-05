@@ -226,9 +226,15 @@ export function ImportPanel({
               客户端与连接地址
               <ChevronDown aria-hidden />
             </summary>
-            <p className="pap-resource-url">{preview.client.clientId}</p>
+            {preview.client.clientId && (
+              <p className="pap-resource-url">{preview.client.clientId}</p>
+            )}
             {!preview.client.signingKeyConfigured && (
-              <p className="pap-field-help">客户端签名凭据尚未配置。</p>
+              <p className="pap-field-help">
+                {preview.client.automatic
+                  ? "首次连接时将自动验证本机设备身份。"
+                  : "客户端签名凭据尚未配置。"}
+              </p>
             )}
             {preview.sites.map((site: any) => (
               <p className="pap-resource-url" key={site.resource}>

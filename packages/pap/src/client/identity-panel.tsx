@@ -1,5 +1,5 @@
 import React from "react";
-import { Card } from "./ui.js";
+import { Button, Card } from "./ui.js";
 
 export type PersonalIdentity = {
   configured: boolean;
@@ -10,7 +10,13 @@ export type PersonalIdentity = {
 };
 
 /** PAP displays the shared identity; Frontvia owns the login entry. */
-export function IdentityPanel({ identity }: { identity: PersonalIdentity }) {
+export function IdentityPanel({
+  identity,
+  openAccount,
+}: {
+  identity: PersonalIdentity;
+  openAccount: () => void;
+}) {
   return (
     <Card className="pap-identity" aria-label="当前身份">
       <h3>当前身份</h3>
@@ -30,6 +36,11 @@ export function IdentityPanel({ identity }: { identity: PersonalIdentity }) {
               ? "请到 Frontvia 服务使用手机号登录或注册，再连接商家。"
               : "在 Frontvia 服务配置个人账号后，即可使用手机号登录。"}
       </p>
+      {identity.configured && !identity.signedIn && (
+        <Button variant="outline" onClick={openAccount}>
+          打开 Frontvia 服务
+        </Button>
+      )}
     </Card>
   );
 }

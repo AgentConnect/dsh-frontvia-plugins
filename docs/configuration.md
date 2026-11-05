@@ -1,6 +1,10 @@
 # 配置说明
 
-先准备 PAP HTTPS 客户端：公开 CIMD、与私钥匹配的 ES256 JWKS 和声明的回调地址。支持公开接入的 Frontvia 服务自动校验客户端，无需商家逐客户端审批。个人账号配置见 [PAP README](../packages/pap/README.md)；登录入口在 Frontvia 插件，PAP 页面只展示身份和管理连接。插件不会启动公开注册服务或按邮箱绑定现有买方。
+安装后直接进入「Frontvia 服务」使用手机号登录。默认使用公开的 Frontvia 个人账号服务，账号与服务记录分别存入当前 DSH Profile 的加密数据库。再次启动会向账号服务验证已保存的会话；过期或被撤销时可重新登录。临时网络故障保留会话，可重试。
+
+默认模式在首次连接商家时由 DSH 为当前 Profile 生成 ES256 密钥，向账号服务的 `/v1/personal/pap/devices` 提交公钥和持有证明，并保存返回的 HTTPS 客户端标识。再次连接直接使用已有设备身份。旧服务端缺少此接口时仍可登录；商家连接显示服务端需更新。
+
+已有自管 PAP 身份的 Profile 可继续使用原配置：公开 CIMD、与私钥匹配的 ES256 JWKS 和声明的回调地址。支持公开接入的 Frontvia 服务自动校验客户端，无需商家逐客户端审批。个人账号配置见 [PAP README](../packages/pap/README.md)；登录入口在 Frontvia 插件，PAP 页面只展示身份和管理连接。插件不会启动公开注册服务或按邮箱绑定现有买方。
 
 个人购物要求 Frontvia Schema52 和 `frontvia.personal_purchase.v1`，使用资源连接的 ES256/DPoP 证明，无需独立 HMAC 确认密钥。旧 `frontvia.pap_subject_purchase.v1` 仍保留商家批准的主体购买策略和 HMAC 密钥。
 
@@ -26,7 +30,7 @@ PAP 配置（0600）：
 }
 ```
 
-`targets.origin` 必须采用 URL 的规范 origin（HTTPS 默认 443 时写 `https://shop.example.test`，不要保留 `:443`）。`address` 必须是明确批准的 IPv4/IPv6 地址；`port` 匹配 URL 端口；测试隧道可单独配置 `connectPort`。不跟随重定向，启用 TLS 证书检查、响应大小及超时上限。生产 CA 可省略 `caFile`，但本轮没有生产验证。
+`targets.origin` 必须采用 URL 的规范 origin（HTTPS 默认 443 时写 `https://shop.example.test`，不要保留 `:443`）。`address` 必须是明确批准的 IPv4/IPv6 地址；`port` 匹配 URL 端口；测试隧道可单独配置 `connectPort`。不跟随重定向，启用 TLS 证书检查、响应大小及超时上限。首次安装默认账号域名遇到 Fake-IP 时会通过经过 TLS 校验的公共 DNS 查询该固定域名的 A 记录，仍只拨号公网 IP。其他导入域名继续执行原地址检查。生产 CA 可省略 `caFile`，但本轮没有生产验证。
 
 Customer 配置（0600）：
 

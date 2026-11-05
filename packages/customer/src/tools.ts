@@ -210,6 +210,8 @@ export function tools(service: CustomerService) {
             nextStep:
               e instanceof PapError && e.code === "PERSONAL_LOGIN_REQUIRED"
                 ? "请用户到 Frontvia 服务页面使用手机号登录或注册；不要在聊天中索取手机号、验证码或令牌。"
+                : e instanceof PapError && e.code === "PAP_DEVICE_ENROLLMENT_UNAVAILABLE"
+                  ? "账号服务尚未开放设备接入。请说明商家连接需要服务端更新，无需用户重复登录。"
                 : e instanceof PapError &&
                     e.code === "PERSONAL_CHAT_ACCOUNT_CHANGED"
                   ? "请用户新建聊天后连接当前个人账号，不能在此聊天混用另一账号的历史。"

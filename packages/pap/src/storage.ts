@@ -95,6 +95,9 @@ export class Vault {
         }),
       );
   }
+  firstRecordId(): string | undefined {
+    return this.db.prepare("SELECT id FROM records LIMIT 1").get()?.id as string | undefined;
+  }
   keys(prefix: string): string[] {
     return this.db
       .prepare("SELECT id FROM records ORDER BY id")

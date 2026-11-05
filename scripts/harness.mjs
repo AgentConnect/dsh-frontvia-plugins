@@ -45,15 +45,10 @@ if (process.argv.includes("--install")) {
   }
 }
 if (process.argv.includes("--setup-only")) process.exit(0);
-const args = [
-  cli,
-  "--profile",
-  profile,
-  "--port",
-  process.env.DSH_FRONTVIA_PORT ?? "4347",
-];
+const args = [cli, "--profile", profile];
 if (process.env.DSH_FRONTVIA_PATCH)
   args.push("--patch", resolve(process.env.DSH_FRONTVIA_PATCH));
+args.push("--port", process.env.DSH_FRONTVIA_PORT ?? "4347");
 const p = spawn(process.execPath, args, { cwd: root, env, stdio: "inherit" });
 for (const s of ["SIGINT", "SIGTERM"]) process.on(s, () => p.kill(s));
 p.on("exit", (c) => process.exit(c ?? 0));

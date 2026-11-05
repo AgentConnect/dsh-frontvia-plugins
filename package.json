@@ -13,7 +13,8 @@
     "test": "node --import tsx --test packages/*/test/*.test.ts",
     "check": "pnpm typecheck && pnpm build && pnpm test",
     "pack:local": "node scripts/pack.mjs",
-    "harness": "node scripts/harness.mjs"
+    "harness": "node scripts/harness.mjs",
+    "install:desktop": "pnpm build && pnpm pack:local && node scripts/install-desktop.mjs"
   },
   "devDependencies": {
     "@deepseek-ai/cordis": "4.0.5",
