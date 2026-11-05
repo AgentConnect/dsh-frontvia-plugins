@@ -1,6 +1,12 @@
+import { ReadCache, SharedReads } from "./read-cache.js";
 import { createHash, randomUUID } from "node:crypto";
 import { Vault, Serial, fail, canonical } from "dsh-pap/core";
 import { modelData, type PapPort } from "./core.js";
+import {
+  shoppingSupported,
+  shoppingView,
+  consultationModelData,
+} from "./conversation-shopping.js";
 import {
   HELP_REASON_LIMIT,
   ORIGINAL_BYTES_LIMIT,
@@ -28,6 +34,8 @@ type Flow = {
   answers: Record<string, any>;
   knowledge?: any;
   updatedAt: string;
+  shoppingIntent?: { id: string; hash: string };
+  shoppingConfirmations?: Record<string, string>;
 };
 const digest = (v: unknown) =>
   createHash("sha256").update(canonical(v)).digest("hex");
@@ -36,6 +44,8 @@ export const consultationSite = (site: any) =>
   site.description.methods.includes("consultation.capabilities.get");
 export class ConsultationService {
   private serial = new Serial();
+  private capabilitiesCache = new ReadCache();
+  private views = new SharedReads();
   constructor(
     private pap: PapPort,
     private vault: Vault,
@@ -85,8 +95,9 @@ export class ConsultationService {
       method === "consultation.knowledge.original"
         ? { maxResponseBytes: ORIGINAL_RESPONSE_LIMIT }
         : undefined,
-    );
+    ).catch(error => { this.capabilitiesCache.clear(); throw error; });
     if (response.error) {
+      this.capabilitiesCache.clear();
       const type = response.error.data?.type ?? response.error.message;
       fail(
         typeof type === "string" && /^[A-Z_]{1,70}$/.test(type)
@@ -98,8 +109,10 @@ export class ConsultationService {
       fail("INVALID_CONSULTATION_RESPONSE");
     return response.result.data;
   }
-  private async capabilities(f: Flow) {
-    const cap = await this.rpc(f, "consultation.capabilities.get");
+  private async capabilities(f: Flow, fresh = false) {
+    const key = this.pap.capabilityCacheKey?.(f.connectionRef);
+    const cap = await this.capabilitiesCache.get(key ? `${f.siteId}:${key}` : undefined,
+      () => this.rpc(f, "consultation.capabilities.get"), fresh);
     if (
       cap.profile !== "frontvia.merchant_consultation.v1" ||
       cap.availability !== "supported" ||
@@ -154,7 +167,7 @@ export class ConsultationService {
   private result(f: Flow, data: any) {
     return {
       flowId: f.id,
-      data: modelData(data),
+      data: modelData(consultationModelData(data)),
       ui: {
         kind: "frontvia-customer",
         card: "consultation",
@@ -230,9 +243,10 @@ export class ConsultationService {
     callId: string,
     signal?: AbortSignal,
   ) {
+    this.views.clear();
     return this.serial.run(flowId, async () => {
       const f = this.flow(sessionId, flowId);
-      await this.capabilities(f);
+      await this.capabilities(f, name !== "frontvia_knowledge" && !["get", "answer_get"].includes(args.action));
       if (name === "frontvia_knowledge") return this.knowledge(f, args, signal);
       if (args.action === "recover") {
         signal?.throwIfAborted();
@@ -274,6 +288,9 @@ export class ConsultationService {
       if (f.pending) fail("RESOLVE_PENDING_OPERATION");
       let method: string, params: any;
       if (args.action === "ask") {
+        // Exact purchase consent is an owner UI action, never a model tool call.
+        if (/^\s*确认购买\s/u.test(args.text ?? ""))
+          fail("PURCHASE_OWNER_CONFIRMATION_REQUIRED");
         method = "consultation.messages.submit";
         if (
           f.conversation?.conversation_id &&
@@ -369,10 +386,13 @@ export class ConsultationService {
     return this.result(f, data);
   }
   async view(sessionId: string, flowId: string) {
-    return this.serial.run(flowId, async () => {
+    const binding = this.flow(sessionId, flowId);
+    const generation = this.pap.capabilityCacheKey?.(binding.connectionRef) ?? "uncached";
+    return this.views.run(`${sessionId}:${flowId}:${generation}`, () => this.serial.run(flowId, async () => {
       const f = this.flow(sessionId, flowId);
       await this.capabilities(f);
       const conversation = await this.current(f);
+      const shopping = this.shopping(f, conversation);
       if (f.knowledge?.dependencies?.length) {
         try {
           this.allowed(f, "consultation.knowledge.access");
@@ -396,9 +416,81 @@ export class ConsultationService {
         kind: "consultation",
         capabilities: f.capabilities,
         conversation,
+        shopping,
         knowledge: f.knowledge,
         pending: !!f.pending,
       };
+    }));
+  }
+  private shopping(f: Flow, conversation: any) {
+    const shopping = shoppingSupported(f.capabilities)
+      ? shoppingView(
+          conversation.shopping,
+          this.pap.sites().find((s) => s.id === f.siteId),
+        )
+      : null;
+    if (
+      shopping?.state === "requires_confirmation" &&
+      !f.pending &&
+      conversation.status === "answered"
+    ) {
+      const hash = digest([
+        conversation.conversation_id,
+        conversation.version,
+        shopping,
+      ]);
+      if (f.shoppingIntent?.hash !== hash)
+        f.shoppingIntent = { id: randomUUID(), hash };
+      shopping.intentId = f.shoppingIntent.id;
+    } else delete f.shoppingIntent;
+    this.save(f);
+    return shopping;
+  }
+  async confirmShopping(sessionId: string, flowId: string, intentId: string) {
+    return this.serial.run(flowId, async () => {
+      const f = this.flow(sessionId, flowId);
+      await this.capabilities(f, true);
+      if (!shoppingSupported(f.capabilities)) fail("SHOPPING_UNAVAILABLE");
+      // Duplicate clicks and restarts return the original receipt. Lost responses
+      // stay pending until explicit recovery sends the identical saved request.
+      const oldKey = f.shoppingConfirmations?.[intentId];
+      if (oldKey) {
+        if (f.pending) fail("RESOLVE_PENDING_OPERATION");
+        return this.result(
+          f,
+          f.commands[oldKey]?.result ?? fail("PENDING_COMMAND_MISSING"),
+        );
+      }
+      if (f.pending) fail("RESOLVE_PENDING_OPERATION");
+      if (f.shoppingIntent?.id !== intentId) fail("SHOPPING_REVIEW_REQUIRED");
+      const previous = f.shoppingIntent;
+      const conversation = await this.current(f);
+      const shopping = this.shopping(f, conversation);
+      if (
+        !shopping?.intentId ||
+        shopping.intentId !== intentId ||
+        f.shoppingIntent?.hash !== previous.hash
+      )
+        fail("SHOPPING_REVIEW_REQUIRED");
+      const key = digest([f.id, "owner-shopping-confirm", intentId]);
+      const params = {
+        text: shopping.confirmation.text,
+        conversation_id: conversation.conversation_id,
+        expected_version: conversation.version,
+        idempotency_key: key,
+      };
+      const command: Command = {
+        method: "consultation.messages.submit",
+        params,
+        inputHash: digest(params),
+        status: "pending",
+      };
+      f.commands[key] = command;
+      (f.shoppingConfirmations ??= {})[intentId] = key;
+      f.pending = key;
+      delete f.shoppingIntent;
+      this.save(f);
+      return this.result(f, await this.send(f, command));
     });
   }
   async original(sessionId: string, flowId: string, sourceRef: string) {

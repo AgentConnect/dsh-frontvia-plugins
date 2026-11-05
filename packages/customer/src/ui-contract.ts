@@ -34,4 +34,5 @@ export const uiSchemas = {
     })
     .strict(),
   confirm: z.object({ ...common, intentId: z.uuid() }).strict(),
+  "shopping-confirm": z.object({ ...common, intentId: z.uuid() }).strict(),
 };

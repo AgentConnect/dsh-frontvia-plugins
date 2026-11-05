@@ -1,4 +1,5 @@
 import https from "node:https";
+import { createHash } from "node:crypto";
 import { isIP, BlockList } from "node:net";
 import { lookup } from "node:dns/promises";
 import { readFileSync } from "node:fs";
@@ -9,6 +10,8 @@ export type Target = {
   port: number;
   connectPort?: number;
   systemCa?: boolean;
+  /** Verified DNS answer set; internal transport identity, not authorization. */
+  addressSet?: string;
 };
 export type WireRequest = {
   url: string;
@@ -20,7 +23,46 @@ export type WireRequest = {
   maxResponseBytes?: number;
 };
 export type Transport = (request: WireRequest) => Promise<any>;
-export function httpsTransport(targets: Target[], caFile?: string): Transport {
+/** Owned by one PAP service. Pools never bypass per-request destination checks. */
+export class PinnedAgents {
+  private pools = new Map<string, { key: string; agent: https.Agent }>();
+  private retired = new Map<https.Agent, ReturnType<typeof setTimeout>>();
+  get(target: Target, ca?: Buffer) {
+    const key = JSON.stringify([target.address, target.port, target.connectPort, target.addressSet,
+      ca ? createHash("sha256").update(ca).digest("hex") : "system"]);
+    const previous = this.pools.get(target.origin);
+    if (previous?.key === key) return previous.agent;
+    this.invalidate(target.origin);
+    if (this.pools.size >= 32) this.invalidate(this.pools.keys().next().value!);
+    const agent = new https.Agent({ keepAlive: true, maxSockets: 4,
+      maxFreeSockets: 2, timeout: 30000, scheduling: "lifo" });
+    this.pools.set(target.origin, { key, agent });
+    return agent;
+  }
+  invalidate(origin: string) {
+    const agent = this.pools.get(origin)?.agent;
+    this.pools.delete(origin);
+    if (!agent) return;
+    // Stop reusing the old identity without interrupting already admitted
+    // requests (including the agent's bounded queue). Node calls this hook only
+    // after queued requests have been assigned, when a socket becomes idle.
+    agent.keepSocketAlive = () => false;
+    for (const sockets of Object.values(agent.freeSockets))
+      for (const socket of sockets ?? []) socket.destroy();
+    // Every request already has a <=45s absolute deadline. Keep shutdown bounded
+    // even if a peer never finishes or a socket fails to emit its final event.
+    const timer = setTimeout(() => { agent.destroy(); this.retired.delete(agent); }, 50000);
+    timer.unref();
+    this.retired.set(agent, timer);
+  }
+  close() {
+    for (const { agent } of this.pools.values()) agent.destroy();
+    this.pools.clear();
+    for (const [agent, timer] of this.retired) { clearTimeout(timer); agent.destroy(); }
+    this.retired.clear();
+  }
+}
+export function httpsTransport(targets: Target[], caFile?: string, agents = new PinnedAgents()): Transport {
   return async ({
     url: raw,
     method,
@@ -48,7 +90,15 @@ export function httpsTransport(targets: Target[], caFile?: string): Transport {
       target.port !== Number(url.port || 443)
     )
       fail("TARGET_NOT_APPROVED");
+    if (signal?.aborted) fail("ABORTED");
+    const ca = caFile && !target.systemCa ? readFileSync(caFile) : undefined;
     return new Promise((resolve, reject) => {
+      let settled = false, deadline: ReturnType<typeof setTimeout> | undefined;
+      const cleanup = () => { clearTimeout(deadline); signal?.removeEventListener("abort", abort); };
+      const succeed = (value: unknown) => { if (!settled) { settled = true; cleanup(); resolve(value); } };
+      const failed = (error: Error) => { if (!settled) { settled = true; cleanup(); reject(error); } };
+      const abort = () => { failed(new PapError("ABORTED")); req.destroy(); };
+      const timeout = () => { failed(new PapError("NETWORK_UNCERTAIN")); req.destroy(); };
       const req = https.request(
         url,
         {
@@ -56,10 +106,10 @@ export function httpsTransport(targets: Target[], caFile?: string): Transport {
           // A pinned dial port is a transport detail, not the HTTP authority.
           headers: { ...headers, Host: url.host },
           signal,
-          agent: false,
+          agent: agents.get(target, ca),
           family: isIP(target.address),
           port: target.connectPort ?? target.port,
-          ca: caFile && !target.systemCa ? readFileSync(caFile) : undefined,
+          ca,
           rejectUnauthorized: true,
           timeout: Math.min(45000, Math.max(1000, timeoutMs)),
           lookup: (_host, _options, cb) =>
@@ -72,12 +122,12 @@ export function httpsTransport(targets: Target[], caFile?: string): Transport {
             size += b.length;
             if (size > maxResponseBytes) {
               const error = new PapError("RESPONSE_LIMIT");
-              reject(error);
+              failed(error);
               res.destroy(error);
             } else chunks.push(b);
           });
           res.on("error", (error) =>
-            reject(
+            failed(
               error instanceof PapError
                 ? error
                 : new PapError("NETWORK_FAILURE"),
@@ -95,20 +145,25 @@ export function httpsTransport(targets: Target[], caFile?: string): Transport {
                   value.error &&
                   typeof value.id === "string"
                 )
-                  return resolve(value);
-                return reject(new PapError(`HTTP_${res.statusCode}`));
+                  return succeed(value);
+                return failed(new PapError(`HTTP_${res.statusCode}`));
               }
-              resolve(value);
+              succeed(value);
             } catch {
-              reject(new PapError("INVALID_RESPONSE"));
+              failed(new PapError("INVALID_RESPONSE"));
             }
           });
         },
       );
-      req.on("timeout", () => req.destroy(new PapError("NETWORK_TIMEOUT")));
-      req.on("error", () =>
-        reject(new PapError(signal?.aborted ? "ABORTED" : "NETWORK_UNCERTAIN")),
-      );
+      // ClientRequest may not emit error until a pooled socket becomes available.
+      // Settle deadline/cancellation directly, then destroy to prevent queued I/O.
+      deadline = setTimeout(timeout, Math.min(45000, Math.max(1000, timeoutMs)));
+      deadline.unref();
+      req.on("close", cleanup);
+      req.on("timeout", timeout);
+      req.on("error", () => failed(new PapError(signal?.aborted ? "ABORTED" : "NETWORK_UNCERTAIN")));
+      signal?.addEventListener("abort", abort, { once: true });
+      if (signal?.aborted) { abort(); return; }
       if (body) req.write(body);
       req.end();
     });
@@ -154,6 +209,7 @@ export const isPublicAddress = (address: string) =>
 export function publicTransport(
   origins: string[],
   resolve = lookup,
+  agents = new PinnedAgents(),
 ): Transport {
   return async (request) => {
     const url = new URL(request.url);
@@ -170,10 +226,14 @@ export function publicTransport(
       all: true,
       verbatim: true,
     }).catch(() => fail("NETWORK_FAILURE"));
-    if (!addresses.length || addresses.some((a) => !isPublicAddress(a.address)))
+    if (!addresses.length || addresses.some((a) => !isPublicAddress(a.address))) {
+      agents.invalidate(url.origin);
       fail("PUBLIC_HTTPS_REQUIRED");
+    }
+    // DNS answer order alone is not a new destination/configuration generation.
+    const verified = [...new Set(addresses.map(a => a.address))].sort();
     return httpsTransport([
-      { origin: url.origin, address: addresses[0].address, port: 443 },
-    ])(request);
+      { origin: url.origin, address: verified[0], port: 443, addressSet: JSON.stringify(verified) },
+    ], undefined, agents)(request);
   };
 }

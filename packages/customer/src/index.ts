@@ -115,6 +115,12 @@ export async function apply(
               value = await service.review(a.sessionId, a.flowId);
             if (operation === "confirm")
               value = await service.confirm(a.sessionId, a.flowId, a.intentId);
+            if (operation === "shopping-confirm")
+              value = await service.consultation.confirmShopping(
+                a.sessionId,
+                a.flowId,
+                a.intentId,
+              );
             if (operation === "recover") {
               await service.tool(
                 a.sessionId,

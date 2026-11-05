@@ -1,5 +1,6 @@
 import { useAccountRevision } from "./account.js";
-import React, { useEffect, useState } from "react";
+import { ConversationShopping } from "./conversation-shopping.js";
+import React, { useEffect, useRef, useState } from "react";
 import {
   BookOpen,
   Download,
@@ -33,6 +34,10 @@ export function ConsultationCard({
   sendToAgent?: (text: string) => Promise<unknown>;
 }) {
   const accountRevision = useAccountRevision();
+  const scope = `${ui.flowId}:${ui.sessionId}:${accountRevision}`;
+  const currentScope = useRef(scope);
+  currentScope.current = scope;
+  const pollUntil = useRef(Date.now() + 300000);
   const [data, setData] = useState<any>(),
     [busy, setBusy] = useState(""),
     [error, setError] = useState("");
@@ -46,22 +51,33 @@ export function ConsultationCard({
     KNOWLEDGE_SOURCE_EXPIRED: "原知识来源已失效，请重新检索。",
     KNOWLEDGE_UNAVAILABLE: "商家暂未开放这项知识服务。",
     RESOLVE_PENDING_OPERATION: "上次请求结果未知，请先核对原请求。",
+    SHOPPING_REVIEW_REQUIRED: "订单或报价已变化，请刷新后重新核对并确认。",
+    SHOPPING_RESPONSE_INVALID: "商家订单信息不完整，请重新核对原订单。",
+    SHOPPING_PAYMENT_LINK_INVALID: "付款入口未通过商家地址校验，请核对连接。",
+    SHOPPING_UNAVAILABLE: "商家当前未开放人民币购物。",
   };
-  async function refresh(op = "view") {
+  async function refresh(op = "view", automatic = false) {
+    if (!automatic) pollUntil.current = Date.now() + 300000;
     setBusy(op);
     setError("");
     try {
-      setData(await call(op, ui));
+      const value = await call(op, ui);
+      if (currentScope.current !== scope) return;
+      setData(value);
     } catch (e: any) {
+      if (currentScope.current !== scope) return;
       setData(undefined);
       setError(errors[e.message] ?? "服务暂不可用，请检查连接或稍后重试。");
     } finally {
-      setBusy("");
+      if (currentScope.current === scope) setBusy("");
     }
   }
   useEffect(() => {
     let live = true;
+    pollUntil.current = Date.now() + 300000;
     setData(undefined);
+    setError("");
+    setBusy("");
     call("view", ui)
       .then((v) => {
         if (live) setData(v);
@@ -73,6 +89,46 @@ export function ConsultationCard({
       live = false;
     };
   }, [ui.flowId, ui.sessionId, accountRevision]);
+  // Read-only refresh: never replay consent or start a payment on mount/focus.
+  useEffect(() => {
+    if (!data?.shopping || busy) return;
+    const onFocus = () => {
+      if (document.visibilityState === "visible") void refresh();
+    };
+    window.addEventListener("focus", onFocus);
+    const timer =
+      Date.now() < pollUntil.current &&
+      ["processing", "payment_pending"].includes(data.shopping.state)
+        ? setTimeout(() => {
+            if (document.visibilityState === "visible")
+              void refresh("view", true);
+          }, 5000)
+        : undefined;
+    return () => {
+      window.removeEventListener("focus", onFocus);
+      clearTimeout(timer);
+    };
+  }, [data, busy, ui.flowId, ui.sessionId, accountRevision]);
+  async function confirmShopping(intentId: string) {
+    pollUntil.current = Date.now() + 300000;
+    setBusy("shopping-confirm");
+    setError("");
+    try {
+      await call("shopping-confirm", { ...ui, intentId });
+      const value = await call("view", ui);
+      if (currentScope.current !== scope) return;
+      setData(value);
+    } catch (e: any) {
+      if (currentScope.current !== scope) return;
+      setData(undefined);
+      setError(
+        errors[e.message] ??
+          "确认结果尚未核实，请刷新并核对原请求，不要重复购买。",
+      );
+    } finally {
+      if (currentScope.current === scope) setBusy("");
+    }
+  }
   async function download(sourceRef: string) {
     setBusy("original");
     setError("");
@@ -109,12 +165,20 @@ export function ConsultationCard({
           <MessageCircle aria-hidden />
         </div>
         <div>
-          <CardTitle>商家咨询与知识</CardTitle>
+          <CardTitle>
+            {data?.capabilities?.shopping?.availability === "supported"
+              ? "商家购物与咨询"
+              : "商家咨询与知识"}
+          </CardTitle>
           <CardDescription>
             {data?.capabilities?.agent?.name ?? "读取商家提供的答复与公开资料"}
           </CardDescription>
         </div>
-        <Badge>咨询服务</Badge>
+        <Badge>
+          {data?.capabilities?.shopping?.availability === "supported"
+            ? "人民币购物"
+            : "咨询服务"}
+        </Badge>
       </CardHeader>
       <CardContent>
         {error && (
@@ -131,6 +195,11 @@ export function ConsultationCard({
         )}
         {data && (
           <div className="fv-stack">
+            <ConversationShopping
+              shopping={data.shopping}
+              busy={!!busy}
+              onConfirm={confirmShopping}
+            />
             <div className="fv-between">
               <span className="fv-muted">
                 {data.pending
@@ -165,7 +234,17 @@ export function ConsultationCard({
                       ? "商家回复"
                       : "你的问题"}
                   </p>
-                  <p>{m.text}</p>
+                  <p>
+                    {m.text
+                      .replace(
+                        /https:\/\/[^\s<>"']+\/pay\/[^\s<>"']+/gu,
+                        "请在上方购物卡片打开付款页",
+                      )
+                      .replace(
+                        /确认购买\s+[A-Za-z0-9_-]{4,80}/gu,
+                        "请在购物卡片核对后点击确认购买",
+                      )}
+                  </p>
                   {m.knowledge_status && m.knowledge_status !== "none" && (
                     <span className="fv-muted">
                       {m.knowledge_status === "current"
@@ -246,7 +325,8 @@ export function ConsultationCard({
             disabled={!!busy}
             onClick={() => void refresh()}
           >
-            {busy === "view" ? <Spinner /> : <RefreshCw aria-hidden />}刷新答复
+            {busy === "view" ? <Spinner /> : <RefreshCw aria-hidden />}
+            {data?.shopping ? "刷新订单与答复" : "刷新答复"}
           </Button>
           {data?.pending && (
             <Button disabled={!!busy} onClick={() => void refresh("recover")}>
@@ -255,7 +335,11 @@ export function ConsultationCard({
           )}
         </div>
       </CardContent>
-      <CardFooter>咨询答复不会下单或付款，购买仍需单独核对并确认。</CardFooter>
+      <CardFooter>
+        {data?.capabilities?.shopping?.availability === "supported"
+          ? "购买由你核对并确认，付款结果以原订单查询为准。"
+          : "咨询答复不会下单或付款，购买仍需单独核对并确认。"}
+      </CardFooter>
     </Card>
   );
 }

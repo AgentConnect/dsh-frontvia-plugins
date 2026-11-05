@@ -47,6 +47,9 @@ export class PapProvider extends Service {
   canAccess(ref: string) {
     return this.ready().canAccess(ref);
   }
+  capabilityCacheKey(ref: string) {
+    return this.ready().capabilityCacheKey(ref);
+  }
   identity(ref: string) {
     return this.ready().identity(ref);
   }
@@ -136,7 +139,7 @@ export async function apply(ctx: Context, config: Config = {}) {
     if (signing) await secrets.set(c.signingKeyRef, signing);
     const vault = new Vault(join(c.dataDir, "pap.sqlite"), key);
     core = new PapService(c, secrets, vault);
-    ctx.effect(() => () => vault.close());
+    ctx.effect(() => () => { core?.close(); vault.close(); });
   }
   const service = new PapProvider(ctx, core);
   for (const operation of [

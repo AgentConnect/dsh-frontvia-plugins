@@ -11,7 +11,7 @@ import { uiSchemas } from "../src/ui-contract.js";
 import { shoppingReference } from "../src/client/history.js";
 import { shoppingStep } from "../src/client/shopping-progress.js";
 const copy = (v: any) => structuredClone(v);
-function fixture() {
+function fixture(cache = false) {
   const dir = mkdtempSync(join(tmpdir(), "dsh-customer-test-")),
     key = randomBytes(32).toString("base64url"),
     db = join(dir, "customer.sqlite");
@@ -28,6 +28,7 @@ function fixture() {
     lose: "",
     price: "1234",
     purchase: true,
+    generation: "one",
     methodAvailability: {} as Record<string, string>,
   };
   const identity = {
@@ -40,6 +41,7 @@ function fixture() {
   const response = (data: any) => ({ result: { data: copy(data) } });
   const pap: PapPort = {
     apiVersion: 1,
+    ...(cache ? {capabilityCacheKey: () => remote.generation} : {}),
     sites: () => [
       {
         revision: "fixture-revision",
@@ -1346,4 +1348,18 @@ test("exported cart tool preserves opaque string versions while consultation use
   } finally {
     f.close();
   }
+});
+
+test("browse and concurrent card reads reuse capabilities; mutations and changed generation recheck", async () => {
+ const f=fixture(true);try{
+  const flow=await f.flow();const count=()=>f.remote.calls.filter(m=>m==='commerce.capabilities.get').length;
+  assert.equal(count(),1);
+  await f.service.tool('session-a','frontvia_products',{flowId:flow,action:'browse'},'browse');
+  await Promise.all(Array.from({length:5},()=>f.service.view('session-a',flow)));
+  assert.equal(count(),1);assert.equal(f.remote.calls.filter(m=>m==='commerce.products.search').length,1);
+  f.remote.generation='two';await f.service.view('session-a',flow);assert.equal(count(),2);
+  f.remote.methodAvailability['commerce.carts.create']='unavailable';
+  await assert.rejects(f.service.tool('session-a','frontvia_cart',{flowId:flow,action:'add',variant_id:'variant',quantity:1},'add'),/METHOD_UNAVAILABLE/);
+  assert.equal(count(),3);assert.equal(f.remote.writes,0);
+ }finally{f.close();}
 });
