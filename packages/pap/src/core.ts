@@ -207,6 +207,7 @@ export class PapService {
     if (this.config.clientId === undefined && !this.device?.current())
       return "PAP_CLIENT_IDENTITY_REQUIRED";
     const expected = this.binding(c.siteId);
+    if (this.device && c.binding.clientId !== expected.clientId) return "DEVICE_IDENTITY_REPLACED";
     if (
       Object.entries(expected).some(
         ([key, value]) => c.binding![key as keyof typeof expected] !== value,
@@ -604,12 +605,13 @@ export class PapService {
       const site = this.site(siteId);
       if (this.device) await this.device.ensure();
       if (generation) this.personal.assert(generation);
-      this.client();
+      const client = this.client();
       let c = this.vault
         .keys("connection:")
         .map((k) => this.vault.get<Connection>(k)!)
         .find(
-          (c) => c.siteId === siteId && c.personalIdentity === personalIdentity,
+          (c) => c.siteId === siteId && c.personalIdentity === personalIdentity &&
+            (!this.device || !c.binding || c.binding.clientId === client.clientId),
         );
       if (c) {
         const ref = c.id;

@@ -163,12 +163,14 @@ export function apply(ctx: any) {
   function Merchant({
     site,
     connection,
+    retiredDevice,
     busy,
     run,
     now,
   }: {
     site: Site;
     connection?: Connection;
+    retiredDevice: boolean;
     busy: string;
     run: Run;
     now: number;
@@ -353,6 +355,11 @@ export function apply(ctx: any) {
             </Button>
           </div>
         </div>
+        {retiredDevice && (
+          <p className="pap-field-help" role="status">
+            设备身份已更换。新连接使用当前密钥；旧订单和服务记录仍绑定原设备身份。
+          </p>
+        )}
         {deleteRevision && (
           <section
             className="pap-delete-confirm"
@@ -608,7 +615,21 @@ export function apply(ctx: any) {
     );
   }
 
+  const subscribeMain = (notify: () => void) =>
+    ctx.slots.subscribe("main", notify);
+  const hasCustomer = () =>
+    ctx.slots
+      .entries("main")
+      .some(
+        (entry: { options: { key?: string } }) =>
+          entry.options.key === "frontvia-customer",
+      );
   function Panel() {
+    const customerAvailable = React.useSyncExternalStore(
+      subscribeMain,
+      hasCustomer,
+      hasCustomer,
+    );
     const [data, setData] = useState<Status>();
     const [error, setError] = useState("");
     const [busy, setBusy] = useState("");
@@ -729,7 +750,12 @@ export function apply(ctx: any) {
       data?.sites.filter(
         (s) =>
           s.clientAllowed === false ||
-          data.connections.some((c) => c.siteId === s.id && c.bindingError),
+          data.connections.some(
+            (c) =>
+              c.siteId === s.id &&
+              c.bindingError &&
+              c.bindingError !== "DEVICE_IDENTITY_REPLACED",
+          ),
       ).length ?? 0;
     return (
       <div
@@ -779,7 +805,14 @@ export function apply(ctx: any) {
           {data?.configured && data.personal && (
             <IdentityPanel
               identity={data.personal}
-              openAccount={() => ctx.layout.selectPanel("frontvia-customer")}
+              openAccount={
+                customerAvailable
+                  ? () => {
+                      if (hasCustomer())
+                        ctx.layout.selectPanel("frontvia-customer");
+                    }
+                  : undefined
+              }
             />
           )}
           {error && (
@@ -883,7 +916,14 @@ export function apply(ctx: any) {
                             key={site.id}
                             site={site}
                             connection={data.connections.find(
-                              (c) => c.siteId === site.id,
+                              (c) =>
+                                c.siteId === site.id &&
+                                c.bindingError !== "DEVICE_IDENTITY_REPLACED",
+                            )}
+                            retiredDevice={data.connections.some(
+                              (c) =>
+                                c.siteId === site.id &&
+                                c.bindingError === "DEVICE_IDENTITY_REPLACED",
                             )}
                             busy={busy}
                             run={run}

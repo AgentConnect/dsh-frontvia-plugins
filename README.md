@@ -32,7 +32,7 @@ pnpm install --frozen-lockfile --ignore-scripts
 pnpm install:desktop
 ```
 
-安装命令通过桌面版自带的 CLI 更新当前 `desktop` Profile 的两个插件。重新打开 DSH，进入 **Frontvia 服务 → 个人账号**。插件先验证当前 Profile 保存的 Frontvia 会话；没有会话或会话失效时，直接展示手机号和验证码表单。登录无需手写配置。首次连接商家时自动登记本机设备公钥，后续复用同一身份。此步骤要求账号服务已启用设备接入接口；使用自管签名身份的现有 Profile 可以继续使用。详见 [配置说明](docs/configuration.md)。
+安装命令先校验两个包，再通过桌面 CLI 一次更新当前 `desktop` Profile。安装或校验失败时恢复原清单、锁文件与插件。Windows 上使用 DSH Desktop 安装的 `dsh.cmd`；自定义安装路径可通过 `DSH_DESKTOP_CLI` 指定。重新打开 DSH，进入 **Frontvia 服务 → 个人账号**。插件先验证当前 Profile 保存的 Frontvia 会话；没有会话或会话失效时，直接展示手机号和验证码表单。登录无需手写配置。首次连接商家时自动登记本机设备公钥，后续复用同一身份。此步骤要求账号服务已启用设备接入接口；使用自管签名身份的现有 Profile 可以继续使用。详见 [配置说明](docs/configuration.md)。
 
 开发验收可使用独立测试 Profile：
 

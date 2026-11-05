@@ -10,6 +10,7 @@ export type ClientIdentity = {
   callback: string;
   keyId: string;
   signingKeyRef: string;
+  registryVersion?: number;
 };
 const path = "/v1/personal/pap/devices";
 
@@ -55,7 +56,10 @@ export class DeviceIdentity {
         )
         .digest("base64url");
       const saved = this.current();
-      if (saved?.keyId === kid) return saved;
+      const previous = saved?.keyId === kid ? saved : undefined;
+      const legacy = previous?.clientId.split("/").at(-2)?.includes(".");
+      if (previous && (!legacy || previous.registryVersion === 2))
+        return previous;
       this.account.assert(login.generation);
       let record;
       try {
@@ -68,9 +72,13 @@ export class DeviceIdentity {
             Authorization: "Bearer " + token,
             DPoP: dpopProof(key, url, token),
           },
-          body: JSON.stringify({ jwk }),
+          body: JSON.stringify({ jwk, previous_client_id: previous?.clientId }),
         });
       } catch (e) {
+        // The original endpoint rejects the new hint. Keep its existing URL
+        // during a mixed-version rollout and retry migration on a later connect.
+        if (previous && e instanceof PapError && e.code === "HTTP_400")
+          return previous;
         if (e instanceof PapError && ["HTTP_404", "HTTP_405"].includes(e.code))
           fail("PAP_DEVICE_ENROLLMENT_UNAVAILABLE");
         throw e;
@@ -95,6 +103,7 @@ export class DeviceIdentity {
         callback: record.callback,
         keyId: kid,
         signingKeyRef: this.ref,
+        ...(record.registry_version === 2 ? { registryVersion: 2 } : {}),
       };
       this.vault.set("pap-device", identity);
       return identity;

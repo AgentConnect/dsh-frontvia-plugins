@@ -1,5 +1,5 @@
 import { mkdir, readFile, writeFile, cp } from "node:fs/promises";
-import { spawnSync } from "node:child_process";
+import spawn from "cross-spawn";
 import { resolve } from "node:path";
 import { createHash } from "node:crypto";
 const root = resolve("."),
@@ -10,12 +10,13 @@ for (const [folder, name] of [
   ["pap", "dsh-pap"],
   ["customer", "dsh-frontvia-customer"],
 ]) {
-  const result = spawnSync(
+  const result = spawn.sync(
     "pnpm",
     ["--dir", `packages/${folder}`, "pack", "--pack-destination", out],
     { cwd: root, stdio: "inherit" },
   );
-  if (result.status) process.exit(result.status);
+  if (result.error) throw result.error;
+  if (result.status !== 0) process.exit(result.status ?? 1);
   const path = resolve(out, `${name}-0.1.0.tgz`),
     bytes = await readFile(path),
     sha256 = createHash("sha256").update(bytes).digest("hex");
