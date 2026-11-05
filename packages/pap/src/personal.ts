@@ -127,9 +127,13 @@ export class PersonalAccount {
     try {
       const me = await this.call("me", undefined, p.token);
       this.assert(p.generation);
+      if (typeof me?.user_id !== "string") fail("INVALID_RESPONSE");
       if (me.user_id !== p.userId) fail("PERSONAL_ACCOUNT_CHANGED");
     } catch (e) {
-      if (e instanceof PapError && e.code === "HTTP_401") {
+      if (
+        e instanceof PapError &&
+        (e.code === "HTTP_401" || e.code === "PERSONAL_ACCOUNT_CHANGED")
+      ) {
         const s = this.state();
         if (s.login?.generation === p.generation) {
           delete s.login;
@@ -144,7 +148,10 @@ export class PersonalAccount {
     return this.serial.run("account", async () => {
       const s = this.state();
       if (s.pendingLogout) fail("PERSONAL_LOGOUT_PENDING");
-      if (s.login && s.login.expiresAt > tick())
+      if (
+        s.login?.origin === this.configured().origin &&
+        s.login.expiresAt > tick()
+      )
         fail("PERSONAL_LOGOUT_REQUIRED");
       if (typeof phone !== "string" || !/^\+[1-9][0-9]{7,14}$/.test(phone))
         fail("INVALID_PHONE");

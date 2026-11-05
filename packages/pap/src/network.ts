@@ -2,6 +2,7 @@ import https from "node:https";
 import { createHash } from "node:crypto";
 import { isIP, BlockList } from "node:net";
 import { lookup } from "node:dns/promises";
+import type { LookupAddress } from "node:dns";
 import { readFileSync } from "node:fs";
 import { fail, PapError } from "./storage.js";
 export type Target = {
@@ -150,7 +151,8 @@ export function httpsTransport(targets: Target[], caFile?: string, agents = new 
               }
               succeed(value);
             } catch {
-              failed(new PapError("INVALID_RESPONSE"));
+              const status = res.statusCode ?? 0;
+              failed(new PapError(status >= 400 ? `HTTP_${status}` : "INVALID_RESPONSE"));
             }
           });
         },
@@ -205,10 +207,31 @@ export const isPublicAddress = (address: string) =>
       public6.check(address, "ipv6") &&
       !reserved6.check(address, "ipv6");
 
+// Only the built-in Frontvia account host gets a fallback when a local proxy
+// synthesizes a benchmark-range address. Imported hostnames keep strict DNS checks.
+const frontviaAccountHost = "frontvia-shop.agent-connect.cn";
+export const frontviaAccountOrigin = "https://" + frontviaAccountHost;
+export async function resolvePublicHost(hostname: string, options: { all: true; verbatim: true }): Promise<LookupAddress[]> {
+  const addresses = await lookup(hostname, options);
+  if (hostname !== frontviaAccountHost || !addresses.length ||
+      !addresses.every(a => /^198\.(18|19)\./.test(a.address))) return addresses;
+  const resolver = await lookup("dns.google");
+  const pools = new PinnedAgents();
+  const dns = httpsTransport([{ origin: "https://dns.google", address: resolver.address, port: 443 }], undefined, pools);
+  const reply = await dns({
+    url: "https://dns.google/resolve?name=" + hostname + "&type=A",
+    method: "GET", timeoutMs: 4000, maxResponseBytes: 16384,
+  }).finally(() => pools.close());
+  if (reply.Status !== 0 || !Array.isArray(reply.Answer)) return [];
+  return reply.Answer.filter((r: { name: string; type: number }) =>
+    r.type === 1 && r.name.replace(/\.$/, "") === hostname)
+    .map((r: { data: string }) => ({ address: r.data, family: 4 }));
+}
+
 /** User-imported origins use public DNS with a pinned address per request. */
 export function publicTransport(
   origins: string[],
-  resolve = lookup,
+  resolve = resolvePublicHost,
   agents = new PinnedAgents(),
 ): Transport {
   return async (request) => {

@@ -5,9 +5,14 @@ import {
   type ConnectionRpcResult,
 } from "@deepseek-ai/dsh-client-connection";
 import type {} from "dsh-pap";
-import { Vault, PapError, fail, type Secrets } from "dsh-pap/core";
-import { lstatSync, readFileSync } from "node:fs";
-import { randomBytes } from "node:crypto";
+import {
+  PapError,
+  openProfileVault,
+  profileStorage,
+  readProfileConfig,
+  type Secrets,
+} from "dsh-pap/core";
+import type {} from "@deepseek-ai/dsh-app-boot";
 import { join } from "node:path";
 import { CustomerService, type CustomerConfig } from "./core.js";
 import { tools, guidance } from "./tools.js";
@@ -15,6 +20,7 @@ import { uiSchemas } from "./ui-contract.js";
 export const name = "dsh-frontvia-customer";
 export const inject = [
   "pap",
+  "profileContext",
   "tools",
   "credentials",
   "connection",
@@ -24,33 +30,25 @@ export async function apply(
   ctx: Context,
   config: { configFile?: string } = {},
 ) {
-  if (!config.configFile) return;
-  const st = lstatSync(config.configFile);
-  if (
-    st.isSymbolicLink() ||
-    !st.isFile() ||
-    st.uid !== process.getuid?.() ||
-    st.mode & 0o077
-  )
-    fail("PROTECTED_CONFIG_REQUIRED");
-  const c = JSON.parse(
-    readFileSync(config.configFile, "utf8"),
-  ) as CustomerConfig & { storageKeyRef: string };
+  const c: CustomerConfig & { storageKeyRef: string } = config.configFile
+    ? readProfileConfig(config.configFile)
+    : profileStorage(ctx.profileContext, "customer");
   const secrets: Secrets = {
     get: async (ref) =>
       (await ctx.credentials.resolve(credentialRef(ref)))?.value,
     set: (ref, v) => ctx.credentials.set(credentialRef(ref), v),
   };
-  let key = await secrets.get(c.storageKeyRef);
-  if (!key) key = randomBytes(32).toString("base64url");
-  await secrets.set(c.storageKeyRef, key);
   for (const site of c.sites) {
     const value =
       site.confirmationKeyRef && (await secrets.get(site.confirmationKeyRef));
     if (value && site.confirmationKeyRef)
       await secrets.set(site.confirmationKeyRef, value);
   }
-  const vault = new Vault(join(c.dataDir, "customer.sqlite"), key);
+  const vault = await openProfileVault(
+    join(c.dataDir, "customer.sqlite"),
+    c.storageKeyRef,
+    secrets,
+  );
   ctx.effect(() => () => vault.close());
   const service = new CustomerService(c, ctx.pap, secrets, vault);
   for (const tool of tools(service)) ctx.tools.register(tool as any);

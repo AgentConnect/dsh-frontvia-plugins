@@ -1,16 +1,18 @@
+import { dpopProof, jwt } from "./signing.js";
+export { jwt } from "./signing.js";
+import { DeviceIdentity, type ClientIdentity } from "./device.js";
 import { PersonalAccount, type PersonalConfig } from "./personal.js";
 import {
   createHash,
-  createPrivateKey,
   createPublicKey,
   generateKeyPairSync,
   randomBytes,
   randomUUID,
-  sign,
 } from "node:crypto";
 import { Vault, Serial, fail, canonical } from "./storage.js";
 import {
   httpsTransport,
+  frontviaAccountOrigin,
   PinnedAgents,
   publicTransport,
   type Transport,
@@ -24,6 +26,7 @@ import {
 } from "./discovery.js";
 export type { ImportedSite, ResourceDescription } from "./discovery.js";
 export { Vault, Serial, PapError, fail, canonical } from "./storage.js";
+export { readProfileConfig, profileStorage, openProfileVault } from "./profile.js";
 export type { Transport, Target } from "./network.js";
 export type Secrets = {
   get(ref: string): Promise<string | undefined>;
@@ -52,6 +55,15 @@ export type PapConfig = {
   dataDir: string;
   personal?: PersonalConfig;
 };
+export type AccountOnlyConfig = Omit<PapConfig, keyof ClientIdentity> & {
+  clientId?: undefined;
+  deviceSigningKeyRef?: string;
+};
+export const defaultPersonalConfig: PersonalConfig = {
+  origin: frontviaAccountOrigin,
+  requestOrigin: "https://frontvia.agent-connect.cn",
+  tokenOrigins: [frontviaAccountOrigin],
+};
 type Connection = {
   id: string;
   siteId: string;
@@ -78,16 +90,11 @@ type Connection = {
 const now = () => Math.floor(Date.now() / 1000);
 const random = () => randomBytes(32).toString("base64url");
 const hash = (s: string) => createHash("sha256").update(s).digest("base64url");
-export function jwt(key: string, header: any, claims: any) {
-  const data = [header, claims]
-    .map((x) => Buffer.from(JSON.stringify(x)).toString("base64url"))
-    .join(".");
-  return `${data}.${sign("sha256", Buffer.from(data), { key: createPrivateKey(key), dsaEncoding: "ieee-p1363" }).toString("base64url")}`;
-}
 export class PapService {
   readonly apiVersion = 1;
   private serial = new Serial();
   readonly personal: PersonalAccount;
+  private readonly device?: DeviceIdentity;
   private wire: Transport;
   private agents = new PinnedAgents();
   private inspectionWire?: Transport;
@@ -96,14 +103,16 @@ export class PapService {
     { expires: number; sites: ImportedSite[] }
   >();
   constructor(
-    readonly config: PapConfig,
+    readonly config: PapConfig | AccountOnlyConfig,
     private secrets: Secrets,
     private vault: Vault,
     transport?: Transport,
   ) {
     if (
-      new URL(config.clientId).protocol !== "https:" ||
-      new URL(config.callback).origin !== new URL(config.clientId).origin ||
+      (config.clientId === undefined
+        ? !config.personal || "callback" in config || "keyId" in config || "signingKeyRef" in config
+        : new URL(config.clientId).protocol !== "https:" ||
+          new URL(config.callback).origin !== new URL(config.clientId).origin) ||
       !config.sites.every(
         (s) =>
           new URL(s.issuer).protocol === "https:" &&
@@ -136,6 +145,13 @@ export class PapService {
         ], undefined, agents)(request);
       });
     this.personal = new PersonalAccount(config.personal, vault, this.wire);
+    if (config.clientId === undefined && config.deviceSigningKeyRef && config.personal)
+      this.device = new DeviceIdentity(config.deviceSigningKeyRef, this.personal, vault, secrets, this.wire);
+
+  }
+  private client(): ClientIdentity {
+    if (this.config.clientId !== undefined) return this.config;
+    return this.device?.current() ?? fail("PAP_CLIENT_IDENTITY_REQUIRED");
   }
   close() { this.agents.close(); }
   private configuredSites(): Site[] {
@@ -169,8 +185,8 @@ export class PapService {
   private binding(siteId: string) {
     const { domain, issuer, resource } = this.site(siteId);
     return {
-      clientId: this.config.clientId,
-      callback: this.config.callback,
+      clientId: this.client().clientId,
+      callback: this.client().callback,
       domain,
       issuer,
       resource,
@@ -188,7 +204,10 @@ export class PapService {
     if (!this.allSites().some((s) => s.id === c.siteId))
       return "SITE_NOT_APPROVED";
     if (!c.binding) return "CONNECTION_BINDING_REQUIRED";
+    if (this.config.clientId === undefined && !this.device?.current())
+      return "PAP_CLIENT_IDENTITY_REQUIRED";
     const expected = this.binding(c.siteId);
+    if (this.device && c.binding.clientId !== expected.clientId) return "DEVICE_IDENTITY_REPLACED";
     if (
       Object.entries(expected).some(
         ([key, value]) => c.binding![key as keyof typeof expected] !== value,
@@ -314,13 +333,11 @@ export class PapService {
     );
   }
   async clientStatus() {
-    return {
-      clientId: this.config.clientId,
-      callback: this.config.callback,
-      signingKeyConfigured: !!(await this.secrets.get(
-        this.config.signingKeyRef,
-      )),
-    };
+    const client = this.config.clientId === undefined ? this.device?.current() : this.config;
+    return { clientId: client?.clientId, callback: client?.callback,
+      signingKeyConfigured: !!(client && await this.secrets.get(client.signingKeyRef)),
+      automatic: !!this.device };
+
   }
   /** Owner UI only. Discovery is not authentication or business authorization. */
   async inspect(input: unknown) {
@@ -440,7 +457,7 @@ export class PapService {
     const c = this.load(ref),
       s = this.site(c.siteId);
     return {
-      clientId: this.config.clientId,
+      clientId: this.client().clientId,
       userId: c.user,
       ...(c.personalIdentity ? { personalSignedIn: true } : {}),
       issuer: s.issuer,
@@ -459,7 +476,7 @@ export class PapService {
     if (!c.personalIdentity) fail("PERSONAL_LOGIN_REQUIRED");
     if (
       typ !== "frontvia-personal-purchase+jwt" ||
-      claims.client_id !== this.config.clientId ||
+      claims.client_id !== this.client().clientId ||
       claims.issuer !== site.issuer ||
       claims.resource !== site.resource
     )
@@ -512,42 +529,29 @@ export class PapService {
     return { site: s, metadata };
   }
   private async fields(c: Connection) {
+    const client = this.client();
     const key =
-      (await this.secrets.get(this.config.signingKeyRef)) ??
+      (await this.secrets.get(client.signingKeyRef)) ??
       fail("CLIENT_KEY_REQUIRED");
     const claims = (sub: string) => ({
-      iss: this.config.clientId,
+      iss: client.clientId,
       sub,
       aud: this.site(c.siteId).issuer,
       iat: now(),
       exp: now() + 60,
       jti: random(),
     });
-    const header = { alg: "ES256", typ: "JWT", kid: this.config.keyId };
+    const header = { alg: "ES256", typ: "JWT", kid: client.keyId };
     return {
-      client_id: this.config.clientId,
+      client_id: client.clientId,
       client_assertion_type:
         "urn:ietf:params:oauth:client-assertion-type:jwt-bearer",
-      client_assertion: jwt(key, header, claims(this.config.clientId)),
+      client_assertion: jwt(key, header, claims(client.clientId)),
       assertion: jwt(key, header, claims(c.user)),
     };
   }
   private proof(c: Connection, url: string, token?: string) {
-    return jwt(
-      c.proofKey,
-      {
-        alg: "ES256",
-        typ: "dpop+jwt",
-        jwk: createPublicKey(c.proofKey).export({ format: "jwk" }),
-      },
-      {
-        htm: "POST",
-        htu: url,
-        iat: now(),
-        jti: random(),
-        ...(token ? { ath: hash(token) } : {}),
-      },
-    );
+    return dpopProof(c.proofKey, url, token);
   }
   private async token(c: Connection, fields: Record<string, string>) {
     const generation = c.personalIdentity
@@ -599,11 +603,15 @@ export class PapService {
         ? this.personal.current().generation
         : undefined;
       const site = this.site(siteId);
+      if (this.device) await this.device.ensure();
+      if (generation) this.personal.assert(generation);
+      const client = this.client();
       let c = this.vault
         .keys("connection:")
         .map((k) => this.vault.get<Connection>(k)!)
         .find(
-          (c) => c.siteId === siteId && c.personalIdentity === personalIdentity,
+          (c) => c.siteId === siteId && c.personalIdentity === personalIdentity &&
+            (!this.device || !c.binding || c.binding.clientId === client.clientId),
         );
       if (c) {
         const ref = c.id;
@@ -644,7 +652,7 @@ export class PapService {
     });
   }
   private subject(issuer: string) {
-    const key = `subject:${hash(this.config.clientId + "\0" + issuer)}`;
+    const key = `subject:${hash(this.client().clientId + "\0" + issuer)}`;
     let user = this.vault.get<string>(key);
     if (!user) {
       user =
@@ -653,7 +661,7 @@ export class PapService {
           .map((k) => this.vault.get<Connection>(k)!)
           .find(
             (c) =>
-              c.binding?.clientId === this.config.clientId &&
+              c.binding?.clientId === this.client().clientId &&
               c.binding?.issuer === issuer,
           )?.user ?? random();
       this.vault.set(key, user);
@@ -704,8 +712,8 @@ export class PapService {
       this.save(c);
       const q = new URLSearchParams({
         response_type: "code",
-        client_id: this.config.clientId,
-        redirect_uri: this.config.callback,
+        client_id: this.client().clientId,
+        redirect_uri: this.client().callback,
         resource: this.site(c.siteId).resource,
         scope: scopes.join(" "),
         state: c.pending.state,
@@ -719,7 +727,7 @@ export class PapService {
   async callback(ref: string, raw: string) {
     return this.serial.run(ref, async () => {
       const u = new URL(raw),
-        expected = new URL(this.config.callback),
+        expected = new URL(this.client().callback),
         c = this.load(ref),
         q = u.searchParams,
         p = c.pending;
@@ -742,7 +750,7 @@ export class PapService {
         grant_type: "authorization_code",
         code: q.get("code")!,
         code_verifier: p.verifier,
-        redirect_uri: this.config.callback,
+        redirect_uri: this.client().callback,
         session_id: c.sessionId!,
       });
     });

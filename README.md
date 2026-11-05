@@ -25,12 +25,18 @@ DSH 用户卡片 ── owner 用户操作接口 ───────┘       
 
 ## 构建与安装
 
-需要 Node **>=24.9.0**、pnpm **10.28.2**。本机验收使用 Node 25.2.1；系统默认 Node 22 不符合宿主要求。
+在本机克隆仓库，进入仓库根目录。需要 Node **>=24.9.0**、pnpm **10.28.2** 和已启动过一次的 DSH Desktop **0.2.1-rc.3**。
 
 ```sh
-cd /Users/howard/workspace/dsh-frontvia-plugins
-export PATH=/opt/homebrew/bin:$PATH
 pnpm install --frozen-lockfile --ignore-scripts
+pnpm install:desktop
+```
+
+安装命令先校验两个包，再通过桌面 CLI 一次更新当前 `desktop` Profile。安装或校验失败时恢复原清单、锁文件与插件。Windows 上使用 DSH Desktop 安装的 `dsh.cmd`；自定义安装路径可通过 `DSH_DESKTOP_CLI` 指定。重新打开 DSH，进入 **Frontvia 服务 → 个人账号**。插件先验证当前 Profile 保存的 Frontvia 会话；没有会话或会话失效时，直接展示手机号和验证码表单。登录无需手写配置。首次连接商家时自动登记本机设备公钥，后续复用同一身份。此步骤要求账号服务已启用设备接入接口；使用自管签名身份的现有 Profile 可以继续使用。详见 [配置说明](docs/configuration.md)。
+
+开发验收可使用独立测试 Profile：
+
+```sh
 pnpm check
 pnpm pack:local
 node scripts/harness.mjs --install --setup-only
@@ -50,7 +56,7 @@ node node_modules/@deepseek-ai/dsh/lib/bin.js plugin --profile frontvia add /abs
 
 ## 配置和身份
 
-完整示例见 [配置说明](docs/configuration.md)。两个宿主插件分别接收 `{ configFile: '/absolute/path.json' }`。配置文件必须属于当前用户、权限为 0600，不能是符号链接。配置只放 DSH 凭据引用；私钥、存储密钥、确认密钥不放在配置或工具参数中。
+完整示例见 [配置说明](docs/configuration.md)。如需覆盖默认值，两个宿主插件分别接收 `{ configFile: '/absolute/path.json' }`。配置文件必须属于当前用户、权限为 0600，不能是符号链接。配置只放 DSH 凭据引用；私钥、存储密钥、确认密钥不放在配置或工具参数中。
 
 每个独立 Profile/本机用户使用独立 DSH_HOME、凭据引用和数据目录。连接绑定 site、issuer 和 resource；稳定随机 PAP 主体在该目录内保存。不要把已有身份目录当作新用户模板复制。新主体不按邮箱认领 Buyer Web 用户或旧订单。
 
@@ -59,7 +65,7 @@ PAP 会话、DPoP 私钥、Token、购物进度和原请求以 AES-256-GCM 保�
 ## 使用
 
 1. 启动已配置的独立 Profile，打开宿主打印的本机认证地址。
-2. 配置个人账号后先在“Frontvia 服务”用手机号登录，再在“PAP 连接 → 添加商家服务”粘贴商家导出的 JSON，检查并选择资源。添加仅保存服务信息；连接成功、业务可用与购买授权分别核验。
+2. 先在“Frontvia 服务”用手机号登录，再在“PAP 连接 → 添加商家服务”粘贴商家导出的 JSON，检查并选择资源。添加仅保存服务信息；连接成功、业务可用与购买授权分别核验。
 3. 新建聊天：“搜索 Travel Mug，选一个可购买规格，加购一件。”
 4. 在购物车卡片填写并保存收货资料。这些字段直接提交业务服务，不写入模型工具结果。
 5. 对 Agent 说：“读取最新购物车，选最便宜配送，生成报价并准备结算，等我确认。”
@@ -113,7 +119,7 @@ PAP 连接页更新与验收：[docs/pap-ui-refresh.md](docs/pap-ui-refresh.md)�
 
 ### 手机号登录与公开 Agent
 
-已增加可选的 Frontvia 个人号接入，配置见 [PAP README](packages/pap/README.md)。
+默认启用 Frontvia 个人号登录，其他环境的配置见 [PAP README](packages/pap/README.md)。
 流程为在 Frontvia 服务中手机号验证码注册/登录 → 在 PAP 连接中添加商家公开咨询配置 → 连接 → 使用 Customer
 咨询工具；旧 USD 购物另添加 Commerce 资源；声明支持的 CNY 购物直接使用咨询连接。无需商家审批客户端；公钥、签名、回调、DPoP、服务发布状态仍由
 服务端校验。个人凭据只发给受保护配置中的可信服务，不随导入地址变化。

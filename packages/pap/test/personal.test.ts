@@ -5,6 +5,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
   randomBytes,
+  createHash,
   generateKeyPairSync,
   createPublicKey,
   verify,
@@ -17,7 +18,7 @@ import {
   type Transport,
 } from "../src/core.js";
 
-function fixture() {
+function fixture(managed = false) {
   const dir = mkdtempSync(join(tmpdir(), "pap-personal-")),
     path = join(dir, "pap.sqlite"),
     key = randomBytes(32).toString("base64url");
@@ -48,6 +49,22 @@ function fixture() {
       },
     ],
   };
+  const policy = managed
+    ? {
+        dataDir: dir,
+        sites: config.sites,
+        targets: config.targets,
+        personal: config.personal,
+        deviceSigningKeyRef: "DEVICE",
+      }
+    : config;
+  const keys = new Map([["SIGN", signing]]);
+  const secrets = {
+    get: async (ref: string) => keys.get(ref),
+    set: async (ref: string, value: string) => {
+      keys.set(ref, value);
+    },
+  };
   let user = "a",
     session = 0,
     block: Promise<void> | undefined,
@@ -55,6 +72,20 @@ function fixture() {
   const requests: any[] = [];
   const wire: Transport = async (r) => {
     requests.push(r);
+    if (r.url.endsWith("/pap/devices")) {
+      const { jwk } = JSON.parse(r.body!);
+      const kid = createHash("sha256")
+        .update(
+          JSON.stringify({ crv: jwk.crv, kty: jwk.kty, x: jwk.x, y: jwk.y }),
+        )
+        .digest("base64url");
+      return {
+        client_id: r.url + "/" + kid + "/agent.json",
+        callback: r.url + "/" + kid + "/callback",
+        kid,
+        registry_version: 2,
+      };
+    }
     if (r.url.endsWith("/otp/request")) {
       user = JSON.parse(r.body!).target.endsWith("01") ? "a" : "b";
       return { challenge_id: "challenge", expires_in: 300, resend_after: 0 };
@@ -111,15 +142,11 @@ function fixture() {
     };
   };
   let vault = new Vault(path, key),
-    service = new PapService(
-      config,
-      { get: async () => signing, set: async () => {} },
-      vault,
-      wire,
-    );
+    service = new PapService(policy, secrets, vault, wire);
   return {
     config,
     requests,
+    keys,
     path,
     get service() {
       return service;
@@ -136,12 +163,7 @@ function fixture() {
     restart() {
       vault.close();
       vault = new Vault(path, key);
-      service = new PapService(
-        config,
-        { get: async () => signing, set: async () => {} },
-        vault,
-        wire,
-      );
+      service = new PapService(policy, secrets, vault, wire);
     },
     async login(phone = "+12025550101") {
       await service.personal.requestCode(phone);
@@ -334,6 +356,38 @@ test("personal purchase statements use the current resource proof key and cannot
       () => f.service.signResourceStatement(c.connectionRef, typ, claims),
       /PERSONAL_ACCOUNT_CHANGED/,
     );
+  } finally {
+    f.vault.close();
+  }
+});
+
+test("replacing a lost device key creates a fresh connection and never sends an old flow under the new key", async () => {
+  const f = fixture(true);
+  try {
+    await f.login();
+    const original = await f.service.connect("shop");
+    const oldId = f.service.identity(original.connectionRef).clientId;
+    f.keys.delete("DEVICE");
+    const fresh = await f.service.connect("shop");
+    assert.notEqual(fresh.connectionRef, original.connectionRef);
+    assert.notEqual(f.service.identity(fresh.connectionRef).clientId, oldId);
+    assert.equal(
+      (f.service.status(original.connectionRef) as { bindingError?: string })
+        .bindingError,
+      "DEVICE_IDENTITY_REPLACED",
+    );
+    const before = f.requests.length;
+    await assert.rejects(
+      f.service.request(original.connectionRef, "anything.get", {}),
+      { code: "DEVICE_IDENTITY_REPLACED" },
+    );
+    assert.equal(f.requests.length, before);
+    f.restart();
+    assert.equal(
+      (await f.service.connect("shop")).connectionRef,
+      fresh.connectionRef,
+    );
+    assert.equal((f.service.status() as unknown[]).length, 2);
   } finally {
     f.vault.close();
   }

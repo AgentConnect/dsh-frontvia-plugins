@@ -1,5 +1,5 @@
 import React from "react";
-import { Card } from "./ui.js";
+import { Button, Card } from "./ui.js";
 
 export type PersonalIdentity = {
   configured: boolean;
@@ -10,7 +10,13 @@ export type PersonalIdentity = {
 };
 
 /** PAP displays the shared identity; Frontvia owns the login entry. */
-export function IdentityPanel({ identity }: { identity: PersonalIdentity }) {
+export function IdentityPanel({
+  identity,
+  openAccount,
+}: {
+  identity: PersonalIdentity;
+  openAccount?: () => void;
+}) {
   return (
     <Card className="pap-identity" aria-label="当前身份">
       <h3>当前身份</h3>
@@ -22,14 +28,21 @@ export function IdentityPanel({ identity }: { identity: PersonalIdentity }) {
             : "未登录 Frontvia 个人账号"}
       </p>
       <p className="pap-description">
-        {identity.logoutPending
-          ? "请到 Frontvia 服务重试退出。"
-          : identity.signedIn
-            ? "账号管理和退出登录请前往 Frontvia 服务。"
-            : identity.configured
-              ? "请到 Frontvia 服务使用手机号登录或注册，再连接商家。"
-              : "在 Frontvia 服务配置个人账号后，即可使用手机号登录。"}
+        {!openAccount
+          ? "请安装或启用 Frontvia 服务插件，以登录或管理个人账号。"
+          : identity.logoutPending
+            ? "请到 Frontvia 服务重试退出。"
+            : identity.signedIn
+              ? "账号管理和退出登录请前往 Frontvia 服务。"
+              : identity.configured
+                ? "请到 Frontvia 服务使用手机号登录或注册，再连接商家。"
+                : "在 Frontvia 服务配置个人账号后，即可使用手机号登录。"}
       </p>
+      {openAccount && identity.configured && !identity.signedIn && (
+        <Button variant="outline" onClick={openAccount}>
+          打开 Frontvia 服务
+        </Button>
+      )}
     </Card>
   );
 }

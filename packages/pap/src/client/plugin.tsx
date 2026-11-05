@@ -39,7 +39,7 @@ import {
 import styles from "./styles.css";
 import { ImportPanel } from "./import-panel.js";
 
-export const inject = ["slots", "connection"];
+export const inject = ["slots", "connection", "layout"];
 type Site = {
   id: string;
   revision: string;
@@ -68,7 +68,11 @@ type Status = {
   sites: Site[];
   connections: Connection[];
   removedSites?: Site[];
-  client?: { clientId: string; signingKeyConfigured: boolean };
+  client?: {
+    clientId?: string;
+    automatic?: boolean;
+    signingKeyConfigured: boolean;
+  };
 };
 function serviceKind(site: Site) {
   if (site.description?.methods.some((m) => m.startsWith("commerce.")))
@@ -89,6 +93,11 @@ type Run = (
   payload: Record<string, unknown>,
 ) => Promise<any>;
 const messages: Record<string, string> = {
+  PAP_DEVICE_ENROLLMENT_UNAVAILABLE:
+    "当前账号服务尚未启用自动设备接入。个人账号仍可使用，商家连接需等待服务端更新。",
+  INVALID_DEVICE_IDENTITY: "账号服务返回的设备身份未通过验证。",
+  PAP_CLIENT_IDENTITY_REQUIRED:
+    "此 Profile 可以登录个人账号。连接商家还需要配置已发布的 PAP 客户端签名身份。",
   PAP_CONFIGURATION_REQUIRED: "请先配置 PAP 客户端，再连接商家。",
   CLIENT_KEY_REQUIRED: "客户端签名密钥未就绪，请检查此 Profile 的凭据配置。",
   SITE_NOT_APPROVED: "此商家尚未登记，请检查连接配置。",
@@ -154,12 +163,14 @@ export function apply(ctx: any) {
   function Merchant({
     site,
     connection,
+    retiredDevice,
     busy,
     run,
     now,
   }: {
     site: Site;
     connection?: Connection;
+    retiredDevice: boolean;
     busy: string;
     run: Run;
     now: number;
@@ -344,6 +355,11 @@ export function apply(ctx: any) {
             </Button>
           </div>
         </div>
+        {retiredDevice && (
+          <p className="pap-field-help" role="status">
+            设备身份已更换。新连接使用当前密钥；旧订单和服务记录仍绑定原设备身份。
+          </p>
+        )}
         {deleteRevision && (
           <section
             className="pap-delete-confirm"
@@ -599,7 +615,21 @@ export function apply(ctx: any) {
     );
   }
 
+  const subscribeMain = (notify: () => void) =>
+    ctx.slots.subscribe("main", notify);
+  const hasCustomer = () =>
+    ctx.slots
+      .entries("main")
+      .some(
+        (entry: { options: { key?: string } }) =>
+          entry.options.key === "frontvia-customer",
+      );
   function Panel() {
+    const customerAvailable = React.useSyncExternalStore(
+      subscribeMain,
+      hasCustomer,
+      hasCustomer,
+    );
     const [data, setData] = useState<Status>();
     const [error, setError] = useState("");
     const [busy, setBusy] = useState("");
@@ -720,7 +750,12 @@ export function apply(ctx: any) {
       data?.sites.filter(
         (s) =>
           s.clientAllowed === false ||
-          data.connections.some((c) => c.siteId === s.id && c.bindingError),
+          data.connections.some(
+            (c) =>
+              c.siteId === s.id &&
+              c.bindingError &&
+              c.bindingError !== "DEVICE_IDENTITY_REPLACED",
+          ),
       ).length ?? 0;
     return (
       <div
@@ -768,7 +803,17 @@ export function apply(ctx: any) {
             </div>
           </header>
           {data?.configured && data.personal && (
-            <IdentityPanel identity={data.personal} />
+            <IdentityPanel
+              identity={data.personal}
+              openAccount={
+                customerAvailable
+                  ? () => {
+                      if (hasCustomer())
+                        ctx.layout.selectPanel("frontvia-customer");
+                    }
+                  : undefined
+              }
+            />
           )}
           {error && (
             <Alert variant="destructive">
@@ -871,7 +916,14 @@ export function apply(ctx: any) {
                             key={site.id}
                             site={site}
                             connection={data.connections.find(
-                              (c) => c.siteId === site.id,
+                              (c) =>
+                                c.siteId === site.id &&
+                                c.bindingError !== "DEVICE_IDENTITY_REPLACED",
+                            )}
+                            retiredDevice={data.connections.some(
+                              (c) =>
+                                c.siteId === site.id &&
+                                c.bindingError === "DEVICE_IDENTITY_REPLACED",
                             )}
                             busy={busy}
                             run={run}
@@ -960,14 +1012,21 @@ export function apply(ctx: any) {
                     <dl className="pap-detail-facts">
                       <div className="pap-detail-address">
                         <dt>客户端标识</dt>
-                        <dd>{data.client.clientId}</dd>
+                        <dd>
+                          {data.client.clientId ??
+                            (data.client.automatic
+                              ? "首次连接商家时自动建立"
+                              : "待配置商家连接身份")}
+                        </dd>
                       </div>
                       <div>
                         <dt>签名凭据</dt>
                         <dd>
                           {data.client.signingKeyConfigured
                             ? "已配置"
-                            : "待配置"}
+                            : data.client.automatic
+                              ? "首次连接时生成"
+                              : "待配置"}
                         </dd>
                       </div>
                     </dl>

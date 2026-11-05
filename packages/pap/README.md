@@ -4,7 +4,7 @@ Generic PAP 0.2 client service for official DeepSeek Harness 0.2.1-rc.3. Exposes
 
 ## 手机号个人账号
 
-在受保护的 `configFile` 中增加：
+默认安装会在当前 DSH Profile 中启用 Frontvia 个人登录。打开「Frontvia 服务」即可查看已登录账号或使用验证码登录。要指定其他账号环境，可在受保护的 `configFile` 中增加：
 
 ```json
 {
@@ -28,7 +28,7 @@ PAP 不注册 `pap/personal-*` 页面接口；`pap/status` 只返回脱敏身份
 不包含验证码挑战信息。个人令牌不交给浏览器或模型。
 配置个人账号后，连接商家须先到 Frontvia 服务登录。
 
-客户端继续使用自己的 CIMD/JWKS、匹配签名密钥和 HTTPS 回调。公开 Frontvia
+默认安装在首次连接商家时向 Frontvia 账号服务登记当前 Profile 的设备公钥，签名私钥由本机 DSH 保存。服务端需支持 `POST /v1/personal/pap/devices`。显式配置的客户端继续使用自己的 CIMD/JWKS、匹配签名密钥和 HTTPS 回调。公开 Frontvia
 服务自动校验客户端，旧导出配置中的允许列表不再形成审批门槛；服务端仍能
 拒绝已禁用客户端、错误签名或未发布服务。个人登录不授予商家管理权限；
 个人购物由 Commerce capabilities 和 Customer 的 owner 确认入口控制，
