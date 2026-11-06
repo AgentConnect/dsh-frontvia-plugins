@@ -271,10 +271,11 @@ test("both bundles are accepted only on the approved DSH baseline without an exe
       ),
     );
     assert.equal(
-      evaluatePluginCompatibility(manifest, {}, "0.2.1-rc.3"),
+      evaluatePluginCompatibility(manifest, {}, "0.2.2-rc.1"),
       undefined,
     );
-    assert.ok(evaluatePluginCompatibility(manifest, {}, "0.2.1-rc.2"));
+    assert.ok(evaluatePluginCompatibility(manifest, {}, "0.2.1-rc.3"));
+    assert.ok(evaluatePluginCompatibility(manifest, {}, "0.2.2-rc.2"));
   }
 });
 

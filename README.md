@@ -1,6 +1,6 @@
 # DSH PAP + Frontvia Customer
 
-两个独立的本地插件，让官方 **DeepSeek Harness 0.2.1-rc.3** 的 Agent 使用商家发布的 PAP 服务。支持手机号个人账号、导入商家连接 JSON、发现咨询与购物资源、咨询会话与公开知识检索，以及商品、购物车和人工确认购买。购物表单当前支持 US/USD；个人账号免审批购物已通过隔离 Mock 支付全流程验收。
+两个独立的本地插件，让官方 **DeepSeek Harness 0.2.2-rc.1** 的 Agent 使用商家发布的 PAP 服务。支持手机号个人账号、导入商家连接 JSON、发现咨询与购物资源、咨询会话与公开知识检索，以及商品、购物车和人工确认购买。购物表单当前支持 US/USD；个人账号免审批购物已通过隔离 Mock 支付全流程验收。
 
 源码未发布 npm 或 Release；不包含真实收款、生产部署、取消订单和退款。咨询答复、公开知识与人工求助均由商家服务提供，插件不另建客服系统。安装包仅供本机使用；本地提交不包含推送或发版。
 
@@ -25,7 +25,7 @@ DSH 用户卡片 ── owner 用户操作接口 ───────┘       
 
 ## 构建与安装
 
-在本机克隆仓库，进入仓库根目录。需要 Node **>=24.9.0**、pnpm **10.28.2** 和已启动过一次的 DSH Desktop **0.2.1-rc.3**。
+在本机克隆仓库，进入仓库根目录。需要 Node **>=24.9.0**、pnpm **10.28.2** 和已启动过一次的 DSH Desktop **0.2.2-rc.1**。
 
 ```sh
 pnpm install --frozen-lockfile --ignore-scripts
@@ -52,7 +52,7 @@ node node_modules/@deepseek-ai/dsh/lib/bin.js plugin --profile frontvia add /abs
 node node_modules/@deepseek-ai/dsh/lib/bin.js plugin --profile frontvia add /absolute/path/dsh-frontvia-customer-0.1.0-HASH.tgz
 ```
 
-仅接受 rc.3，不申请或设置宿主版本豁免。包使用宿主 React，未打入第二套 React。
+当前仅接受 0.2.2-rc.1，不申请或设置宿主版本豁免。包使用宿主 React，未打入第二套 React。
 
 ## 配置和身份
 
@@ -109,7 +109,7 @@ PAP 会话、DPoP 私钥、Token、购物进度和原请求以 AES-256-GCM 保�
 
 见 [分项验收报告](docs/acceptance.md) 和 [测试栈操作](docs/native-acceptance.md)。验收区分受控协议测试、真实 Frontvia 服务、受控模型、真实付费模型和宿主 UI。真实模型购物对话最多五轮；重新运行不会自动启用付费模型。
 
-运行环境使用官方 DSH rc.3 宿主 Web UI 和真实 Chrome。没有把 Electron 应用窗口、公开分发、生产服务或真实支付列为已验证。
+此前界面验收使用官方 DSH 0.2.1-rc.3 宿主 Web UI 和真实 Chrome。没有把 Electron 应用窗口、公开分发、生产服务或真实支付列为已验证。
 
 个人账号购物的当前验收及截图：[docs/personal-commerce-acceptance.md](docs/personal-commerce-acceptance.md)。
 
@@ -135,3 +135,7 @@ HTTPS/Platform/Agent、预留号码验证码和受控模型；不修改用户默
 ### 单条 PAP 服务链接
 
 支持 `https://身份域名/.well-known/poppy.json#resource=编码后的咨询资源URL`。这是 Frontvia 链接导入约定；只添加发现文档中精确匹配且通过咨询 OpenAPI 核验的服务，不导入其他店铺或 Commerce。链接不含凭据，添加后仍用客户端自己的身份连接。已用 JSON 导入过同一绑定时保留其本地 ID 与身份。旧 JSON 导入流程不变。源码支持不代表本机已安装更新。
+
+### DSH 0.2.2-rc.1
+
+当前依赖、宿主版本声明和本地安装包已对齐 DSH 0.2.2-rc.1 / Cordis 4.1.0；旧宿主与其他未验版本仍由安装器拒绝。新版真实宿主 HTTP 验收、本机安装及界面验证边界见 [升级记录](docs/dsh-022-acceptance.md)。

@@ -33,7 +33,7 @@ test("both archives are preflighted and a failed paired install restores the pre
 const fs=require('node:fs'),p=require('node:path');
 const profile=p.join(process.env.DSH_HOME,'profiles','desktop'), manifest=p.join(profile,'package.json');
 const args=process.argv.slice(2),marker=p.join(profile,'runtime-state');
-if(args[0]==='--version') { console.log('0.2.1-rc.3');process.exit(0); }
+if(args[0]==='--version') { console.log('0.2.2-rc.1');process.exit(0); }
 if(args[3]==='add') {
  if(args.length!==6)process.exit(3);
  fs.appendFileSync(p.join(profile,'calls'),'add\\n');
@@ -67,7 +67,7 @@ process.exit(4);
     const savePair = () =>
       writeFile(
         join(archives, "manifest.json"),
-        JSON.stringify({ runtime: "0.2.1-rc.3", artifacts: pair }),
+        JSON.stringify({ runtime: "0.2.2-rc.1", artifacts: pair }),
       );
     const run = () =>
       execFileSync(process.execPath, [entry], {
@@ -75,6 +75,11 @@ process.exit(4);
         env,
         stdio: "pipe",
       });
+    await writeFile(join(archives, "manifest.json"),
+      JSON.stringify({ runtime: "0.2.1-rc.3", artifacts: pair }));
+    assert.throws(run, /请使用与插件兼容的 DSH Desktop CLI/);
+    assert.equal(await readFile(join(profile, "package.json"), "utf8"), manifest);
+    await assert.rejects(readFile(join(profile, "calls")), { code: "ENOENT" });
     pair[1].sha256 = "invalid";
     await savePair();
     assert.throws(run, /安装包校验失败/);

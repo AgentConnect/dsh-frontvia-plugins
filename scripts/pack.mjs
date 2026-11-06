@@ -29,7 +29,7 @@ for (const [folder, name] of [
 await writeFile(
   resolve(out, "manifest.json"),
   JSON.stringify(
-    { runtime: "0.2.1-rc.3", publication: "local-only", artifacts },
+    { runtime: "0.2.2-rc.1", publication: "local-only", artifacts },
     null,
     2,
   ) + "\n",
