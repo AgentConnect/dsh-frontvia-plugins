@@ -31,10 +31,10 @@ test("device enrollment retries with the same local key, verifies authority and 
     if (req.url.endsWith("/otp/verify"))
       return {
         user_id: "person",
-        access_token: "fv.personal.test-device",
+        access_token: "dsh.personal.test-device",
         expires_in: 3600,
       };
-    assert.equal(req.url, origin + "/v1/personal/pap/devices");
+    assert.equal(req.url, origin + "/v1/devices");
     const jwk = JSON.parse(req.body!).jwk;
     assert.equal(jwk.d, undefined);
     const [header, claims, signature] = req.headers!.DPoP.split(".");
@@ -56,7 +56,7 @@ test("device enrollment retries with the same local key, verifies authority and 
     assert.equal(
       decode(claims).ath,
       createHash("sha256")
-        .update("fv.personal.test-device")
+        .update("dsh.personal.test-device")
         .digest("base64url"),
     );
     const kid = createHash("sha256")
@@ -76,12 +76,13 @@ test("device enrollment retries with the same local key, verifies authority and 
     const base = req.url + "/test-ticket";
     return {
       kid,
+      registry_version: 3,
       client_id: base + "/agent.json",
       callback: base + "/callback",
     };
   };
   const account = new PersonalAccount(
-    { origin, requestOrigin: origin, tokenOrigins: [origin] },
+    { origin, requestOrigin: origin, audiences: [origin] },
     vault,
     wire,
   );

@@ -1,3 +1,9 @@
+import { AccountClient } from "dsh-identity-client/core";
+const defaultPersonalConfig = {
+  origin: "https://identity.test",
+  requestOrigin: "https://dsh.test",
+  audiences: ["https://shop.test/companies/a"],
+};
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { mkdtempSync, rmSync } from "node:fs";
@@ -6,7 +12,6 @@ import { join } from "node:path";
 import { apply as applyPap } from "dsh-pap";
 import { apply as applyCustomer } from "../src/index.js";
 import {
-  defaultPersonalConfig,
   openProfileVault,
   PapError,
   PapService,
@@ -75,6 +80,23 @@ test("a DSH profile installing both bundles without config registers the login, 
     return body.result.value;
   }
   try {
+    const accountVault = await openProfileVault(
+      join(dir, "identity.sqlite"),
+      "IDENTITY",
+      secrets,
+    );
+    cleanups.push(() => accountVault.close());
+    ctx.identity = {
+      account: new AccountClient(
+        defaultPersonalConfig,
+        accountVault,
+        secrets,
+        async () => {
+          throw new Error("unexpected network");
+        },
+        "DEVICE",
+      ),
+    };
     await applyPap(ctx);
     await applyCustomer(ctx);
     assert.deepEqual(await call("frontvia-customer/list"), {
@@ -89,8 +111,8 @@ test("a DSH profile installing both bundles without config registers the login, 
     assert.ok(routes.has("/api/frontvia-customer/personal-verify"));
     assert.equal(
       values.size,
-      2,
-      "the account and customer vaults have separate encryption keys",
+      3,
+      "the identity, PAP and customer vaults have separate encryption keys",
     );
   } finally {
     cleanups.reverse().forEach((dispose) => dispose());
@@ -109,11 +131,11 @@ test("default account verifies an existing session after restart, isolates profi
     if (request.url.endsWith("/otp/verify"))
       return {
         user_id: "first",
-        access_token: "fv.personal.first",
+        access_token: "dsh.personal.first",
         expires_in: 3600,
       };
     assert.ok(request.url.endsWith("/me"));
-    assert.equal(request.headers?.Authorization, "Bearer fv.personal.first");
+    assert.equal(request.headers?.Authorization, "Bearer dsh.personal.first");
     if (me !== "ok")
       throw new PapError(me === "revoked" ? "HTTP_401" : "NETWORK_UNCERTAIN");
     return { user_id: "first" };
@@ -129,7 +151,13 @@ test("default account verifies an existing session after restart, isolates profi
       config.storageKeyRef,
       secrets,
     );
-    const service = new PapService(config, secrets, vault, wire);
+    const service = new PapService(
+      config,
+      secrets,
+      vault,
+      wire,
+      new AccountClient(defaultPersonalConfig, vault, secrets, wire, "DEVICE"),
+    );
     return {
       service,
       close() {

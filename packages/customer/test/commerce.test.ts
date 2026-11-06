@@ -3,15 +3,33 @@ import assert from "node:assert/strict";
 import { mkdtempSync, readFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { randomBytes, createHmac } from "node:crypto";
-import { Vault, PapError } from "dsh-pap/core";
+import {
+  randomBytes,
+  createHmac,
+  generateKeyPairSync,
+  createPublicKey,
+  verify,
+} from "node:crypto";
+import { Vault, PapError, jwt } from "dsh-pap/core";
 import { CustomerService, modelData, type PapPort } from "../src/core.js";
 import { schemas, tools } from "../src/tools.js";
 import { uiSchemas } from "../src/ui-contract.js";
 import { shoppingReference } from "../src/client/history.js";
 import { shoppingStep } from "../src/client/shopping-progress.js";
+import { isRequiredContact } from "../src/contact-fields.js";
 const copy = (v: any) => structuredClone(v);
-function fixture(cache = false) {
+function fixture(cache = false, cny = false, language?: string) {
+  const currency = cny ? "CNY" : "USD",
+    country = cny ? "CN" : "US",
+    locale = language ?? (cny ? "zh-CN" : "en-US");
+  const profile = cny
+    ? "frontvia.personal_purchase.v1"
+    : "frontvia.pap_subject_purchase.v1";
+  const proof = generateKeyPairSync("ec", {
+    namedCurve: "prime256v1",
+    privateKeyEncoding: { type: "pkcs8", format: "pem" },
+    publicKeyEncoding: { type: "spki", format: "pem" },
+  }).privateKey;
   const dir = mkdtempSync(join(tmpdir(), "dsh-customer-test-")),
     key = randomBytes(32).toString("base64url"),
     db = join(dir, "customer.sqlite");
@@ -37,11 +55,26 @@ function fixture(cache = false) {
     issuer: "https://auth.test",
     resource: "https://api.test/rpc",
     signedIn: false,
+    personalSignedIn: cny,
   };
   const response = (data: any) => ({ result: { data: copy(data) } });
   const pap: PapPort = {
     apiVersion: 1,
-    ...(cache ? {capabilityCacheKey: () => remote.generation} : {}),
+    ...(cny
+      ? {
+          signResourceStatement: (_ref: string, typ: string, claims: any) =>
+            jwt(
+              proof,
+              {
+                alg: "ES256",
+                typ,
+                jwk: createPublicKey(proof).export({ format: "jwk" }),
+              },
+              claims,
+            ),
+        }
+      : {}),
+    ...(cache ? { capabilityCacheKey: () => remote.generation } : {}),
     sites: () => [
       {
         revision: "fixture-revision",
@@ -73,6 +106,7 @@ function fixture(cache = false) {
       if (m === "commerce.capabilities.get")
         return response({
           store_id: "store",
+          default_context: { country, currency, locale },
           methods: [
             "capabilities.get",
             "connections.list",
@@ -103,7 +137,7 @@ function fixture(cache = false) {
           })),
           business_profiles: [
             {
-              id: "frontvia.pap_subject_purchase.v1",
+              id: profile,
               availability: remote.purchase ? "supported" : "disabled",
             },
           ],
@@ -150,7 +184,7 @@ function fixture(cache = false) {
                 {
                   id: "standard",
                   label: "Standard",
-                  amount: { amount_minor: "500", currency: "USD" },
+                  amount: { amount_minor: "500", currency },
                 },
               ],
             },
@@ -166,7 +200,7 @@ function fixture(cache = false) {
           version: "v1",
           lines: p.lines,
           totals: {
-            grand_total: { amount_minor: remote.price, currency: "USD" },
+            grand_total: { amount_minor: remote.price, currency },
           },
         };
       else if (m.startsWith("commerce.carts.")) {
@@ -185,7 +219,7 @@ function fixture(cache = false) {
           expires_at: new Date(Date.now() + 300000).toISOString(),
           snapshot_hash: "a".repeat(64),
           lines: remote.cart.lines,
-          totals: { grand_total: { amount_minor: "1734", currency: "USD" } },
+          totals: { grand_total: { amount_minor: "1734", currency } },
         };
         resource = remote.quote;
       }
@@ -204,7 +238,8 @@ function fixture(cache = false) {
           },
           order_ids: [],
           confirmation: {
-            profile: "frontvia.pap_subject_purchase.v1",
+            profile,
+            ...(cny ? { user_id: identity.userId } : {}),
             issuer: identity.issuer,
             resource: identity.resource,
             store_id: "store",
@@ -213,7 +248,7 @@ function fixture(cache = false) {
             quote_id: "quote",
             snapshot_hash: remote.quote.snapshot_hash,
             amount_minor: "1734",
-            currency: "USD",
+            currency,
           },
         };
         resource = remote.checkout;
@@ -225,12 +260,22 @@ function fixture(cache = false) {
       }
       if (m === "commerce.checkouts.confirm") {
         const [h, c, s] = p.confirmation.split(".");
-        assert.equal(
-          s,
-          createHmac("sha256", Buffer.from(key, "base64url"))
-            .update(h + "." + c)
-            .digest("base64url"),
-        );
+        if (cny)
+          assert(
+            verify(
+              "sha256",
+              Buffer.from(h + "." + c),
+              { key: createPublicKey(proof), dsaEncoding: "ieee-p1363" },
+              Buffer.from(s, "base64url"),
+            ),
+          );
+        else
+          assert.equal(
+            s,
+            createHmac("sha256", Buffer.from(key, "base64url"))
+              .update(h + "." + c)
+              .digest("base64url"),
+          );
         const claims = JSON.parse(Buffer.from(c, "base64url").toString());
         assert.equal(claims.user_id, identity.userId);
         assert.equal(claims.amount_minor, "1734");
@@ -240,12 +285,21 @@ function fixture(cache = false) {
         remote.order = {
           id: "order",
           display_number: "1",
-          payment: { status: "paid" },
+          payment: { status: cny ? "unpaid" : "paid" },
           fulfillment_status: "unfulfilled",
           totals: remote.quote.totals,
         };
         remote.checkout.status = "completed";
         remote.checkout.order_ids = ["order"];
+        if (cny)
+          remote.checkout.next_actions = [
+            {
+              type: "redirect",
+              purpose: "payment",
+              url: "https://auth.test/companies/a/pay/checkout?access=v2.secret",
+              expires_at: new Date(Date.now() + 300000).toISOString(),
+            },
+          ];
         resource = remote.checkout;
       }
       remote.writes++;
@@ -285,6 +339,8 @@ function fixture(cache = false) {
     );
   return {
     remote,
+    country,
+    currency,
     db,
     get vault() {
       return vault;
@@ -326,7 +382,8 @@ async function prepare(f: ReturnType<typeof fixture>) {
     {
       email: "private@example.test",
       shipping_address: {
-        country: "US",
+        country: f.country,
+        ...(f.country === "CN" ? { phone: "+8613800000000" } : {}),
         recipient: "Private Name",
         line1: "Secret Street",
         city: "City",
@@ -1041,13 +1098,13 @@ test("opaque API pagination cursors remain intact through model output and tool 
     );
   }
 });
-test("DSH tool registration exposes provider-compatible commerce and consultation tools, never purchase confirm", () => {
+test("DSH tool registration exposes provider-compatible direct commerce and knowledge tools, never purchase confirm", () => {
   const f = fixture();
   try {
     const definitions = tools(f.service);
     assert.deepEqual(
       definitions.map((t) => t.name),
-      Object.keys(schemas),
+      Object.keys(schemas).filter((n) => n !== "frontvia_consultation"),
     );
     for (const t of definitions) {
       assert.equal(t.parameters.type, "object");
@@ -1351,15 +1408,360 @@ test("exported cart tool preserves opaque string versions while consultation use
 });
 
 test("browse and concurrent card reads reuse capabilities; mutations and changed generation recheck", async () => {
- const f=fixture(true);try{
-  const flow=await f.flow();const count=()=>f.remote.calls.filter(m=>m==='commerce.capabilities.get').length;
-  assert.equal(count(),1);
-  await f.service.tool('session-a','frontvia_products',{flowId:flow,action:'browse'},'browse');
-  await Promise.all(Array.from({length:5},()=>f.service.view('session-a',flow)));
-  assert.equal(count(),1);assert.equal(f.remote.calls.filter(m=>m==='commerce.products.search').length,1);
-  f.remote.generation='two';await f.service.view('session-a',flow);assert.equal(count(),2);
-  f.remote.methodAvailability['commerce.carts.create']='unavailable';
-  await assert.rejects(f.service.tool('session-a','frontvia_cart',{flowId:flow,action:'add',variant_id:'variant',quantity:1},'add'),/METHOD_UNAVAILABLE/);
-  assert.equal(count(),3);assert.equal(f.remote.writes,0);
- }finally{f.close();}
+  const f = fixture(true);
+  try {
+    const flow = await f.flow();
+    const count = () =>
+      f.remote.calls.filter((m) => m === "commerce.capabilities.get").length;
+    assert.equal(count(), 1);
+    await f.service.tool(
+      "session-a",
+      "frontvia_products",
+      { flowId: flow, action: "browse" },
+      "browse",
+    );
+    await Promise.all(
+      Array.from({ length: 5 }, () => f.service.view("session-a", flow)),
+    );
+    assert.equal(count(), 1);
+    assert.equal(
+      f.remote.calls.filter((m) => m === "commerce.products.search").length,
+      1,
+    );
+    f.remote.generation = "two";
+    await f.service.view("session-a", flow);
+    assert.equal(count(), 2);
+    f.remote.methodAvailability["commerce.carts.create"] = "unavailable";
+    await assert.rejects(
+      f.service.tool(
+        "session-a",
+        "frontvia_cart",
+        { flowId: flow, action: "add", variant_id: "variant", quantity: 1 },
+        "add",
+      ),
+      /METHOD_UNAVAILABLE/,
+    );
+    assert.equal(count(), 3);
+    assert.equal(f.remote.writes, 0);
+  } finally {
+    f.close();
+  }
+});
+
+test("CNY uses direct Commerce, owner ES256 confirmation and private original payment link", async () => {
+  const f = fixture(false, true);
+  try {
+    const flow = await prepare(f);
+    const view = await f.service.review("session-a", flow);
+    assert.equal(view.pricing.currency, "CNY");
+    assert.equal(view.cart.shipping_address.country, "CN");
+    assert.equal(f.remote.confirms, 0);
+    const submitted = await f.service.confirm(
+      "session-a",
+      flow,
+      view.intent!.id,
+    );
+    assert.equal(f.remote.confirms, 1);
+    assert.equal(submitted.order?.payment.status, "unpaid");
+    assert(
+      submitted.checkout?.paymentAction?.url.startsWith("https://auth.test/"),
+    );
+    assert(!JSON.stringify(modelData(f.remote.checkout)).includes("access=v2"));
+    assert(f.remote.calls.every((m) => m.startsWith("commerce.")));
+    await f.service.confirm("session-a", flow, view.intent!.id);
+    assert.equal(f.remote.confirms, 1);
+    f.remote.checkout.next_actions[0].url = "https://evil.test/pay";
+    assert.equal(
+      (await f.service.view("session-a", flow)).checkout?.paymentAction,
+      undefined,
+    );
+  } finally {
+    f.close();
+  }
+});
+test("owner contact omits blank optional address values from actual Commerce writes", async () => {
+  for (const cny of [true, false]) {
+    const f = fixture(false, cny);
+    try {
+      const flow = await f.flow();
+      await f.service.tool(
+        "session-a",
+        "frontvia_cart",
+        { flowId: flow, action: "add", variant_id: "variant", quantity: 1 },
+        "add",
+      );
+      await f.service.contact(
+        "session-a",
+        flow,
+        "v1",
+        {
+          ...(cny ? {} : { email: "owner@example.test" }),
+          shipping_address: {
+            country: f.country,
+            recipient: "Recipient",
+            line1: "Street",
+            city: "City",
+            region: cny ? "浙江省" : "CA",
+            postal_code: cny ? "   " : "94105",
+            phone: cny ? "+8613800000000" : "",
+          },
+        },
+        "save-contact",
+      );
+      assert.equal(f.remote.cart.version, "v2");
+      assert.equal(
+        Object.hasOwn(
+          f.remote.cart.shipping_address,
+          cny ? "postal_code" : "phone",
+        ),
+        false,
+      );
+      assert.equal(
+        f.remote.cart.shipping_address[cny ? "phone" : "postal_code"],
+        cny ? "+8613800000000" : "94105",
+      );
+      assert.equal(Object.hasOwn(f.remote.cart, "email"), !cny);
+      const refreshed = await f.service.tool(
+        "session-a",
+        "frontvia_cart",
+        { flowId: flow, action: "get" },
+        "read-contact",
+      );
+      assert.equal(refreshed.contactReady, true);
+      assert.equal(JSON.stringify(refreshed).includes("+8613800000000"), false);
+    } finally {
+      f.close();
+    }
+  }
+});
+for (const optional of [undefined, "   "])
+  test(`CN full address reaches delivery and confirmation with ${optional === undefined ? "absent" : "blank"} city and region`, async () => {
+    const f = fixture(false, true);
+    try {
+      const flow = await f.flow();
+      await f.service.tool(
+        "session-a",
+        "frontvia_cart",
+        { flowId: flow, action: "add", variant_id: "variant", quantity: 1 },
+        "add",
+      );
+      const address = {
+        country: "CN",
+        recipient: "测试收件人",
+        phone: "13800138000",
+        line1: "浙江省杭州市测试路1号",
+        ...(optional === undefined
+          ? {}
+          : { city: optional, region: optional, postal_code: optional }),
+      };
+      const request = uiSchemas.contact.parse({
+        sessionId: "session-a",
+        flowId: flow,
+        expected_version: "v1",
+        patch: { shipping_address: address },
+        actionId: "00000000-0000-4000-8000-000000000001",
+      });
+      await f.service.contact(
+        "session-a",
+        flow,
+        request.expected_version,
+        request.patch,
+        request.actionId,
+      );
+      assert.equal(f.remote.cart.shipping_address.line1, address.line1);
+      for (const field of ["city", "region", "postal_code"]) {
+        assert.equal(
+          Object.hasOwn(f.remote.cart.shipping_address, field),
+          false,
+        );
+        assert.equal(isRequiredContact("CN", field), false);
+      }
+      f.restart();
+      const restored = await f.service.tool(
+        "session-a",
+        "frontvia_cart",
+        { flowId: flow, action: "get" },
+        "restored-address",
+      );
+      assert.equal(restored.contactReady, true);
+      assert.equal(JSON.stringify(restored).includes(address.phone), false);
+      await f.service.tool(
+        "session-a",
+        "frontvia_cart",
+        {
+          flowId: flow,
+          action: "delivery_select",
+          expected_version: "v2",
+          group_id: "group",
+          option_id: "standard",
+        },
+        "delivery",
+      );
+      await f.service.tool(
+        "session-a",
+        "frontvia_checkout",
+        { flowId: flow, action: "quote", expected_version: "v3" },
+        "quote",
+      );
+      await f.service.tool(
+        "session-a",
+        "frontvia_checkout",
+        { flowId: flow, action: "prepare" },
+        "checkout",
+      );
+      const view = await f.service.review("session-a", flow);
+      assert.equal(f.remote.confirms, 0);
+      await f.service.confirm("session-a", flow, view.intent!.id);
+      assert.equal(f.remote.confirms, 1);
+      assert.ok(
+        (await f.service.view("session-a", flow)).checkout?.paymentAction,
+      );
+    } finally {
+      f.close();
+    }
+  });
+
+test("US owner address still requires city and region before any Commerce write", async () => {
+  const f = fixture();
+  try {
+    const flow = await f.flow();
+    await f.service.tool(
+      "session-a",
+      "frontvia_cart",
+      { flowId: flow, action: "add", variant_id: "variant", quantity: 1 },
+      "add",
+    );
+    const before = f.remote.writes;
+    for (const field of ["city", "region"] as const) {
+      const address = {
+        country: "US",
+        recipient: "Recipient",
+        line1: "Street",
+        city: "City",
+        region: "CA",
+        postal_code: "94105",
+        [field]: "",
+      };
+      assert.equal(isRequiredContact("US", field), true);
+      await assert.rejects(
+        f.service.contact(
+          "session-a",
+          flow,
+          "v1",
+          { email: "owner@example.test", shipping_address: address },
+          "missing-" + field,
+        ),
+      );
+    }
+    assert.equal(f.remote.writes, before);
+  } finally {
+    f.close();
+  }
+});
+
+test("CNY delivery requires a phone and refuses a foreign-country patch without dispatch", async () => {
+  const f = fixture(false, true);
+  try {
+    const flow = await f.flow();
+    await f.service.tool(
+      "session-a",
+      "frontvia_cart",
+      { flowId: flow, action: "add", variant_id: "variant", quantity: 1 },
+      "add",
+    );
+    const before = f.remote.writes;
+    await assert.rejects(
+      f.service.contact(
+        "session-a",
+        flow,
+        "v1",
+        {
+          shipping_address: {
+            country: "CN",
+            recipient: "Name",
+            line1: "Street",
+            city: "City",
+            region: "Province",
+          },
+        },
+        "missing-phone",
+      ),
+    );
+    await assert.rejects(
+      f.service.contact(
+        "session-a",
+        flow,
+        "v1",
+        {
+          email: "a@example.test",
+          shipping_address: {
+            country: "US",
+            recipient: "Name",
+            line1: "Street",
+            city: "City",
+            region: "CA",
+            postal_code: "12345",
+          },
+        },
+        "foreign",
+      ),
+      /ADDRESS_COUNTRY_MISMATCH/,
+    );
+    assert.equal(f.remote.writes, before);
+  } finally {
+    f.close();
+  }
+});
+
+for (const locale of ["en-US", "zh-CN"])
+  test(`US/USD ${locale} preserves pricing through browse, owner confirmation and order reads`, async () => {
+    const f = fixture(false, false, locale);
+    try {
+      const flow = await prepare(f);
+      await f.service.tool(
+        "session-a",
+        "frontvia_products",
+        { flowId: flow, action: "browse" },
+        "browse-locale",
+      );
+      assert.deepEqual(f.remote.searches.at(-1).context, {
+        country: "US",
+        currency: "USD",
+        locale,
+      });
+      const view = await f.service.review("session-a", flow);
+      assert.deepEqual(view.pricing, {
+        country: "US",
+        currency: "USD",
+        locale,
+      });
+      assert.equal(view.cart.shipping_address.country, "US");
+      assert.equal(f.remote.confirms, 0);
+      await f.service.confirm("session-a", flow, view.intent!.id);
+      const restored = await f.service.view("session-a", flow);
+      assert.equal(restored.pricing.locale, locale);
+      assert.equal(restored.order?.totals.grand_total.currency, "USD");
+      assert.equal(f.remote.confirms, 1);
+    } finally {
+      f.close();
+    }
+  });
+
+test("unsupported store locale is rejected before cart writes", async () => {
+  const f = fixture(false, false, "fr-FR");
+  try {
+    const flow = await f.flow();
+    await assert.rejects(
+      f.service.tool(
+        "session-a",
+        "frontvia_cart",
+        { flowId: flow, action: "add", variant_id: "variant", quantity: 1 },
+        "unsupported-locale",
+      ),
+      /PRICING_CONTEXT_UNSUPPORTED/,
+    );
+    assert.equal(f.remote.writes, 0);
+  } finally {
+    f.close();
+  }
 });

@@ -798,6 +798,53 @@ test("deletion drains in-flight requests and connections before disabling subseq
   }
 });
 
+test("neutral Commerce export imports without an Agent and cannot choose identity trust", async () => {
+  const f = fixture();
+  try {
+    f.record.apis = f.record.apis.filter((a) =>
+      a.resource.endsWith("/commerce/rpc"),
+    );
+    const exported = {
+      ...f.exported,
+      format: "frontvia.connection.v1",
+      profile: "frontvia.commerce.v1",
+      openapi_url: origin + "/commerce/openapi.json",
+      sites: [
+        {
+          ...f.exported.sites[0],
+          id: "commerce",
+          label: "商品与订单",
+          resource: origin + "/commerce/rpc",
+        },
+      ],
+      authorization: {
+        admission: "automatic",
+        client_identity: "independent",
+        resource: origin + "/commerce/rpc",
+        token_type: "DPoP",
+        identity_profile: "dsh.identity_assertion.v1",
+      },
+    };
+    const preview = await f.service.inspect(exported);
+    await f.service.importResources(preview.previewId, [
+      origin + "/commerce/rpc",
+    ]);
+    assert.equal(f.service.sites().length, 1);
+    assert.equal(f.service.sites()[0].resource, origin + "/commerce/rpc");
+    assert(!f.record.calls.some((r) => r.url.includes("/consultation/")));
+    await assert.rejects(
+      f.service.inspect({
+        ...exported,
+        authorization: {
+          ...exported.authorization,
+          identity_issuer: "https://attacker.test",
+        },
+      }),
+    );
+  } finally {
+    f.close();
+  }
+});
 for (const resourceOrigin of [origin, "https://store.test"]) {
   test(`single-service link imports only its consultation and survives restart: ${resourceOrigin}`, async () => {
     const f = fixture(resourceOrigin);

@@ -1,7 +1,13 @@
 import { dpopProof, jwt } from "./signing.js";
 export { jwt } from "./signing.js";
-import { DeviceIdentity, type ClientIdentity } from "./device.js";
-import { PersonalAccount, type PersonalConfig } from "./personal.js";
+import {
+  AccountClient,
+  GRANT,
+  PROFILE,
+  type ClientIdentity,
+  type DeviceIdentity,
+} from "dsh-identity-client/core";
+import type { PersonalConfig } from "dsh-identity-client/core";
 import {
   createHash,
   createPublicKey,
@@ -27,7 +33,11 @@ import {
 } from "./discovery.js";
 export type { ImportedSite, ResourceDescription } from "./discovery.js";
 export { Vault, Serial, PapError, fail, canonical } from "./storage.js";
-export { readProfileConfig, profileStorage, openProfileVault } from "./profile.js";
+export {
+  readProfileConfig,
+  profileStorage,
+  openProfileVault,
+} from "./profile.js";
 export type { Transport, Target } from "./network.js";
 export type Secrets = {
   get(ref: string): Promise<string | undefined>;
@@ -60,11 +70,6 @@ export type AccountOnlyConfig = Omit<PapConfig, keyof ClientIdentity> & {
   clientId?: undefined;
   deviceSigningKeyRef?: string;
 };
-export const defaultPersonalConfig: PersonalConfig = {
-  origin: frontviaAccountOrigin,
-  requestOrigin: "https://frontvia.agent-connect.cn",
-  tokenOrigins: [frontviaAccountOrigin],
-};
 type Connection = {
   id: string;
   siteId: string;
@@ -94,7 +99,7 @@ const hash = (s: string) => createHash("sha256").update(s).digest("base64url");
 export class PapService {
   readonly apiVersion = 1;
   private serial = new Serial();
-  readonly personal: PersonalAccount;
+  readonly personal: AccountClient;
   private readonly device?: DeviceIdentity;
   private wire: Transport;
   private agents = new PinnedAgents();
@@ -108,12 +113,17 @@ export class PapService {
     private secrets: Secrets,
     private vault: Vault,
     transport?: Transport,
+    account?: AccountClient,
   ) {
     if (
       (config.clientId === undefined
-        ? !config.personal || "callback" in config || "keyId" in config || "signingKeyRef" in config
+        ? !config.personal ||
+          "callback" in config ||
+          "keyId" in config ||
+          "signingKeyRef" in config
         : new URL(config.clientId).protocol !== "https:" ||
-          new URL(config.callback).origin !== new URL(config.clientId).origin) ||
+          new URL(config.callback).origin !==
+            new URL(config.clientId).origin) ||
       !config.sites.every(
         (s) =>
           new URL(s.issuer).protocol === "https:" &&
@@ -138,23 +148,26 @@ export class PapService {
             new URL(s.issuer).origin,
             new URL(s.resource).origin,
           ]);
-        return publicTransport([
-          ...origins,
-          ...(config.personal
-            ? [config.personal.origin, ...config.personal.tokenOrigins]
-            : []),
-        ], undefined, agents)(request);
+        return publicTransport(origins, undefined, agents)(request);
       });
-    this.personal = new PersonalAccount(config.personal, vault, this.wire);
-    if (config.clientId === undefined && config.deviceSigningKeyRef && config.personal)
-      this.device = new DeviceIdentity(config.deviceSigningKeyRef, this.personal, vault, secrets, this.wire);
-
+    if (config.personal && !account) fail("IDENTITY_PROVIDER_REQUIRED");
+    this.personal =
+      account ??
+      ({
+        config: undefined,
+        status: () => ({ configured: false, signedIn: false }),
+        refresh: async () => ({ configured: false, signedIn: false }),
+      } as unknown as AccountClient);
+    if (config.personal) this.device = account?.device;
   }
   private client(): ClientIdentity {
-    if (this.config.clientId !== undefined) return this.config;
+    if (!this.config.personal && this.config.clientId !== undefined)
+      return this.config;
     return this.device?.current() ?? fail("PAP_CLIENT_IDENTITY_REQUIRED");
   }
-  close() { this.agents.close(); }
+  close() {
+    this.agents.close();
+  }
   private configuredSites(): Site[] {
     return [
       ...this.config.sites,
@@ -208,7 +221,8 @@ export class PapService {
     if (this.config.clientId === undefined && !this.device?.current())
       return "PAP_CLIENT_IDENTITY_REQUIRED";
     const expected = this.binding(c.siteId);
-    if (this.device && c.binding.clientId !== expected.clientId) return "DEVICE_IDENTITY_REPLACED";
+    if (this.device && c.binding.clientId !== expected.clientId)
+      return "DEVICE_IDENTITY_REPLACED";
     if (
       Object.entries(expected).some(
         ([key, value]) => c.binding![key as keyof typeof expected] !== value,
@@ -334,11 +348,16 @@ export class PapService {
     );
   }
   async clientStatus() {
-    const client = this.config.clientId === undefined ? this.device?.current() : this.config;
-    return { clientId: client?.clientId, callback: client?.callback,
-      signingKeyConfigured: !!(client && await this.secrets.get(client.signingKeyRef)),
-      automatic: !!this.device };
-
+    const client =
+      this.config.clientId === undefined ? this.device?.current() : this.config;
+    return {
+      clientId: client?.clientId,
+      callback: client?.callback,
+      signingKeyConfigured: !!(
+        client && (await this.secrets.get(client.signingKeyRef))
+      ),
+      automatic: !!this.device,
+    };
   }
   /** Owner UI only. Discovery is not authentication or business authorization. */
   async inspect(input: unknown) {
@@ -467,8 +486,17 @@ export class PapService {
   capabilityCacheKey(ref: string): string | undefined {
     const c = this.load(ref);
     if (!this.public(c).connected || (c.expiresAt ?? 0) <= now() + 10) return;
-    return hash(canonical([c.id, c.user, c.personalGeneration, c.expiresAt, c.accessToken,
-      c.signedIn, this.siteRevision(this.site(c.siteId))]));
+    return hash(
+      canonical([
+        c.id,
+        c.user,
+        c.personalGeneration,
+        c.expiresAt,
+        c.accessToken,
+        c.signedIn,
+        this.siteRevision(this.site(c.siteId)),
+      ]),
+    );
   }
   /** Host-only subject binding; never returned by Agent tools. */
   identity(ref: string) {
@@ -628,15 +656,21 @@ export class PapService {
         .keys("connection:")
         .map((k) => this.vault.get<Connection>(k)!)
         .find(
-          (c) => c.siteId === siteId && c.personalIdentity === personalIdentity &&
-            (!this.device || !c.binding || c.binding.clientId === client.clientId),
+          (c) =>
+            c.siteId === siteId &&
+            c.personalIdentity === personalIdentity &&
+            (!this.device ||
+              !c.binding ||
+              c.binding.clientId === client.clientId),
         );
       if (c) {
         const ref = c.id;
         const reusable = await this.serial.run(ref, async () => {
           const current = this.load(ref);
-          return this.public(current).connected && (current.expiresAt ?? 0) > now() + 10
-            ? this.public(current) : null;
+          return this.public(current).connected &&
+            (current.expiresAt ?? 0) > now() + 10
+            ? this.public(current)
+            : null;
         });
         if (reusable) return reusable;
       }
@@ -696,9 +730,18 @@ export class PapService {
   private async renewConnection(c: Connection) {
     if (c.personalIdentity) {
       this.load(c.id);
+      if (
+        !c.metadata.identity_assertion_profiles_supported?.includes(PROFILE) ||
+        !c.metadata.grant_types_supported?.includes(GRANT)
+      )
+        fail("IDENTITY_PROFILE_UNSUPPORTED");
       return this.token(c, {
-        grant_type: "urn:frontvia:params:oauth:grant-type:personal",
-        personal_token: this.personal.token(c.metadata.token_endpoint),
+        grant_type: GRANT,
+        identity_assertion: await this.personal.assertion(
+          this.site(c.siteId).issuer,
+          this.site(c.siteId).resource,
+          c.proofKey,
+        ),
         resource: this.site(c.siteId).resource,
       });
     }

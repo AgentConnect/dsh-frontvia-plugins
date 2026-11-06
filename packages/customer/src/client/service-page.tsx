@@ -13,7 +13,7 @@ import {
 } from "lucide-react";
 import { useAccountRevision } from "./account.js";
 import { shoppingReference } from "./history.js";
-import { FrontviaAccountPanel } from "./personal-panel.js";
+
 import {
   Alert,
   AlertDescription,
@@ -54,6 +54,7 @@ type Reference = ReturnType<typeof shoppingReference>;
 type Props = {
   call: (op: string, payload?: any) => Promise<any>;
   openConnections: () => void;
+  openAccount: () => void;
   renderFlow: (reference: Reference) => React.ReactNode;
 };
 const kindOf = (flow: Flow) =>
@@ -94,6 +95,7 @@ export function ServicePage(props: Props) {
 function AccountServicePage({
   call,
   openConnections,
+  openAccount,
   renderFlow,
   revision,
 }: Props & { revision: number }) {
@@ -191,7 +193,14 @@ function AccountServicePage({
           </div>
         </header>
 
-        <FrontviaAccountPanel call={call} />
+        <Card>
+          <CardContent>
+            <p>个人登录由 DSH 账号服务管理。</p>
+            <Button variant="outline" onClick={openAccount}>
+              打开 DSH 账号
+            </Button>
+          </CardContent>
+        </Card>
 
         <section className="fv-history-section" aria-label="最近服务记录">
           <div className="fv-section-heading">

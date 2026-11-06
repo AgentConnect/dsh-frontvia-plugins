@@ -1,18 +1,12 @@
-# Implementation findings
+# Findings
+- PAP external subjects must preserve legacy principal/client pairs explicitly, never by phone. Merchant account ownership remains unchanged.
+- Direct CNY needed independent owner-confirmed operation/nonce predicates in hosted_payer; the original reserve/accepted-summary branch remains for old orders.
+- Binding payer links only to the original login would prevent payment after re-login. v2 instead MAC-binds each returned link to its requesting PAP session while retaining the original durable purchase authority.
+- Identity data/control head mismatch fails closed; account enabled/contact facts survive a data restore. Key fingerprints in both databases also fence stale key configurations after rotation.
+- Removing the one-time legacy Vault migration config must preserve the old device keyRef, so a durable migration marker now owns that reference.
+- Commerce export adds identity_profile to the strict import schema; authority still comes from verified metadata/protected identity config, not imported JSON.
+- Existing workspace-wide integration suites need owned A2 environment configuration. Library checks and targeted disposable PG contracts are the relevant completed local evidence, not full E2E.
 
-- Reference plugin: /Users/howard/Documents/ChatGPT/amazon-picker. Its native UI uses host React, connection owner routes, slots main/sidebar/tool.call.toolview/conversation.chat.turnTail. Output canonical JSON follows DSH tool schemas.
-- Reference DSH source checkout has unrelated dirty work and is older than installed runtime; do not edit it. Installed official app is 0.2.1-rc.3; use matching packages and bundled CLI.
-- Frontvia /Users/howard/workspace/frontvia-core is on current main 5e8cb68. Unrelated six UI/test files dirty at start; leave untouched.
-- Frontvia public contract: docs/api/frontvia-commerce-v1.openrpc.json. PAP reference web/buyer-lab/protocol.ts. Confirmation reference web/buyer-lab/confirmation.ts and platform/crates/platform-server/src/buyer_subject.rs.
-- First-version subject purchase does not require merchant password login; stable random client+issuer scoped user ID maps to native Customer. Contact email is never identity.
-- Account Direct Sign-In/PKCE is generic PAP capability, separate from subject purchase checkout support.
-- Host default Node 22.23.2 is too old for rc.3; /opt/homebrew/bin/node is 25.2.1. pnpm 10.28.2 available.
+## 2026-11-06 联调结果
 
-- Installed both local tarballs into isolated `.local/dsh-home` Profile `frontvia`; bundle list contains dsh-base, dsh-web-app, dsh-pap, dsh-frontvia-customer. Unconfigured real DSH host starts successfully on port 4347.
-- Existing Frontvia PG cluster is stopped; first native startup failed at database connection before creating resources, cleanup PASS. Created a task-owned PG16 cluster on 21439 instead of starting or changing shared state.
-- Native acceptance fixture generates its own C1 signing key/CIMD/JWKS and own short-lived confirmation key; no existing client identity is reused.
-
-- Final installed rc.3 integration requires top-level object tool schemas and id/config patches. Content-addressed tarballs avoid same-version pnpm cache; installer compares installed bundle bytes.
-- Actual Commerce orders.list returns references, despite the full-order page expectation; resolve through public orders.get and refresh on historical card open.
-- Current checkout cancel accepts checkout_id/meta but rejects optional reason; use it only for unconfirmed zero-authorized/zero-captured draft revision, never order cancellation.
-- Native result is one Mock order/capture (USD 17.34). Five real-model turns total include two preflight failures; final regression is controlled. Native Electron and real account OAuth browser flow remain UNVERIFIED; see FINAL report.
+独立身份和原生 Commerce 的协议在真实 HTTP/TLS、隔离数据库和原生交易服务上互通，无商家 Agent 前置条件。付款页沿用保守 409 PAYMENT_RESULT_UNKNOWN 契约；身份服务不可用会关闭付款页能力，不能当作支付失败重建订单。同一账号/设备重新登录保留 merchant principal、原订单与已付金额；新链接绑定新 PAP session，旧链接不复活。测试证书必须是服务端用途，不能把 CA:TRUE 证书用作终端证书；未关闭证书校验。

@@ -1,3 +1,4 @@
+import { AccountClient } from "dsh-identity-client/core";
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { mkdtempSync, writeFileSync, readFileSync } from "node:fs";
@@ -14,6 +15,41 @@ test("Frontvia owner routes manage the shared PAP identity without exposing cred
   const path = join(dir, "pap.sqlite");
   const vault = new Vault(path, key);
   const calls: { path: string; body?: any }[] = [];
+  const accountConfig = {
+    origin: "https://identity.test",
+    requestOrigin: "https://identity.test",
+    audiences: ["https://shop.test/companies/a"],
+  };
+  const secrets = { get: async () => undefined, set: async () => {} };
+  const wire: import("dsh-pap/core").Transport = async (request) => {
+    const path = new URL(request.url).pathname;
+    const body = request.body ? JSON.parse(request.body) : undefined;
+    calls.push({ path, body });
+    if (path.endsWith("/otp/request"))
+      return {
+        challenge_id: "host-only-challenge",
+        expires_in: 300,
+        resend_after: 60,
+      };
+    if (path.endsWith("/otp/verify")) {
+      assert.equal(body.challenge_id, "host-only-challenge");
+      assert.equal(body.code, "123456");
+      return {
+        user_id: "person-a",
+        access_token: "dsh.personal.host-only",
+        expires_in: 3600,
+      };
+    }
+    if (path.endsWith("/me")) return { user_id: "person-a" };
+    if (path.endsWith("/logout")) {
+      assert.equal(
+        request.headers?.Authorization,
+        "Bearer dsh.personal.host-only",
+      );
+      return {};
+    }
+    throw new Error("unexpected account request");
+  };
   const pap = new PapService(
     {
       clientId: "https://client.test/agent.json",
@@ -26,40 +62,13 @@ test("Frontvia owner routes manage the shared PAP identity without exposing cred
       personal: {
         origin: "https://identity.test",
         requestOrigin: "https://identity.test",
-        tokenOrigins: ["https://shop.test"],
+        audiences: ["https://shop.test"],
       },
     },
     { get: async () => undefined, set: async () => {} },
     vault,
-    async (request) => {
-      const path = new URL(request.url).pathname;
-      const body = request.body ? JSON.parse(request.body) : undefined;
-      calls.push({ path, body });
-      if (path.endsWith("/otp/request"))
-        return {
-          challenge_id: "host-only-challenge",
-          expires_in: 300,
-          resend_after: 60,
-        };
-      if (path.endsWith("/otp/verify")) {
-        assert.equal(body.challenge_id, "host-only-challenge");
-        assert.equal(body.code, "123456");
-        return {
-          user_id: "person-a",
-          access_token: "fv.personal.host-only",
-          expires_in: 3600,
-        };
-      }
-      if (path.endsWith("/me")) return { user_id: "person-a" };
-      if (path.endsWith("/logout")) {
-        assert.equal(
-          request.headers?.Authorization,
-          "Bearer fv.personal.host-only",
-        );
-        return {};
-      }
-      throw new Error("unexpected account request");
-    },
+    wire,
+    new AccountClient(accountConfig, vault, secrets, wire, "DEVICE"),
   );
   const routes = new Map<string, any>(),
     definitions = new Map<string, any>();
@@ -151,19 +160,17 @@ test("Frontvia owner routes manage the shared PAP identity without exposing cred
     assert(!JSON.stringify(challenge).includes("host-only-challenge"));
     const login = await result("personal-verify", { code: "123456" });
     assert.equal(login.value.signedIn, true);
-    assert(!JSON.stringify(login).includes("fv.personal."));
+    assert(!JSON.stringify(login).includes("dsh.personal."));
     assert.equal(pap.personal.current().userId, "person-a");
-    assert.equal(
-      pap.personal.token("https://shop.test/oauth/token"),
-      "fv.personal.host-only",
-    );
+    assert.equal((pap.personal as any).token, undefined);
+    assert.equal("token" in pap.personal.current(), false);
     const identity = pap.personal.identity();
     assert.equal(
       (await result("personal-status")).value.phone,
       "+12 •••• 0101",
     );
     assert.equal(pap.personal.identity(), identity);
-    assert(!readFileSync(path).includes(Buffer.from("fv.personal.host-only")));
+    assert(!readFileSync(path).includes(Buffer.from("dsh.personal.host-only")));
     assert.equal((await result("personal-logout")).value.signedIn, false);
     assert.throws(() => pap.personal.current(), {
       code: "PERSONAL_LOGIN_REQUIRED",
@@ -171,10 +178,10 @@ test("Frontvia owner routes manage the shared PAP identity without exposing cred
     assert.deepEqual(
       calls.map((c) => c.path),
       [
-        "/v1/personal/otp/request",
-        "/v1/personal/otp/verify",
-        "/v1/personal/me",
-        "/v1/personal/logout",
+        "/v1/auth/otp/request",
+        "/v1/auth/otp/verify",
+        "/v1/auth/me",
+        "/v1/auth/logout",
       ],
     );
     assert(

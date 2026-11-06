@@ -2,6 +2,7 @@ import { useAccountRevision } from "./account.js";
 import { accountRequest } from "./account-request.js";
 import { ServicePage } from "./service-page.js";
 import { shoppingStep } from "./shopping-progress.js";
+import { isRequiredContact as contactFieldRequired } from "../contact-fields.js";
 import React, { useEffect, useId, useState } from "react";
 import {
   ArrowRight,
@@ -113,7 +114,14 @@ const errorText: Record<string, string> = {
   PURCHASE_CONFIRMATION_UNAVAILABLE:
     "购买确认通道尚未就绪，请核对商家授权和本机确认凭据。",
 };
-const contactFields = [
+const baseContactFields = [
+  {
+    key: "phone",
+    label: "联系电话",
+    placeholder: "收货联系电话",
+    autoComplete: "shipping tel",
+    max: 40,
+  },
   {
     key: "recipient",
     label: "收货人",
@@ -158,8 +166,9 @@ const contactFields = [
     max: 40,
   },
 ] as const;
-type Contact = Record<(typeof contactFields)[number]["key"], string>;
+type Contact = Record<(typeof baseContactFields)[number]["key"], string>;
 const blankContact: Contact = {
+  phone: "",
   recipient: "",
   email: "",
   line1: "",
@@ -170,6 +179,7 @@ const blankContact: Contact = {
 const contactFrom = (v: any): Contact => {
   const a = v?.cart?.shipping_address;
   return {
+    phone: a?.phone ?? "",
     email: v?.cart?.email ?? "",
     recipient: a?.recipient ?? "",
     line1: a?.line1 ?? "",
@@ -353,6 +363,30 @@ export function apply(ctx: any) {
     const [form, setForm] = useState<Contact>(blankContact),
       [fieldErrors, setFieldErrors] = useState<Partial<Contact>>({});
     const formId = useId();
+    const isRequiredContact = (key: keyof Contact) =>
+      contactFieldRequired(data?.pricing?.country, key);
+    const contactFields = baseContactFields.map((field) => {
+      const local =
+        data?.pricing?.country === "CN"
+          ? field.key === "line1"
+            ? {
+                label: "完整收货地址",
+                placeholder: "填写省、市、区及街道门牌号",
+              }
+            : field.key === "region"
+              ? { label: "省 / 自治区 / 直辖市", placeholder: "例如 浙江省" }
+              : field.key === "city"
+                ? { placeholder: "例如 杭州市" }
+                : field.key === "postal_code"
+                  ? { placeholder: "例如 310000" }
+                  : {}
+          : {};
+      return {
+        ...field,
+        ...local,
+        label: `${"label" in local ? local.label : field.label}${isRequiredContact(field.key) ? "" : "（选填）"}`,
+      };
+    });
     const accountRevision = useAccountRevision();
     useEffect(() => {
       let live = true;
@@ -425,7 +459,7 @@ export function apply(ctx: any) {
       ({ key }) => form[key] !== contactFrom(data)[key],
     );
     const contactReady = contactFields.every(
-      ({ key }) => !!contactFrom(data)[key],
+      ({ key }) => !isRequiredContact(key) || !!contactFrom(data)[key].trim(),
     );
     const locked = !!data?.intent?.submitted || !!data?.order;
     const saveContact = async (e: React.FormEvent<HTMLFormElement>) => {
@@ -434,6 +468,7 @@ export function apply(ctx: any) {
       const errors: Partial<Contact> = {};
       for (const { key, label } of contactFields) {
         const input = element.elements.namedItem(key) as HTMLInputElement;
+        if (!isRequiredContact(key)) continue;
         if (!form[key].trim()) errors[key] = `请填写${label}`;
         else if (!input.validity.valid)
           errors[key] =
@@ -449,7 +484,10 @@ export function apply(ctx: any) {
       const { email, ...address } = form;
       await action("contact", {
         expected_version: data.cart.version,
-        patch: { email, shipping_address: { country: "US", ...address } },
+        patch: {
+          ...(email.trim() ? { email } : {}),
+          shipping_address: { country: data.pricing?.country, ...address },
+        },
         actionId: crypto.randomUUID(),
       });
     };
@@ -690,7 +728,11 @@ export function apply(ctx: any) {
                                 : "填写收货信息，运费将在选择配送后计算。"}
                             </p>
                           </div>
-                          <Badge>美国 · USD</Badge>
+                          <Badge>
+                            {data.pricing?.country === "CN"
+                              ? "中国大陆 · CNY"
+                              : "美国 · USD"}
+                          </Badge>
                         </div>
                         <div className="fv-form-layout">
                           <div className="fv-stack">
@@ -720,7 +762,7 @@ export function apply(ctx: any) {
                                       <Input
                                         id={`${formId}-${f.key}`}
                                         name={f.key}
-                                        required
+                                        required={isRequiredContact(f.key)}
                                         maxLength={f.max}
                                         type={
                                           f.key === "email" ? "email" : "text"
@@ -1096,6 +1138,22 @@ export function apply(ctx: any) {
                   </TabsContent>
                   <TabsContent value="order">
                     <div className="fv-stack">
+                      {data.checkout?.paymentAction && (
+                        <Alert>
+                          <CreditCard aria-hidden />
+                          <AlertDescription>
+                            原订单已确认，请在付款页核对并完成支付。
+                            <a
+                              href={data.checkout.paymentAction.url}
+                              target="_blank"
+                              rel="noopener noreferrer"
+                              referrerPolicy="no-referrer"
+                            >
+                              打开原订单付款页
+                            </a>
+                          </AlertDescription>
+                        </Alert>
+                      )}
                       {data.order && <Order order={data.order} />}{" "}
                       {items(data.orders)
                         .filter(
@@ -1172,6 +1230,7 @@ export function apply(ctx: any) {
       <>
         <style>{styles}</style>
         <ServicePage
+          openAccount={() => ctx.layout.selectPanel("dsh-identity")}
           call={call}
           openConnections={() => ctx.layout.selectPanel("pap-connections")}
           renderFlow={(ui) => <FlowCard key={ui.flowId} ui={ui} resume />}

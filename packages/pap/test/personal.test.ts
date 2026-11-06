@@ -1,3 +1,4 @@
+import { AccountClient } from "dsh-identity-client/core";
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { mkdtempSync, readFileSync } from "node:fs";
@@ -18,7 +19,7 @@ import {
   type Transport,
 } from "../src/core.js";
 
-function fixture(managed = false) {
+function fixture(managed = true) {
   const dir = mkdtempSync(join(tmpdir(), "pap-personal-")),
     path = join(dir, "pap.sqlite"),
     key = randomBytes(32).toString("base64url");
@@ -37,7 +38,7 @@ function fixture(managed = false) {
     personal: {
       origin: "https://identity.test",
       requestOrigin: "https://identity.test",
-      tokenOrigins: ["https://shop.test"],
+      audiences: ["https://shop.test/companies/a"],
     },
     sites: [
       {
@@ -72,7 +73,16 @@ function fixture(managed = false) {
   const requests: any[] = [];
   const wire: Transport = async (r) => {
     requests.push(r);
-    if (r.url.endsWith("/pap/devices")) {
+    if (r.url.endsWith("/federation/assertions")) {
+      assert.equal(r.headers?.Authorization, "Bearer dsh.personal.v1." + user);
+      assert.equal(JSON.parse(r.body!).audience, config.sites[0].issuer);
+      return {
+        identity_assertion: "short-assertion-" + user,
+        profile: "dsh.identity_assertion.v1",
+        expires_in: 60,
+      };
+    }
+    if (r.url.endsWith("/devices")) {
       const { jwk } = JSON.parse(r.body!);
       const kid = createHash("sha256")
         .update(
@@ -83,26 +93,26 @@ function fixture(managed = false) {
         client_id: r.url + "/" + kid + "/agent.json",
         callback: r.url + "/" + kid + "/callback",
         kid,
-        registry_version: 2,
+        registry_version: 3,
       };
     }
     if (r.url.endsWith("/otp/request")) {
-      user = JSON.parse(r.body!).target.endsWith("01") ? "a" : "b";
+      user = JSON.parse(r.body!).phone.endsWith("01") ? "a" : "b";
       return { challenge_id: "challenge", expires_in: 300, resend_after: 0 };
     }
     if (r.url.endsWith("/otp/verify")) {
       await block;
       return {
         user_id: user,
-        access_token: "fv.personal.v1." + user,
+        access_token: "dsh.personal.v1." + user,
         expires_in: 86400,
       };
     }
-    if (r.url.endsWith("/personal/logout")) {
+    if (r.url.endsWith("/auth/logout")) {
       if (logoutFail) throw new PapError("NETWORK_UNCERTAIN");
       return {};
     }
-    if (r.url.endsWith("/personal/me")) return { user_id: user };
+    if (r.url.endsWith("/auth/me")) return { user_id: user };
     if (r.url.endsWith("poppy.json"))
       return {
         protocol_version: "0.2",
@@ -113,6 +123,10 @@ function fixture(managed = false) {
       return {
         issuer: config.sites[0].issuer,
         poppy_domains: ["shop.test"],
+        identity_assertion_profiles_supported: ["dsh.identity_assertion.v1"],
+        grant_types_supported: [
+          "urn:dsh:params:oauth:grant-type:identity-assertion",
+        ],
         token_endpoint: config.sites[0].issuer + "/oauth/token",
         authorization_endpoint: config.sites[0].issuer + "/oauth/authorize",
         revocation_endpoint: config.sites[0].issuer + "/oauth/revoke",
@@ -121,9 +135,11 @@ function fixture(managed = false) {
       const f = new URLSearchParams(r.body);
       assert.equal(
         f.get("grant_type"),
-        "urn:frontvia:params:oauth:grant-type:personal",
+        "urn:dsh:params:oauth:grant-type:identity-assertion",
       );
-      assert.equal(f.get("personal_token"), "fv.personal.v1." + user);
+      assert.equal(f.get("personal_token"), null);
+      assert.equal(f.get("identity_assertion"), "short-assertion-" + user);
+      assert(!r.body?.includes("dsh.personal"));
       await block;
       return {
         access_token: "access-" + user,
@@ -142,7 +158,13 @@ function fixture(managed = false) {
     };
   };
   let vault = new Vault(path, key),
-    service = new PapService(policy, secrets, vault, wire);
+    service = new PapService(
+      policy,
+      secrets,
+      vault,
+      wire,
+      new AccountClient(config.personal!, vault, secrets, wire, "DEVICE"),
+    );
   return {
     config,
     requests,
@@ -163,7 +185,13 @@ function fixture(managed = false) {
     restart() {
       vault.close();
       vault = new Vault(path, key);
-      service = new PapService(policy, secrets, vault, wire);
+      service = new PapService(
+        policy,
+        secrets,
+        vault,
+        wire,
+        new AccountClient(config.personal!, vault, secrets, wire, "DEVICE"),
+      );
     },
     async login(phone = "+12025550101") {
       await service.personal.requestCode(phone);
@@ -185,7 +213,7 @@ test("phone identity survives restart and re-login; switch hides previous connec
     assert(
       !JSON.stringify(f.service.personal.status()).includes("fv.personal"),
     );
-    assert(!readFileSync(f.path).includes(Buffer.from("fv.personal.v1.a")));
+    assert(!readFileSync(f.path).includes(Buffer.from("dsh.personal.v1.a")));
     f.restart();
     assert.equal((f.service.status() as any[]).length, 1);
     assert.deepEqual(f.service.identity(first.connectionRef), identity);
@@ -225,12 +253,12 @@ test("imported token origin cannot collect personal credentials; logout uncertai
   const f = fixture();
   try {
     await f.login();
-    f.config.personal!.tokenOrigins = [];
+    f.config.personal!.audiences = [];
     await assert.rejects(() => f.service.connect("shop"), {
-      code: "PERSONAL_TOKEN_ORIGIN_UNTRUSTED",
+      code: "IDENTITY_AUDIENCE_UNTRUSTED",
     });
     assert(!f.requests.some((r) => r.url.endsWith("oauth/token")));
-    f.config.personal!.tokenOrigins = ["https://shop.test"];
+    f.config.personal!.audiences = ["https://shop.test/companies/a"];
     const c = await f.service.connect("shop");
     f.failLogout(true);
     await assert.rejects(() => f.service.personal.logout(), {
@@ -293,8 +321,8 @@ test("logout racing OTP verification revokes the newly issued parent login inste
     assert(
       f.requests.some(
         (r) =>
-          r.url.endsWith("/personal/logout") &&
-          r.headers.Authorization === "Bearer fv.personal.v1.a",
+          r.url.endsWith("/auth/logout") &&
+          r.headers.Authorization === "Bearer dsh.personal.v1.a",
       ),
     );
   } finally {
@@ -308,7 +336,7 @@ test("personal purchase statements use the current resource proof key and cannot
     await f.login();
     const c = await f.service.connect("shop");
     const claims = {
-      client_id: f.config.clientId,
+      client_id: f.service.identity(c.connectionRef).clientId,
       issuer: f.config.sites[0].issuer,
       resource: f.config.sites[0].resource,
       checkout_id: "owned-checkout",

@@ -40,6 +40,7 @@ export const importSchema = z
         resource: httpsUrl.optional(),
         token_type: z.literal("DPoP").optional(),
         client_identity: z.string().max(50).optional(),
+        identity_profile: z.literal("dsh.identity_assertion.v1").optional(),
       })
       .strict()
       .optional(),

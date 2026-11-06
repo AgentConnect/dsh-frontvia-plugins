@@ -9,6 +9,7 @@ import {
 } from "dsh-pap/core";
 import { ReadCache, SharedReads } from "./read-cache.js";
 import { z } from "zod";
+import { isRequiredContact } from "./contact-fields.js";
 import { ConsultationService, consultationSite } from "./consultation.js";
 export type CustomerConfig = {
   dataDir: string;
@@ -24,7 +25,12 @@ export type PapPort = Pick<
   PapService,
   "apiVersion" | "sites" | "status" | "connect" | "identity" | "request"
 > &
-  Partial<Pick<PapService, "canAccess" | "signResourceStatement" | "capabilityCacheKey">>;
+  Partial<
+    Pick<
+      PapService,
+      "canAccess" | "signResourceStatement" | "capabilityCacheKey"
+    >
+  >;
 type Command = {
   key: string;
   method: string;
@@ -66,7 +72,24 @@ export type Flow = {
   capabilities?: any;
   purchaseReady?: boolean;
 };
-const pricing = { country: "US", currency: "USD", locale: "en-US" };
+function pricing(f: Flow) {
+  const c = f.capabilities?.default_context;
+  if (
+    !c ||
+    !(
+      (c.country === "CN" && c.currency === "CNY" && c.locale === "zh-CN") ||
+      (c.country === "US" &&
+        c.currency === "USD" &&
+        ["en-US", "zh-CN"].includes(c.locale))
+    )
+  )
+    fail("PRICING_CONTEXT_UNSUPPORTED");
+  return {
+    country: c.country as "CN" | "US",
+    currency: c.currency as "CNY" | "USD",
+    locale: c.locale as string,
+  };
+}
 const personalProfile = "frontvia.personal_purchase.v1";
 const profile = "frontvia.pap_subject_purchase.v1";
 const digest = (v: unknown) =>
@@ -79,19 +102,39 @@ const id = z
 const version = z.string().min(1).max(128);
 const address = z
   .object({
-    country: z.literal("US"),
+    country: z.enum(["US", "CN"]),
     recipient: z.string().min(1).max(200),
     line1: z.string().min(1).max(300),
     line2: z.string().max(300).optional(),
-    city: z.string().min(1).max(100),
-    region: z.string().min(1).max(100),
-    postal_code: z.string().min(1).max(40),
-    phone: z.string().max(40).optional(),
+    city: z.string().trim().max(100).optional(),
+    region: z.string().trim().max(100).optional(),
+    postal_code: z.string().trim().max(40).optional(),
+    phone: z.string().trim().max(40).optional(),
   })
   .strict();
 export const contactSchema = z
-  .object({ email: z.email(), shipping_address: address })
-  .strict();
+  .object({ email: z.email().optional(), shipping_address: address })
+  .strict()
+  .superRefine((v, ctx) => {
+    const a = v.shipping_address;
+    if (a.country === "CN" && (!a.phone || !/^\+?[0-9 -]{6,40}$/.test(a.phone)))
+      ctx.addIssue({
+        code: "custom",
+        path: ["shipping_address", "phone"],
+        message: "有效收货电话必填",
+      });
+    for (const field of ["city", "region", "postal_code", "email"] as const) {
+      if (
+        isRequiredContact(a.country, field) &&
+        !(field === "email" ? v.email : a[field])
+      )
+        ctx.addIssue({
+          code: "custom",
+          path: field === "email" ? [field] : ["shipping_address", field],
+          message: "美国地址需要城市、州、邮箱和邮编",
+        });
+    }
+  });
 const privateKeys = new Set([
   "email",
   "phone",
@@ -194,12 +237,12 @@ export class CustomerService {
   ) {
     if (method !== "capabilities.get")
       this.requireMethod(f, `commerce.${method}`);
-    const r = await this.pap.request(
-      f.connectionRef,
-      `commerce.${method}`,
-      params,
-      signal,
-    ).catch(error => { this.capabilitiesCache.clear(); throw error; });
+    const r = await this.pap
+      .request(f.connectionRef, `commerce.${method}`, params, signal)
+      .catch((error) => {
+        this.capabilitiesCache.clear();
+        throw error;
+      });
     if (r.error) {
       this.capabilitiesCache.clear();
       fail(
@@ -227,8 +270,11 @@ export class CustomerService {
   }
   private async currentCapabilities(f: Flow, fresh = false) {
     const key = this.pap.capabilityCacheKey?.(f.connectionRef);
-    const cap = await this.capabilitiesCache.get(key ? `${f.siteId}:${key}` : undefined,
-      () => this.read(f, "capabilities.get"), fresh);
+    const cap = await this.capabilitiesCache.get(
+      key ? `${f.siteId}:${key}` : undefined,
+      () => this.read(f, "capabilities.get"),
+      fresh,
+    );
     if (cap.store_id !== f.storeId || !Array.isArray(cap.methods))
       fail("STORE_BINDING_MISMATCH");
     f.capabilities = cap;
@@ -498,6 +544,11 @@ export class CustomerService {
     signal?: AbortSignal,
   ) {
     this.views.clear();
+    if (
+      name === "frontvia_consultation" &&
+      ["ask", "answer_accept"].includes(args.action)
+    )
+      fail("DIRECT_COMMERCE_REQUIRED");
     if (name === "frontvia_consultation" || name === "frontvia_knowledge")
       return this.consultation.tool(
         sessionId,
@@ -522,7 +573,10 @@ export class CustomerService {
       this.policy(f);
       // Every write rechecks in write(); recovery may dispatch the original
       // command directly, so it also requires fresh discovery here.
-      await this.currentCapabilities(f, name === "frontvia_orders" && args.action === "recover");
+      await this.currentCapabilities(
+        f,
+        name === "frontvia_orders" && args.action === "recover",
+      );
       const invocationKey = digest(callId),
         inputHash = digest([name, args]);
       f.invocations ??= {};
@@ -552,7 +606,7 @@ export class CustomerService {
             f,
             "products.search",
             {
-              context: pricing,
+              context: pricing(f),
               ...(query ? { query } : {}),
               page: {
                 limit: 8,
@@ -566,7 +620,7 @@ export class CustomerService {
           data = await this.read(
             f,
             "products.get",
-            { product_id: id.parse(args.product_id), context: pricing },
+            { product_id: id.parse(args.product_id), context: pricing(f) },
             signal,
           );
         else if (args.action === "variants") {
@@ -575,7 +629,7 @@ export class CustomerService {
             "variants.list",
             {
               product_id: id.parse(args.product_id),
-              context: pricing,
+              context: pricing(f),
               page: {
                 limit: 20,
                 ...(args.cursor ? { cursor: args.cursor } : {}),
@@ -606,7 +660,7 @@ export class CustomerService {
           if (args.action === "add" && !f.cart) {
             method = "carts.create";
             params = {
-              context: pricing,
+              context: pricing(f),
               lines: [
                 {
                   variant_id: id.parse(args.variant_id),
@@ -774,7 +828,10 @@ export class CustomerService {
             }
           : {}),
         cartVersion: f.cart?.version,
-        contactReady: !!f.cart?.email && !!f.cart?.shipping_address?.line1,
+        contactReady: contactSchema.safeParse({
+          ...(f.cart?.email ? { email: f.cart.email } : {}),
+          shipping_address: f.cart?.shipping_address,
+        }).success,
         pending: !!f.pending,
       });
     });
@@ -879,12 +936,15 @@ export class CustomerService {
   }
   async view(sessionId: string, flowId: string) {
     const f = this.flow(sessionId, flowId);
-    const generation = this.pap.capabilityCacheKey?.(f.connectionRef) ?? "uncached";
-    return this.views.run(`${sessionId}:${flowId}:${generation}`, () => this.serial.run(flowId, async () => {
-      const current = this.flow(sessionId, flowId);
-      await this.refresh(current);
-      return this.humanView(current);
-    }));
+    const generation =
+      this.pap.capabilityCacheKey?.(f.connectionRef) ?? "uncached";
+    return this.views.run(`${sessionId}:${flowId}:${generation}`, () =>
+      this.serial.run(flowId, async () => {
+        const current = this.flow(sessionId, flowId);
+        await this.refresh(current);
+        return this.humanView(current);
+      }),
+    );
   }
   private retireFailedConfirmation(f: Flow, command: Command, operation: any) {
     if (
@@ -913,6 +973,7 @@ export class CustomerService {
         id: f.checkout.id,
         status: f.checkout.status,
         payment_summary: f.checkout.payment_summary,
+        paymentAction: this.paymentAction(f),
       },
       order: f.order,
       orders: f.orders,
@@ -924,6 +985,7 @@ export class CustomerService {
         submitted: !!f.intent.token,
       },
       capabilities: f.capabilities,
+      pricing: pricing(f),
       cartReady: this.cartReady(f),
       purchaseReady: f.purchaseReady,
       mockPayment: this.policy(f).mockPayment === true,
@@ -938,8 +1000,16 @@ export class CustomerService {
   ) {
     this.views.clear();
     const contact = contactSchema.parse(patch);
+    // Empty optional form fields are absent on the Commerce wire, which rejects
+    // supplied empty address values. Country-required fields were checked above.
+    for (const key of ["city", "region", "postal_code", "phone"] as const) {
+      if (!contact.shipping_address[key]) delete contact.shipping_address[key];
+    }
     return this.serial.run(flowId, async () => {
       const f = this.flow(sessionId, flowId);
+      await this.currentCapabilities(f, true);
+      if (contact.shipping_address.country !== pricing(f).country)
+        fail("ADDRESS_COUNTRY_MISMATCH");
       await this.write(
         f,
         "commerce.carts.update",
@@ -948,6 +1018,28 @@ export class CustomerService {
       );
       return this.humanView(f);
     });
+  }
+  private paymentAction(f: Flow) {
+    if (!f.intent?.token || f.pending || !f.checkout?.order_ids?.length) return;
+    const a = f.checkout.next_actions?.find(
+      (a: any) => a.type === "redirect" && a.purpose === "payment",
+    );
+    if (!a || !(Date.parse(a.expires_at) > Date.now())) return;
+    try {
+      const u = new URL(a.url),
+        issuer = new URL(this.pap.identity(f.connectionRef).issuer);
+      if (
+        u.protocol !== "https:" ||
+        u.origin !== issuer.origin ||
+        u.username ||
+        u.password ||
+        u.hash
+      )
+        return;
+      return { url: u.href, expiresAt: a.expires_at };
+    } catch {
+      return;
+    }
   }
   private snapshot(f: Flow) {
     const c = f.checkout?.confirmation,
@@ -982,8 +1074,8 @@ export class CustomerService {
       c.snapshot_hash !== q.snapshot_hash ||
       !/^[a-f0-9]{64}$/.test(c.snapshot_hash) ||
       c.amount_minor !== amount?.amount_minor ||
-      c.currency !== "USD" ||
-      amount.currency !== "USD" ||
+      c.currency !== pricing(f).currency ||
+      amount.currency !== pricing(f).currency ||
       !/^\d+$/.test(amount.amount_minor)
     )
       fail("CONFIRMATION_BINDING_MISMATCH");

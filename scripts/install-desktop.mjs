@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import { existsSync } from "node:fs";
+import { existsSync, lstatSync } from "node:fs";
 import {
   mkdir,
   readFile,
@@ -8,7 +8,8 @@ import {
   rm,
   writeFile,
 } from "node:fs/promises";
-import { basename, join, resolve } from "node:path";
+import { fileURLToPath } from "node:url";
+import { basename, dirname, join, resolve } from "node:path";
 import { isDeepStrictEqual } from "node:util";
 import { resolveProfileDir } from "@deepseek-ai/dsh-app-boot";
 import { withFileLock, writeFileAtomic } from "@deepseek-ai/dsh-atomic-write";
@@ -25,7 +26,16 @@ const cli =
 const artifacts = JSON.parse(
   await readFile(resolve(".local/packages/manifest.json"), "utf8"),
 );
-const names = ["dsh-pap", "dsh-frontvia-customer"];
+const names = ["dsh-identity-client", "dsh-pap", "dsh-frontvia-customer"];
+const identityConfig = join(profile, "identity-config.json");
+if (
+  !existsSync(identityConfig) ||
+  !lstatSync(identityConfig).isFile() ||
+  (process.platform !== "win32" && lstatSync(identityConfig).mode & 0o077)
+)
+  throw new Error(
+    "安装前须准备受保护的 desktop/identity-config.json；不能从商家配置推导身份服务地址。",
+  );
 const locks = { waitMs: 120000 };
 
 function run(args, capture = false) {
@@ -156,9 +166,16 @@ await withFileLock(
         ...pair.map((item) => item.path),
       ]);
       for (const { name } of pair) {
-        const folder = name === "dsh-pap" ? "pap" : "customer";
+        const folder =
+          name === "dsh-identity-client"
+            ? dirname(
+                fileURLToPath(
+                  import.meta.resolve("dsh-identity-client/package.json"),
+                ),
+              )
+            : join("packages", name === "dsh-pap" ? "pap" : "customer");
         for (const file of ["index.js", "core.js", "client.js"]) {
-          const built = await readFile(join("packages", folder, "dist", file));
+          const built = await readFile(join(folder, "dist", file));
           const installed = await readFile(
             join(profile, "node_modules", name, "dist", file),
           );
@@ -180,4 +197,6 @@ await withFileLock(
   },
   locks,
 );
-console.log("两个插件已安装。重新打开 DSH 后，进入「Frontvia 服务」登录。");
+console.log(
+  "独立账号、PAP 和购物插件已安装。重新打开 DSH 后，进入「DSH 账号」登录。",
+);

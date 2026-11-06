@@ -1,23 +1,18 @@
-# DSH PAP + Frontvia Customer implementation
+# Identity service and PAP direct Commerce implementation
 
-## Objective and authority
-Implement the approved dual-plugin plan in this new local repository. Official DSH 0.2.1-rc.3, TypeScript/pnpm, human click confirmation in chat, isolated identity and Mock payments. No publishing, deployment, commit or push. Do not modify unrelated Frontvia work.
+Authorized: local implementation of SPEC v0.2. Local commits additionally authorized by the user on 2026-11-06. No push/PR, remote repository creation, real installation/deployment, production migration or live SMS/payment performed.
 
-## Phases
-- [complete] 1. Baseline, runtime contracts and workspace scaffolding.
-- [complete] 2. Generic PAP service, durable encrypted state and protocol tests.
-- [complete] 3. Customer commerce tools, confirmation and recovery tests.
-- [complete] 4. Native DSH cards, dependency lifecycle and packages.
-- [complete] 5. Isolated actual Frontvia/DSH acceptance, bounded real model (five turns total), documentation and cleanup evidence. FINAL report: docs/acceptance.md.
-- [complete] Follow-up: shadcn-based interactive form/card refinement, scoped theme styles, RPC error compatibility, 23 behavior tests and 25 controlled UI checks. Report: docs/ui-refresh.md.
+## Workspaces and baseline
+- Plugin: `/Users/howard/workspace/dsh-frontvia-cny-address`, `codex/spec-identity-pap-commerce`, fetched baseline `036a5ed`.
+- Frontvia: `/Users/howard/workspace/frontvia-identity-pap`, `codex/identity-pap-direct-commerce`, fetched baseline `30917ea`.
+- Independent identity: `/Users/howard/workspace/dsh-identity`, `codex/identity-pap`, initial local commit f1aa8cf; no remote; upstream UNVERIFIED.
 
-## Fixed decisions
-- Packages: dsh-pap and dsh-frontvia-customer. Customer requires PAP via peer dependency and Cordis injection; installer activates both bundles.
-- PAP is protocol-only. Customer owns business references, schemas, progress and confirmation. No generic network/model confirmation tool.
-- Client identity signing key, DPoP key, encryption key and confirmation key stay outside model/browser payloads.
-- Write request and original key persisted before network. Unknown results block replacement writes; query original operation.
-- Frontvia pap_subject_purchase.v1 is approved-client business extension, not PAP standard payment.
-- New repository has no remote/commits: upstream alignment UNVERIFIED by definition. Frontvia fetched origin/main 5e8cb68b44aa630de2cc634d9b75d2da8c7033f7 before work.
+## State
+1. P0: implemented versioned extension, config and recovery contracts.
+2. P1: implemented independent service/client, protected DB control, migration and key rotation; local PG/host checks pass.
+3. P2: implemented external identity PAP exchange, resource and payer revalidation; local PG protocol contract passes. Actual double-service verified TLS/HTTP/PG contract now passes.
+4. P3: implemented direct CN/CNY API/card/payer path; local plugin and server predicates pass. Full Platform/native Medusa/PG/Redis/signed local gateway contract now passes without any merchant Agent. Real Alipay and installed DSH remain unverified.
+5. P4: controlled migration/restore/profile checks pass; real population migration, edge and cross-key backup recovery remain unverified.
+6. P5: not executed; actual installation/cutover require separate authorization.
 
-## Errors and corrections
-- Scaffolding git init initially targeted parent workspace; verified it was newly-created, unborn and had no remotes, then moved that exact .git into the new repository. No pre-existing repository was changed.
+Detailed evidence and acceptance limits: `docs/implementation/dsh-identity-pap-commerce.md`. No local validation is labeled production or installed acceptance.

@@ -1,3 +1,4 @@
+import type {} from "dsh-identity-client";
 import { Service, type Context } from "@deepseek-ai/cordis";
 import { credentialRef } from "@deepseek-ai/dsh-credentials";
 import {
@@ -8,7 +9,6 @@ import type {} from "@deepseek-ai/dsh-app-boot";
 import { join } from "node:path";
 import {
   PapService,
-  defaultPersonalConfig,
   profileStorage,
   readProfileConfig,
   openProfileVault,
@@ -19,7 +19,12 @@ import {
   type Secrets,
 } from "./core.js";
 export const name = "dsh-pap";
-export const inject = ["credentials", "connection", "profileContext"];
+export const inject = [
+  "credentials",
+  "connection",
+  "profileContext",
+  "identity",
+];
 export type Config = { configFile?: string };
 export class PapProvider extends Service {
   readonly apiVersion = 1;
@@ -127,7 +132,7 @@ export async function apply(ctx: Context, config: Config = {}) {
       : {
           ...profileStorage(ctx.profileContext, "pap"),
           targets: [],
-          personal: defaultPersonalConfig,
+          personal: ctx.identity.account.config,
         };
   if ("signingKeyRef" in c) {
     const key = await secrets.get(c.signingKeyRef);
@@ -143,7 +148,13 @@ export async function apply(ctx: Context, config: Config = {}) {
     c.clientId === undefined
       ? { ...c, deviceSigningKeyRef: c.storageKeyRef + "_DEVICE" }
       : c;
-  const core = new PapService(policy, secrets, vault);
+  const core = new PapService(
+    policy,
+    secrets,
+    vault,
+    undefined,
+    ctx.identity?.account,
+  );
   ctx.effect(() => () => core.close());
   const service = new PapProvider(ctx, core);
   for (const operation of [

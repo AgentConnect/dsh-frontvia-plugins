@@ -4,6 +4,16 @@ import { mkdirSync, chmodSync, lstatSync } from "node:fs";
 import { dirname } from "node:path";
 
 export class PapError extends Error {
+  // The independent host identity provider has its own bundled class instance.
+  static [Symbol.hasInstance](value: unknown): boolean {
+    return (
+      value instanceof Error &&
+      value.name === "PapError" &&
+      "code" in value &&
+      typeof value.code === "string" &&
+      /^[A-Z][A-Z0-9_]+$/.test(value.code)
+    );
+  }
   constructor(readonly code: string) {
     super(code);
     this.name = "PapError";
@@ -96,7 +106,9 @@ export class Vault {
       );
   }
   firstRecordId(): string | undefined {
-    return this.db.prepare("SELECT id FROM records LIMIT 1").get()?.id as string | undefined;
+    return this.db.prepare("SELECT id FROM records LIMIT 1").get()?.id as
+      | string
+      | undefined;
   }
   keys(prefix: string): string[] {
     return this.db
