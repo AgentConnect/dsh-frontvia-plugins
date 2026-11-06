@@ -622,7 +622,7 @@ export function apply(ctx: any) {
       .entries("main")
       .some(
         (entry: { options: { key?: string } }) =>
-          entry.options.key === "frontvia-customer",
+          entry.options.key === "dsh-identity",
       );
   function Panel() {
     const customerAvailable = React.useSyncExternalStore(
@@ -683,12 +683,12 @@ export function apply(ctx: any) {
         setError("");
         void refresh();
       };
-      window.addEventListener("frontvia-personal-change", changed);
+      window.addEventListener("dsh-identity-change", changed);
       void refresh();
       const timer = setInterval(() => setNow(Date.now()), 15000);
       return () => {
         clearInterval(timer);
-        window.removeEventListener("frontvia-personal-change", changed);
+        window.removeEventListener("dsh-identity-change", changed);
       };
     }, []);
     const run: Run = async (operation, payload) => {
@@ -808,8 +808,7 @@ export function apply(ctx: any) {
               openAccount={
                 customerAvailable
                   ? () => {
-                      if (hasCustomer())
-                        ctx.layout.selectPanel("frontvia-customer");
+                      if (hasCustomer()) ctx.layout.selectPanel("dsh-identity");
                     }
                   : undefined
               }

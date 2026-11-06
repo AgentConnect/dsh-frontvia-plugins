@@ -110,26 +110,6 @@ export function ConsultationCard({
       clearTimeout(timer);
     };
   }, [data, busy, ui.flowId, ui.sessionId, accountRevision]);
-  async function confirmShopping(intentId: string) {
-    pollUntil.current = Date.now() + 300000;
-    setBusy("shopping-confirm");
-    setError("");
-    try {
-      await call("shopping-confirm", { ...ui, intentId });
-      const value = await call("view", ui);
-      if (currentScope.current !== scope) return;
-      setData(value);
-    } catch (e: any) {
-      if (currentScope.current !== scope) return;
-      setData(undefined);
-      setError(
-        errors[e.message] ??
-          "确认结果尚未核实，请刷新并核对原请求，不要重复购买。",
-      );
-    } finally {
-      if (currentScope.current === scope) setBusy("");
-    }
-  }
   async function download(sourceRef: string) {
     setBusy("original");
     setError("");
@@ -196,11 +176,7 @@ export function ConsultationCard({
         )}
         {data && (
           <div className="fv-stack">
-            <ConversationShopping
-              shopping={data.shopping}
-              busy={!!busy}
-              onConfirm={confirmShopping}
-            />
+            <ConversationShopping shopping={data.shopping} busy={!!busy} />
             {data.conversation?.status === "failed" && (
               <Alert variant="destructive">
                 <Info aria-hidden />

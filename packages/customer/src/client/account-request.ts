@@ -7,12 +7,12 @@ export async function accountRequest<T>(
   const invalidate = () => {
     changed = true;
   };
-  events.addEventListener("frontvia-personal-change", invalidate);
+  events.addEventListener("dsh-identity-change", invalidate);
   try {
     const result = await request();
     if (changed) throw new Error("PERSONAL_ACCOUNT_CHANGED");
     return result;
   } finally {
-    events.removeEventListener("frontvia-personal-change", invalidate);
+    events.removeEventListener("dsh-identity-change", invalidate);
   }
 }

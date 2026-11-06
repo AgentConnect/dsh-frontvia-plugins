@@ -7,6 +7,7 @@ import {
 import type {} from "dsh-pap";
 import {
   PapError,
+  fail,
   openProfileVault,
   profileStorage,
   readProfileConfig,
@@ -113,12 +114,10 @@ export async function apply(
               value = await service.review(a.sessionId, a.flowId);
             if (operation === "confirm")
               value = await service.confirm(a.sessionId, a.flowId, a.intentId);
+            // Legacy accepted operations remain recoverable; never create a new
+            // purchase by submitting a confirmation message to an Agent.
             if (operation === "shopping-confirm")
-              value = await service.consultation.confirmShopping(
-                a.sessionId,
-                a.flowId,
-                a.intentId,
-              );
+              fail("DIRECT_COMMERCE_REQUIRED");
             if (operation === "recover") {
               await service.tool(
                 a.sessionId,

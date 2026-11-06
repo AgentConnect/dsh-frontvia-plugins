@@ -6,7 +6,7 @@ import { mkdtemp, mkdir, readFile, writeFile, rm } from "node:fs/promises";
 import { join, resolve } from "node:path";
 import { tmpdir } from "node:os";
 
-test("both archives are preflighted and a failed paired install restores the previous profile and runtime files", async () => {
+test("all three archives are preflighted and a failed paired install restores the previous profile and runtime files", async () => {
   const root = await mkdtemp(join(tmpdir(), "Frontvia installer & spaces "));
   const profile = join(root, "profiles", "desktop");
   const archives = join(root, ".local", "packages");
@@ -24,6 +24,9 @@ test("both archives are preflighted and a failed paired install restores the pre
   try {
     await mkdir(profile, { recursive: true });
     await mkdir(archives, { recursive: true });
+    await writeFile(join(profile, "identity-config.json"), "{}", {
+      mode: 0o600,
+    });
     await writeFile(join(profile, "package.json"), manifest);
     await writeFile(join(profile, "pnpm-lock.yaml"), "previous lock");
     const driver = join(root, "cli.cjs");
@@ -35,9 +38,9 @@ const profile=p.join(process.env.DSH_HOME,'profiles','desktop'), manifest=p.join
 const args=process.argv.slice(2),marker=p.join(profile,'runtime-state');
 if(args[0]==='--version') { console.log('0.2.2-rc.1');process.exit(0); }
 if(args[3]==='add') {
- if(args.length!==6)process.exit(3);
+ if(args.length!==7)process.exit(3);
  fs.appendFileSync(p.join(profile,'calls'),'add\\n');
- const pkg=JSON.parse(fs.readFileSync(manifest));pkg.dependencies['dsh-pap']='file:'+args[4];
+ const pkg=JSON.parse(fs.readFileSync(manifest));pkg.dependencies['dsh-pap']='file:'+args[5];
  fs.writeFileSync(manifest,JSON.stringify(pkg));fs.writeFileSync(p.join(profile,'pnpm-lock.yaml'),'partial lock');
  fs.writeFileSync(marker,'partial');process.exit(1);
 }
@@ -55,7 +58,11 @@ process.exit(4);
       { mode: 0o755 },
     );
     const pair: { name: string; path: string; sha256: string }[] = [];
-    for (const name of ["dsh-pap", "dsh-frontvia-customer"]) {
+    for (const name of [
+      "dsh-identity-client",
+      "dsh-pap",
+      "dsh-frontvia-customer",
+    ]) {
       const path = join(archives, name + ".tgz");
       await writeFile(path, name);
       pair.push({

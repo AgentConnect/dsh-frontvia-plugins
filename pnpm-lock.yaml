@@ -4,6 +4,9 @@ settings:
   autoInstallPeers: true
   excludeLinksFromLockfile: false
 
+overrides:
+  dsh-identity-client: link:../dsh-identity/client
+
 importers:
 
   .:
@@ -44,6 +47,9 @@ importers:
       cross-spawn:
         specifier: 7.0.6
         version: 7.0.6
+      dsh-identity-client:
+        specifier: link:../dsh-identity/client
+        version: link:../dsh-identity/client
       esbuild:
         specifier: 0.25.12
         version: 0.25.12
@@ -114,6 +120,9 @@ importers:
       '@deepseek-ai/dsh-credentials':
         specifier: 0.2.2-rc.1
         version: 0.2.2-rc.1(@deepseek-ai/cordis@4.1.0)
+      dsh-identity-client:
+        specifier: link:../../../dsh-identity/client
+        version: link:../../../dsh-identity/client
       lucide-react:
         specifier: 1.66.0
         version: 1.66.0(@types/react@18.3.26)(react@18.3.1)

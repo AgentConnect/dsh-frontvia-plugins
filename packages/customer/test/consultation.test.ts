@@ -57,7 +57,8 @@ const purchase = () => {
 async function purchaseFlow(f: ReturnType<typeof fixture>) {
   f.remote.shoppingCapability = true;
   const flowId = await f.flow();
-  await f.service.tool(
+  await legacyTool(
+    f.service,
     "session",
     "frontvia_consultation",
     { flowId, action: "ask", text: "购买一件旅行包" },
@@ -145,7 +146,8 @@ test("CNY confirmation is owner-only, bound to displayed quote/version, and idem
     const { flowId, view } = await purchaseFlow(f);
     const intent = view.shopping.intentId;
     await assert.rejects(
-      f.service.tool(
+      legacyTool(
+        f.service,
         "session",
         "frontvia_consultation",
         {
@@ -213,7 +215,8 @@ test("CNY lost confirmation preserves the original key and cannot be replaced by
       /RESOLVE_PENDING_OPERATION/,
     );
     await assert.rejects(
-      f.service.tool(
+      legacyTool(
+        f.service,
         "session",
         "frontvia_consultation",
         { flowId, action: "ask", text: "再买一个", expected_version: 2 },
@@ -221,7 +224,8 @@ test("CNY lost confirmation preserves the original key and cannot be replaced by
       ),
       /RESOLVE_PENDING_OPERATION/,
     );
-    await f.service.tool(
+    await legacyTool(
+      f.service,
       "session",
       "frontvia_consultation",
       { flowId, action: "recover" },
@@ -300,7 +304,8 @@ test("CNY refresh reads current payment, isolates bearer link from model, and re
     ];
     const view = await f.service.consultation.view("session", flowId);
     assert.equal(view.shopping.payment.url, url);
-    const result = await f.service.tool(
+    const result = await legacyTool(
+      f.service,
       "session",
       "frontvia_consultation",
       { flowId, action: "get" },
@@ -391,7 +396,11 @@ function fixture(cache = false) {
   const respond = (data: any) => ({ result: { data: structuredClone(data) } });
   const pap = {
     apiVersion: 1,
-    ...(cache ? {capabilityCacheKey: () => remote.personalAccess ? "one" : undefined} : {}),
+    ...(cache
+      ? {
+          capabilityCacheKey: () => (remote.personalAccess ? "one" : undefined),
+        }
+      : {}),
     sites: () => [
       {
         id: "consult",
@@ -578,7 +587,8 @@ test("consultation lost receipt survives restart and reuses exact original reque
     const id = await f.flow();
     f.remote.lose = true;
     await assert.rejects(
-      f.service.tool(
+      legacyTool(
+        f.service,
         "session",
         "frontvia_consultation",
         { flowId: id, action: "ask", text: "Can I return this?" },
@@ -588,7 +598,8 @@ test("consultation lost receipt survives restart and reuses exact original reque
     );
     f.restart();
     await assert.rejects(
-      f.service.tool(
+      legacyTool(
+        f.service,
         "session",
         "frontvia_consultation",
         { flowId: id, action: "ask", text: "Another question" },
@@ -596,7 +607,8 @@ test("consultation lost receipt survives restart and reuses exact original reque
       ),
       /RESOLVE_PENDING_OPERATION/,
     );
-    const result = await f.service.tool(
+    const result = await legacyTool(
+      f.service,
       "session",
       "frontvia_consultation",
       { flowId: id, action: "recover" },
@@ -610,7 +622,8 @@ test("consultation lost receipt survives restart and reuses exact original reque
     assert.equal(f.remote.submits, 1);
     assert.equal(result.data.conversation_id, "conversation");
     await assert.rejects(
-      f.service.tool(
+      legacyTool(
+        f.service,
         "another-session",
         "frontvia_consultation",
         { flowId: id, action: "get" },
@@ -620,7 +633,8 @@ test("consultation lost receipt survives restart and reuses exact original reque
     );
     const count = f.remote.submits;
     await assert.rejects(
-      f.service.tool(
+      legacyTool(
+        f.service,
         "session",
         "frontvia_consultation",
         { flowId: id, action: "ask", text: "Followup" },
@@ -629,7 +643,8 @@ test("consultation lost receipt survives restart and reuses exact original reque
       /CONSULTATION_VERSION_REQUIRED/,
     );
     assert.equal(f.remote.submits, count);
-    await f.service.tool(
+    await legacyTool(
+      f.service,
       "session",
       "frontvia_consultation",
       { flowId: id, action: "ask", text: "Followup", expected_version: 1 },
@@ -650,7 +665,8 @@ test("revoked capability and canceled invocation cannot enqueue a question; defi
     const id = await f.flow();
     f.remote.allowed = false;
     await assert.rejects(
-      f.service.tool(
+      legacyTool(
+        f.service,
         "session",
         "frontvia_consultation",
         { flowId: id, action: "ask", text: "Question" },
@@ -661,7 +677,8 @@ test("revoked capability and canceled invocation cannot enqueue a question; defi
     assert.equal(f.remote.submits, 0);
     f.remote.allowed = true;
     await assert.rejects(
-      f.service.tool(
+      legacyTool(
+        f.service,
         "session",
         "frontvia_consultation",
         { flowId: id, action: "ask", text: "Question" },
@@ -675,7 +692,8 @@ test("revoked capability and canceled invocation cannot enqueue a question; defi
     );
     f.remote.reject = "VERSION_CONFLICT";
     await assert.rejects(
-      f.service.tool(
+      legacyTool(
+        f.service,
         "session",
         "frontvia_consultation",
         { flowId: id, action: "ask", text: "Question" },
@@ -688,7 +706,8 @@ test("revoked capability and canceled invocation cannot enqueue a question; defi
       false,
     );
     f.remote.reject = "";
-    await f.service.tool(
+    await legacyTool(
+      f.service,
       "session",
       "frontvia_consultation",
       { flowId: id, action: "ask", text: "Question" },
@@ -703,7 +722,8 @@ test("knowledge uses owned returned locators, keeps original bytes out of model,
   const f = fixture();
   try {
     const id = await f.flow();
-    const result = await f.service.tool(
+    const result = await legacyTool(
+      f.service,
       "session",
       "frontvia_knowledge",
       { flowId: id, action: "lookup", query: "returns" },
@@ -712,14 +732,16 @@ test("knowledge uses owned returned locators, keeps original bytes out of model,
     const ref = result.data.data.sources[0].sourceRef;
     assert.match(ref, /^[a-f0-9]{64}$/);
     f.restart();
-    const data = await f.service.tool(
+    const data = await legacyTool(
+      f.service,
       "session",
       "frontvia_knowledge",
       { flowId: id, action: "source", sourceRef: ref },
       "source",
     );
     assert.equal(data.data.data.source.text, "Seven days");
-    await f.service.tool(
+    await legacyTool(
+      f.service,
       "session",
       "frontvia_knowledge",
       { flowId: id, action: "access" },
@@ -730,7 +752,8 @@ test("knowledge uses owned returned locators, keeps original bytes out of model,
         .text,
       "Seven days",
     );
-    const original = await f.service.tool(
+    const original = await legacyTool(
+      f.service,
       "session",
       "frontvia_knowledge",
       { flowId: id, action: "original", sourceRef: ref },
@@ -756,7 +779,8 @@ test("knowledge uses owned returned locators, keeps original bytes out of model,
     );
     assert.equal(f.remote.calls.length, before);
     await assert.rejects(
-      f.service.tool(
+      legacyTool(
+        f.service,
         "session",
         "frontvia_knowledge",
         { flowId: id, action: "source", sourceRef: "f".repeat(64) },
@@ -764,7 +788,8 @@ test("knowledge uses owned returned locators, keeps original bytes out of model,
       ),
       /SOURCE_REFERENCE_REQUIRED/,
     );
-    await f.service.tool(
+    await legacyTool(
+      f.service,
       "session",
       "frontvia_knowledge",
       { flowId: id, action: "lookup", query: "returns" },
@@ -781,7 +806,8 @@ test("knowledge uses owned returned locators, keeps original bytes out of model,
     );
     f.remote.knowledge = false;
     await assert.rejects(
-      f.service.tool(
+      legacyTool(
+        f.service,
         "session",
         "frontvia_knowledge",
         { flowId: id, action: "search", query: "returns" },
@@ -797,14 +823,16 @@ test("answer receipts are scoped to pointers returned by the owned conversation"
   const f = fixture();
   try {
     const id = await f.flow();
-    await f.service.tool(
+    await legacyTool(
+      f.service,
       "session",
       "frontvia_consultation",
       { flowId: id, action: "ask", text: "Question" },
       "question",
     );
     await assert.rejects(
-      f.service.tool(
+      legacyTool(
+        f.service,
         "session",
         "frontvia_consultation",
         { flowId: id, action: "answer_accept", answerRef: "f".repeat(64) },
@@ -812,7 +840,8 @@ test("answer receipts are scoped to pointers returned by the owned conversation"
       ),
       /ANSWER_REFERENCE_REQUIRED/,
     );
-    const current = await f.service.tool(
+    const current = await legacyTool(
+      f.service,
       "session",
       "frontvia_consultation",
       { flowId: id, action: "get" },
@@ -821,7 +850,8 @@ test("answer receipts are scoped to pointers returned by the owned conversation"
     const ref = current.data.prepared_answers[0].answerRef;
     assert.equal(
       (
-        await f.service.tool(
+        await legacyTool(
+          f.service,
           "session",
           "frontvia_consultation",
           { flowId: id, action: "answer_accept", answerRef: ref },
@@ -845,7 +875,8 @@ test("personal logout hides consultation history and rejects cached views until 
   const f = fixture();
   try {
     const id = await f.flow();
-    await f.service.tool(
+    await legacyTool(
+      f.service,
       "session",
       "frontvia_consultation",
       { flowId: id, action: "ask", text: "My private question" },
@@ -874,7 +905,8 @@ test("help accepts 300 UTF-16 units, rejects longer input before persistence, an
   try {
     const id = await f.flow();
     const call = (args: any, key: string) =>
-      f.service.tool(
+      legacyTool(
+        f.service,
         "session",
         "frontvia_consultation",
         { flowId: id, ...args },
@@ -955,7 +987,8 @@ test("original download budgets cover 700 KiB and 1 MiB, reject over-limit, malf
   const f = fixture();
   try {
     const id = await f.flow();
-    const lookup = await f.service.tool(
+    const lookup = await legacyTool(
+      f.service,
       "session",
       "frontvia_knowledge",
       { flowId: id, action: "lookup", query: "returns" },
@@ -1015,7 +1048,8 @@ test("exact source metadata carries explicit original availability to its own UI
   const f = fixture();
   try {
     const id = await f.flow();
-    const lookup = await f.service.tool(
+    const lookup = await legacyTool(
+      f.service,
       "session",
       "frontvia_knowledge",
       { flowId: id, action: "lookup", query: "returns" },
@@ -1029,7 +1063,8 @@ test("exact source metadata carries explicit original availability to its own UI
       undefined,
     ]) {
       f.remote.originalMetadata = metadata;
-      await f.service.tool(
+      await legacyTool(
+        f.service,
         "session",
         "frontvia_knowledge",
         { flowId: id, action: "source", sourceRef: ref },
@@ -1046,63 +1081,24 @@ test("exact source metadata carries explicit original availability to its own UI
   }
 });
 
-test("exported consultation tool submits a second question with the server integer version after restart", async () => {
+test("new model tool surface rejects Agent purchase conversations while legacy records remain readable", async () => {
   const f = fixture();
   try {
     const flowId = await f.flow();
-    const invoke = (args: any, callId: string) =>
-      tools(f.service)
-        .find((t) => t.name === "frontvia_consultation")!
-        .execute({ flowId, ...args }, {
-          agent: { id: "session" },
-          callId,
-          signal: new AbortController().signal,
-        } as any) as Promise<any>;
-    const first = await invoke(
-      { action: "ask", text: "信任的三个维度是什么？" },
-      "first",
-    );
-    assert.equal(first.error, undefined);
-    f.remote.convo.status = "answered";
-    f.restart();
-    const current = await invoke({ action: "get" }, "read-current");
-    assert.equal(current.data.version, 1);
-    const second = await invoke(
-      {
-        action: "ask",
-        text: "它是否也面向企业？",
-        expected_version: current.data.version,
-      },
-      "followup",
-    );
-    assert.equal(second.error, undefined);
-    assert.equal(f.remote.submits, 2);
-    const writes = f.remote.calls.filter(
-      (c) => c.method === "consultation.messages.submit",
-    );
-    assert.equal(
-      writes[1].params.conversation_id,
-      writes[0].params.conversation_id ?? "conversation",
-    );
-    assert.equal(writes[1].params.expected_version, 1);
-    assert.equal(writes[1].params.text, "它是否也面向企业？");
+    assert(!tools(f.service).some((t) => t.name === "frontvia_consultation"));
     await assert.rejects(
-      invoke(
-        { action: "ask", text: "不能把字符串版本写入", expected_version: "2" },
-        "invalid-version",
+      f.service.tool(
+        "session",
+        "frontvia_consultation",
+        { flowId, action: "ask", text: "buy a coaster" },
+        "new-order",
       ),
-      /expected_version.*integer/,
+      /DIRECT_COMMERCE_REQUIRED/,
     );
-    assert.equal(f.remote.submits, 2);
-    const invalid = await invoke(
-      { action: "ask", text: "负版本无效", expected_version: -1 },
-      "negative-version",
-    );
-    assert.equal(invalid.error.code, "INVALID_TOOL_ARGUMENTS");
-    assert.equal(f.remote.submits, 2);
+    assert.equal(f.remote.submits, 0);
     assert.equal(
-      (await f.service.consultation.view("session", flowId)).pending,
-      false,
+      (await f.service.consultation.view("session", flowId)).flowId,
+      flowId,
     );
   } finally {
     f.close();
@@ -1110,18 +1106,70 @@ test("exported consultation tool submits a second question with the server integ
 });
 
 test("consultation metadata reuse never caches source authority or allows a revoked write", async () => {
- const f=fixture(true);try{
-  const flow=await f.flow();const count=()=>f.remote.calls.filter(v=>v.method==='consultation.capabilities.get').length;
-  await Promise.all(Array.from({length:5},()=>f.service.consultation.view('session',flow)));
-  assert.equal(count(),1);
-  await f.service.tool('session','frontvia_knowledge',{flowId:flow,action:'lookup',query:'returns'},'lookup');
-  await f.service.consultation.view('session',flow);
-  assert(f.remote.calls.some(v=>v.method==='consultation.knowledge.access'));
-  f.remote.current=false;
-  const value=await f.service.consultation.view('session',flow);assert.equal(value.knowledge,undefined);
-  f.remote.allowed=false;
-  await assert.rejects(f.service.tool('session','frontvia_consultation',{flowId:flow,action:'ask',text:'hello'},'ask'),/METHOD_UNAVAILABLE/);
-  assert.equal(f.remote.submits,0);
-  f.remote.personalAccess=false;await assert.rejects(f.service.consultation.view('session',flow),/PERSONAL_ACCOUNT_CHANGED/);
- }finally{f.close();}
+  const f = fixture(true);
+  try {
+    const flow = await f.flow();
+    const count = () =>
+      f.remote.calls.filter((v) => v.method === "consultation.capabilities.get")
+        .length;
+    await Promise.all(
+      Array.from({ length: 5 }, () =>
+        f.service.consultation.view("session", flow),
+      ),
+    );
+    assert.equal(count(), 1);
+    await legacyTool(
+      f.service,
+      "session",
+      "frontvia_knowledge",
+      { flowId: flow, action: "lookup", query: "returns" },
+      "lookup",
+    );
+    await f.service.consultation.view("session", flow);
+    assert(
+      f.remote.calls.some((v) => v.method === "consultation.knowledge.access"),
+    );
+    f.remote.current = false;
+    const value = await f.service.consultation.view("session", flow);
+    assert.equal(value.knowledge, undefined);
+    f.remote.allowed = false;
+    await assert.rejects(
+      legacyTool(
+        f.service,
+        "session",
+        "frontvia_consultation",
+        { flowId: flow, action: "ask", text: "hello" },
+        "ask",
+      ),
+      /METHOD_UNAVAILABLE/,
+    );
+    assert.equal(f.remote.submits, 0);
+    f.remote.personalAccess = false;
+    await assert.rejects(
+      f.service.consultation.view("session", flow),
+      /PERSONAL_ACCOUNT_CHANGED/,
+    );
+  } finally {
+    f.close();
+  }
 });
+
+// Exercise the retained legacy storage/recovery adapter directly. It is no
+// longer registered as a model tool, so these cannot enable new Agent buying.
+function legacyTool(
+  service: CustomerService,
+  session: string,
+  name: string,
+  args: any,
+  callId: string,
+  signal?: AbortSignal,
+) {
+  return service.consultation.tool(
+    session,
+    args.flowId,
+    name,
+    args,
+    callId,
+    signal,
+  );
+}

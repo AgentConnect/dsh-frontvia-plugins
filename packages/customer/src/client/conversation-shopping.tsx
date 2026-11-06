@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from "react";
+import React from "react";
 import { ExternalLink, ShieldCheck } from "lucide-react";
 import { Alert, AlertDescription, Badge, Button, Spinner } from "./ui.js";
 
@@ -22,14 +22,10 @@ const money = (v: any) => {
 export function ConversationShopping({
   shopping: s,
   busy,
-  onConfirm,
 }: {
   shopping: any;
   busy: boolean;
-  onConfirm: (intentId: string) => Promise<void>;
 }) {
-  const [checked, setChecked] = useState(false);
-  useEffect(() => setChecked(false), [s?.intentId]);
   if (!s) return null;
   const q = s.summary,
     a = q?.shipping_address;
@@ -100,33 +96,12 @@ export function ConversationShopping({
           )}
         </>
       )}
-      {s.state === "requires_confirmation" && s.intentId && (
-        <div className="fv-stack">
-          <p className="fv-muted">
-            确认后生成待付款订单并预留库存，付款仍由你本人完成。
-          </p>
-          {s.expires_at && (
-            <p className="fv-muted">
-              报价有效至 {new Date(s.expires_at * 1000).toLocaleString("zh-CN")}
-            </p>
-          )}
-          <label className="fv-cny-consent">
-            <input
-              type="checkbox"
-              checked={checked}
-              disabled={busy}
-              onChange={(e) => setChecked(e.target.checked)}
-            />
-            我已核对商品、收货信息和应付金额
-          </label>
-          <Button
-            disabled={busy || !checked}
-            onClick={() => onConfirm(s.intentId)}
-          >
-            <ShieldCheck aria-hidden />
-            {busy ? "正在提交确认…" : "确认购买"}
-          </Button>
-        </div>
+      {s.state === "requires_confirmation" && (
+        <Alert>
+          <AlertDescription>
+            这份旧咨询报价尚未下单。请通过商品购物卡片重新核对并确认购买。
+          </AlertDescription>
+        </Alert>
       )}
       {s.state === "processing" && (
         <p role="status">

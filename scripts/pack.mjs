@@ -1,18 +1,25 @@
 import { mkdir, readFile, writeFile, cp } from "node:fs/promises";
 import spawn from "cross-spawn";
-import { resolve } from "node:path";
+import { fileURLToPath } from "node:url";
+import { dirname, resolve } from "node:path";
 import { createHash } from "node:crypto";
 const root = resolve("."),
   out = resolve(".local/packages");
 await mkdir(out, { recursive: true });
 const artifacts = [];
 for (const [folder, name] of [
-  ["pap", "dsh-pap"],
-  ["customer", "dsh-frontvia-customer"],
+  [
+    dirname(
+      fileURLToPath(import.meta.resolve("dsh-identity-client/package.json")),
+    ),
+    "dsh-identity-client",
+  ],
+  ["packages/pap", "dsh-pap"],
+  ["packages/customer", "dsh-frontvia-customer"],
 ]) {
   const result = spawn.sync(
     "pnpm",
-    ["--dir", `packages/${folder}`, "pack", "--pack-destination", out],
+    ["--dir", folder, "pack", "--pack-destination", out],
     { cwd: root, stdio: "inherit" },
   );
   if (result.error) throw result.error;

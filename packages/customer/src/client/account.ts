@@ -5,9 +5,8 @@ export function useAccountRevision() {
   const [revision, setRevision] = useState(0);
   useEffect(() => {
     const changed = () => setRevision((v) => v + 1);
-    window.addEventListener("frontvia-personal-change", changed);
-    return () =>
-      window.removeEventListener("frontvia-personal-change", changed);
+    window.addEventListener("dsh-identity-change", changed);
+    return () => window.removeEventListener("dsh-identity-change", changed);
   }, []);
   return revision;
 }
