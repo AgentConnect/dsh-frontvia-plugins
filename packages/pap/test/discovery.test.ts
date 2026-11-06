@@ -879,3 +879,47 @@ test("consultation link cannot silently become a Commerce connection",async()=>{
     assert.equal(f.service.sites().length,0);
   }finally{f.close();}
 });
+
+for (const firstFormat of ['link', 'json'] as const) {
+  for (const overlappingPreviews of [false, true]) {
+    test(`mixed imports retain one connection: ${firstFormat} first, overlapping=${overlappingPreviews}`, async () => {
+      const f = fixture();
+      try {
+        const resource = f.exported.sites[0].resource;
+        const link = f.exported.discovery_url + '#' + new URLSearchParams({resource});
+        const inputs = firstFormat === 'link' ? [link, f.exported] : [f.exported, link];
+        const first = await f.service.inspect(inputs[0]);
+        let second = overlappingPreviews ? await f.service.inspect(inputs[1]) : undefined;
+        await f.service.importResources(first.previewId, [resource]);
+        const original = f.service.sites()[0]!;
+        const connection = await f.service.connect(original.id);
+        const identity = f.service.identity(connection.connectionRef);
+        second ??= await f.service.inspect(inputs[1]);
+        await f.service.importResources(second.previewId, [resource]);
+        assert.equal(f.service.sites().length, 1);
+        assert.equal(f.service.sites()[0]!.id, original.id);
+        assert.equal(f.service.sites()[0]!.service?.store_id, 'a1');
+        assert.equal((await f.service.connect(original.id)).connectionRef, connection.connectionRef);
+        assert.deepEqual(f.service.identity(connection.connectionRef), identity);
+        f.restart();
+        assert.equal(f.service.sites().length, 1);
+        await f.service.request(connection.connectionRef, 'consultation.messages.submit', {});
+      } finally { f.close(); }
+    });
+  }
+}
+
+test('stale link preview keeps metadata from a newer JSON import', async () => {
+  const f = fixture();
+  try {
+    const resource = f.exported.sites[0].resource;
+    const initial = await f.service.inspect(f.exported);
+    await f.service.importResources(initial.previewId, [resource]);
+    const stale = await f.service.inspect(f.exported.discovery_url + '#' + new URLSearchParams({resource}));
+    const latest = await f.service.inspect({...f.exported, service: {...f.exported.service, publication_revision: 8}});
+    await f.service.importResources(latest.previewId, [resource]);
+    await f.service.importResources(stale.previewId, [resource]);
+    assert.equal(f.service.sites().length, 1);
+    assert.equal(f.service.sites()[0]!.service?.publication_revision, 8);
+  } finally { f.close(); }
+});

@@ -363,7 +363,7 @@ export class PapService {
     // local ID, sessions and account association rather than create a duplicate.
     if (link) for (const site of sites) {
       const prior = this.configuredSites().find(s => s.imported && s.domain === site.domain && s.issuer === site.issuer && s.resource === site.resource);
-      if (prior) { site.id = prior.id; site.service = prior.service; }
+      if (prior) site.id = prior.id;
     }
     const previewId = randomUUID();
     for (const [key, p] of this.previews)
@@ -393,14 +393,15 @@ export class PapService {
         new Set(resources).size !== resources.length
       )
         fail("INVALID_IMPORT_SELECTION");
-      const selected = resources.map(
+      const requested = resources.map(
         (resource) =>
           preview.sites.find((s) => s.resource === resource) ??
           fail("INVALID_IMPORT_SELECTION"),
       );
       const prior = this.vault.get<ImportedSite[]>("imported-sites") ?? [];
-      for (const site of selected) {
-        const same = this.configuredSites().find((s) => s.id === site.id);
+      const configured = this.configuredSites();
+      for (const site of requested) {
+        const same = configured.find((s) => s.id === site.id);
         if (
           same &&
           (!same.imported ||
@@ -410,6 +411,14 @@ export class PapService {
         )
           fail("SITE_BINDING_CONFLICT");
       }
+      // Resolve bindings inside the import lock, after validating requested IDs.
+      // Previews may precede another import, and JSON/link IDs can differ.
+      const selected = requested.map(site => {
+        const existing = prior.find(s => s.domain === site.domain &&
+          s.issuer === site.issuer && s.resource === site.resource);
+        return {...site, id: existing?.id ?? site.id,
+          service: site.service ?? existing?.service};
+      });
       const next = [
         ...prior.filter((s) => !selected.some((n) => n.id === s.id)),
         ...selected,
