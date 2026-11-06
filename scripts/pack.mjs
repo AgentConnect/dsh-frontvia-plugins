@@ -36,7 +36,7 @@ for (const [folder, name] of [
 await writeFile(
   resolve(out, "manifest.json"),
   JSON.stringify(
-    { runtime: "0.2.2-rc.1", publication: "local-only", artifacts },
+    { runtime: JSON.parse(await readFile(resolve("package.json"), "utf8")).devDependencies["@deepseek-ai/dsh"], publication: "local-only", artifacts },
     null,
     2,
   ) + "\n",

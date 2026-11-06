@@ -105,8 +105,8 @@ const address = z
     line2: z.string().max(300).optional(),
     city: z.string().min(1).max(100),
     region: z.string().min(1).max(100),
-    postal_code: z.string().max(40).optional(),
-    phone: z.string().max(40).optional(),
+    postal_code: z.string().trim().max(40).optional(),
+    phone: z.string().trim().max(40).optional(),
   })
   .strict();
 export const contactSchema = z
@@ -816,7 +816,10 @@ export class CustomerService {
             }
           : {}),
         cartVersion: f.cart?.version,
-        contactReady: !!f.cart?.email && !!f.cart?.shipping_address?.line1,
+        contactReady: contactSchema.safeParse({
+          ...(f.cart?.email ? { email: f.cart.email } : {}),
+          shipping_address: f.cart?.shipping_address,
+        }).success,
         pending: !!f.pending,
       });
     });
@@ -985,6 +988,11 @@ export class CustomerService {
   ) {
     this.views.clear();
     const contact = contactSchema.parse(patch);
+    // Empty optional form fields are absent on the Commerce wire, which rejects
+    // supplied empty phone/postal values. Country-required fields were checked above.
+    for (const key of ["postal_code", "phone"] as const) {
+      if (!contact.shipping_address[key]) delete contact.shipping_address[key];
+    }
     return this.serial.run(flowId, async () => {
       const f = this.flow(sessionId, flowId);
       await this.currentCapabilities(f, true);

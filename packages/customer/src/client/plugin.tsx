@@ -113,7 +113,7 @@ const errorText: Record<string, string> = {
   PURCHASE_CONFIRMATION_UNAVAILABLE:
     "购买确认通道尚未就绪，请核对商家授权和本机确认凭据。",
 };
-const contactFields = [
+const baseContactFields = [
   {
     key: "phone",
     label: "联系电话",
@@ -165,7 +165,7 @@ const contactFields = [
     max: 40,
   },
 ] as const;
-type Contact = Record<(typeof contactFields)[number]["key"], string>;
+type Contact = Record<(typeof baseContactFields)[number]["key"], string>;
 const blankContact: Contact = {
   phone: "",
   recipient: "",
@@ -362,6 +362,29 @@ export function apply(ctx: any) {
     const [form, setForm] = useState<Contact>(blankContact),
       [fieldErrors, setFieldErrors] = useState<Partial<Contact>>({});
     const formId = useId();
+    const isRequiredContact = (key: keyof Contact) =>
+      !(
+        (data?.pricing?.country === "CN" &&
+          (key === "email" || key === "postal_code")) ||
+        (data?.pricing?.country === "US" && key === "phone")
+      );
+    const contactFields = baseContactFields.map((field) => {
+      const local =
+        data?.pricing?.country === "CN"
+          ? field.key === "region"
+            ? { label: "省 / 自治区 / 直辖市", placeholder: "例如 浙江省" }
+            : field.key === "city"
+              ? { placeholder: "例如 杭州市" }
+              : field.key === "postal_code"
+                ? { placeholder: "例如 310000" }
+                : {}
+          : {};
+      return {
+        ...field,
+        ...local,
+        label: `${"label" in local ? local.label : field.label}${isRequiredContact(field.key) ? "" : "（选填）"}`,
+      };
+    });
     const accountRevision = useAccountRevision();
     useEffect(() => {
       let live = true;
@@ -434,7 +457,7 @@ export function apply(ctx: any) {
       ({ key }) => form[key] !== contactFrom(data)[key],
     );
     const contactReady = contactFields.every(
-      ({ key }) => !!contactFrom(data)[key],
+      ({ key }) => !isRequiredContact(key) || !!contactFrom(data)[key],
     );
     const locked = !!data?.intent?.submitted || !!data?.order;
     const saveContact = async (e: React.FormEvent<HTMLFormElement>) => {
@@ -443,12 +466,7 @@ export function apply(ctx: any) {
       const errors: Partial<Contact> = {};
       for (const { key, label } of contactFields) {
         const input = element.elements.namedItem(key) as HTMLInputElement;
-        if (
-          (data.pricing?.country === "CN" &&
-            ["email", "postal_code"].includes(key)) ||
-          (data.pricing?.country === "US" && key === "phone")
-        )
-          continue;
+        if (!isRequiredContact(key)) continue;
         if (!form[key].trim()) errors[key] = `请填写${label}`;
         else if (!input.validity.valid)
           errors[key] =
@@ -742,16 +760,7 @@ export function apply(ctx: any) {
                                       <Input
                                         id={`${formId}-${f.key}`}
                                         name={f.key}
-                                        required={
-                                          !(
-                                            (data.pricing?.country === "CN" &&
-                                              ["email", "postal_code"].includes(
-                                                f.key,
-                                              )) ||
-                                            (data.pricing?.country === "US" &&
-                                              f.key === "phone")
-                                          )
-                                        }
+                                        required={isRequiredContact(f.key)}
                                         maxLength={f.max}
                                         type={
                                           f.key === "email" ? "email" : "text"

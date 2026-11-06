@@ -1478,6 +1478,61 @@ test("CNY uses direct Commerce, owner ES256 confirmation and private original pa
     f.close();
   }
 });
+test("owner contact omits blank optional address values from actual Commerce writes", async () => {
+  for (const cny of [true, false]) {
+    const f = fixture(false, cny);
+    try {
+      const flow = await f.flow();
+      await f.service.tool(
+        "session-a",
+        "frontvia_cart",
+        { flowId: flow, action: "add", variant_id: "variant", quantity: 1 },
+        "add",
+      );
+      await f.service.contact(
+        "session-a",
+        flow,
+        "v1",
+        {
+          ...(cny ? {} : { email: "owner@example.test" }),
+          shipping_address: {
+            country: f.country,
+            recipient: "Recipient",
+            line1: "Street",
+            city: "City",
+            region: cny ? "浙江省" : "CA",
+            postal_code: cny ? "   " : "94105",
+            phone: cny ? "+8613800000000" : "",
+          },
+        },
+        "save-contact",
+      );
+      assert.equal(f.remote.cart.version, "v2");
+      assert.equal(
+        Object.hasOwn(
+          f.remote.cart.shipping_address,
+          cny ? "postal_code" : "phone",
+        ),
+        false,
+      );
+      assert.equal(
+        f.remote.cart.shipping_address[cny ? "phone" : "postal_code"],
+        cny ? "+8613800000000" : "94105",
+      );
+      assert.equal(Object.hasOwn(f.remote.cart, "email"), !cny);
+      const refreshed = await f.service.tool(
+        "session-a",
+        "frontvia_cart",
+        { flowId: flow, action: "get" },
+        "read-contact",
+      );
+      assert.equal(refreshed.contactReady, true);
+      assert.equal(JSON.stringify(refreshed).includes("+8613800000000"), false);
+    } finally {
+      f.close();
+    }
+  }
+});
 test("CNY delivery requires a phone and refuses a foreign-country patch without dispatch", async () => {
   const f = fixture(false, true);
   try {
