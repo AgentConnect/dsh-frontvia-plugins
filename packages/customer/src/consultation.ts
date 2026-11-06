@@ -423,12 +423,17 @@ export class ConsultationService {
     }));
   }
   private shopping(f: Flow, conversation: any) {
-    const shopping = shoppingSupported(f.capabilities)
-      ? shoppingView(
-          conversation.shopping,
-          this.pap.sites().find((s) => s.id === f.siteId),
-        )
-      : null;
+    // New-purchase availability does not revoke an already accepted order.
+    // Validate historical amounts and payment destinations even when disabled.
+    let shopping = shoppingView(
+      conversation.shopping,
+      this.pap.sites().find((s) => s.id === f.siteId),
+    );
+    if (
+      shopping?.state === "requires_confirmation" &&
+      !shoppingSupported(f.capabilities)
+    )
+      shopping = null;
     if (
       shopping?.state === "requires_confirmation" &&
       !f.pending &&

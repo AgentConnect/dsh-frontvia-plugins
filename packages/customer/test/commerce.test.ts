@@ -17,10 +17,10 @@ import { uiSchemas } from "../src/ui-contract.js";
 import { shoppingReference } from "../src/client/history.js";
 import { shoppingStep } from "../src/client/shopping-progress.js";
 const copy = (v: any) => structuredClone(v);
-function fixture(cache = false, cny = false) {
+function fixture(cache = false, cny = false, language?: string) {
   const currency = cny ? "CNY" : "USD",
     country = cny ? "CN" : "US",
-    locale = cny ? "zh-CN" : "en-US";
+    locale = language ?? (cny ? "zh-CN" : "en-US");
   const profile = cny
     ? "frontvia.personal_purchase.v1"
     : "frontvia.pap_subject_purchase.v1";
@@ -1582,6 +1582,59 @@ test("CNY delivery requires a phone and refuses a foreign-country patch without 
       /ADDRESS_COUNTRY_MISMATCH/,
     );
     assert.equal(f.remote.writes, before);
+  } finally {
+    f.close();
+  }
+});
+
+for (const locale of ["en-US", "zh-CN"])
+  test(`US/USD ${locale} preserves pricing through browse, owner confirmation and order reads`, async () => {
+    const f = fixture(false, false, locale);
+    try {
+      const flow = await prepare(f);
+      await f.service.tool(
+        "session-a",
+        "frontvia_products",
+        { flowId: flow, action: "browse" },
+        "browse-locale",
+      );
+      assert.deepEqual(f.remote.searches.at(-1).context, {
+        country: "US",
+        currency: "USD",
+        locale,
+      });
+      const view = await f.service.review("session-a", flow);
+      assert.deepEqual(view.pricing, {
+        country: "US",
+        currency: "USD",
+        locale,
+      });
+      assert.equal(view.cart.shipping_address.country, "US");
+      assert.equal(f.remote.confirms, 0);
+      await f.service.confirm("session-a", flow, view.intent!.id);
+      const restored = await f.service.view("session-a", flow);
+      assert.equal(restored.pricing.locale, locale);
+      assert.equal(restored.order?.totals.grand_total.currency, "USD");
+      assert.equal(f.remote.confirms, 1);
+    } finally {
+      f.close();
+    }
+  });
+
+test("unsupported store locale is rejected before cart writes", async () => {
+  const f = fixture(false, false, "fr-FR");
+  try {
+    const flow = await f.flow();
+    await assert.rejects(
+      f.service.tool(
+        "session-a",
+        "frontvia_cart",
+        { flowId: flow, action: "add", variant_id: "variant", quantity: 1 },
+        "unsupported-locale",
+      ),
+      /PRICING_CONTEXT_UNSUPPORTED/,
+    );
+    assert.equal(f.remote.writes, 0);
   } finally {
     f.close();
   }

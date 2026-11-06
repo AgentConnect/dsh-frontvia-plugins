@@ -82,3 +82,11 @@
 | dsh-frontvia-plugins | `codex/spec-identity-pap-commerce` | 包含本记录的 `feat(plugins): use independent identity and direct PAP commerce` 提交 |
 
 提交前重新 fetch，两现有仓库基线仍与 origin/main 对齐。此次仅创建本地提交，未创建远程仓库、push、PR、合并、安装或部署。保留上述既有验证结果；提交阶段只更新状态记录，未改动业务代码。
+
+## PR #10 审查修复
+
+- 历史咨询订单投影不再以“允许新咨询购买”为前提。capability unavailable 时，已接受订单仍验证并展示原 checkout、付款状态与同源付款入口；未确认摘要不会生成新的确认入口。
+- 接受服务端合法的 US/USD/zh-CN 上下文，保留 CN/CNY/zh-CN 和 US/USD/en-US；未知组合继续拒绝。
+- 新增 owner view 回归覆盖能力关闭前后、待付款到已付、链接不进入模型、外站链接拒绝及无新增提交；英文/中文美元店铺均走浏览、购物车、报价、owner 确认、原订单读取。
+- 同步 main 的 DSH 0.2.2-rc.1 兼容更新，保留 main 锁文件中的当前宿主依赖。
+- 本地 `pnpm check`（类型检查、构建、122 项测试）通过。未执行真实桌面安装、部署或真实支付。

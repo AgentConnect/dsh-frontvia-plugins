@@ -77,7 +77,9 @@ function pricing(f: Flow) {
     !c ||
     !(
       (c.country === "CN" && c.currency === "CNY" && c.locale === "zh-CN") ||
-      (c.country === "US" && c.currency === "USD" && c.locale === "en-US")
+      (c.country === "US" &&
+        c.currency === "USD" &&
+        ["en-US", "zh-CN"].includes(c.locale))
     )
   )
     fail("PRICING_CONTEXT_UNSUPPORTED");

@@ -277,77 +277,96 @@ test("CNY changed amount, expiry, conversation version or withdrawn capability r
   }
 });
 
-test("CNY refresh reads current payment, isolates bearer link from model, and rejects foreign payment origins", async () => {
-  const f = fixture();
-  try {
-    const { flowId } = await purchaseFlow(f);
-    const expiry = new Date(Date.now() + 600000).toISOString();
-    const url = `https://shop.test/companies/a/pay/checkout-1?expires=${Math.floor(Date.parse(expiry) / 1000)}&access=private-bearer`;
-    f.remote.shopping = {
-      ...purchase(),
-      state: "payment_pending",
-      checkout: {
-        id: "checkout-1",
-        status: "requires_action",
-        expires_at: expiry,
-        payment_summary: { status: "requires_action" },
-      },
-      payment: { url, expires_at: expiry },
-      confirmation: null,
-    };
-    f.remote.convo.messages = [
-      {
-        id: "answer",
-        actor: "agent",
-        text: `订单已建立\n${url}\n确认购买 ABCDEF0123456789`,
-      },
-    ];
-    const view = await f.service.consultation.view("session", flowId);
-    assert.equal(view.shopping.payment.url, url);
-    const result = await legacyTool(
-      f.service,
-      "session",
-      "frontvia_consultation",
-      { flowId, action: "get" },
-      "read",
-    );
-    assert(!JSON.stringify(result).includes("private-bearer"));
-    assert(!JSON.stringify(result).includes("ABCDEF0123456789"));
-    f.remote.shopping.state = "paid";
-    f.remote.shopping.checkout.payment_summary.status = "paid";
-    assert.equal(
-      (await f.service.consultation.view("session", flowId)).shopping.payment,
-      null,
-    );
-    assert.equal(
-      f.remote.submits,
-      1,
-      "reload does not submit a question, purchase or payment",
-    );
-    f.remote.shopping.state = "payment_pending";
-    f.remote.shopping.payment.url = url.replace("shop.test", "attacker.test");
-    await assert.rejects(
-      f.service.consultation.view("session", flowId),
-      /SHOPPING_PAYMENT_LINK_INVALID/,
-    );
-    const incomplete = purchase();
-    delete (incomplete.summary.totals as any).shipping_total;
-    assert.throws(
-      () =>
-        shoppingView(incomplete, { issuer: "https://shop.test/companies/a" }),
-      /SHOPPING_RESPONSE_INVALID/,
-    );
-    assert(
-      !JSON.stringify(
-        consultationModelData({
-          nested: [{ text: url, confirmation_code: "SECRET" }],
-        }),
-      ).includes("SECRET"),
-    );
-  } finally {
-    f.close();
-  }
-});
+for (const capability of [true, false])
+  test(`CNY historical payment remains visible and validated with new purchasing=${capability}`, async () => {
+    const f = fixture();
+    try {
+      const { flowId, view: before } = await purchaseFlow(f);
+      f.remote.shoppingCapability = capability;
+      if (!capability) {
+        assert.equal(
+          (await f.service.consultation.view("session", flowId)).shopping,
+          null,
+        );
+        await assert.rejects(
+          f.service.consultation.confirmShopping(
+            "session",
+            flowId,
+            before.shopping.intentId,
+          ),
+          /SHOPPING_UNAVAILABLE/,
+        );
+      }
+      const expiry = new Date(Date.now() + 600000).toISOString();
+      const url = `https://shop.test/companies/a/pay/checkout-1?expires=${Math.floor(Date.parse(expiry) / 1000)}&access=private-bearer`;
+      f.remote.shopping = {
+        ...purchase(),
+        state: "payment_pending",
+        checkout: {
+          id: "checkout-1",
+          status: "requires_action",
+          expires_at: expiry,
+          payment_summary: { status: "requires_action" },
+        },
+        payment: { url, expires_at: expiry },
+        confirmation: null,
+      };
+      f.remote.convo.messages = [
+        {
+          id: "answer",
+          actor: "agent",
+          text: `订单已建立\n${url}\n确认购买 ABCDEF0123456789`,
+        },
+      ];
+      const view = await f.service.consultation.view("session", flowId);
+      assert.equal(view.shopping.payment.url, url);
+      assert.equal(view.shopping.checkout.id, "checkout-1");
+      assert.equal(view.shopping.confirmation, null);
+      assert.equal(view.shopping.intentId, undefined);
+      const result = await legacyTool(
+        f.service,
+        "session",
+        "frontvia_consultation",
+        { flowId, action: "get" },
+        "read",
+      );
+      assert(!JSON.stringify(result).includes("private-bearer"));
+      assert(!JSON.stringify(result).includes("ABCDEF0123456789"));
+      f.remote.shopping.state = "paid";
+      f.remote.shopping.checkout.payment_summary.status = "paid";
+      assert.equal(
+        (await f.service.consultation.view("session", flowId)).shopping.payment,
+        null,
+      );
+      assert.equal(
+        f.remote.submits,
+        1,
+        "reload does not submit a question, purchase or payment",
+      );
+      f.remote.shopping.state = "payment_pending";
+      f.remote.shopping.payment.url = url.replace("shop.test", "attacker.test");
+      await assert.rejects(
+        f.service.consultation.view("session", flowId),
+        /SHOPPING_PAYMENT_LINK_INVALID/,
+      );
+      const incomplete = purchase();
+      delete (incomplete.summary.totals as any).shipping_total;
+      assert.throws(
+        () =>
+          shoppingView(incomplete, { issuer: "https://shop.test/companies/a" }),
+        /SHOPPING_RESPONSE_INVALID/,
+      );
+      assert(
+        !JSON.stringify(
+          consultationModelData({
+            nested: [{ text: url, confirmation_code: "SECRET" }],
+          }),
+        ).includes("SECRET"),
+      );
+    } finally {
+      f.close();
+    }
+  });
 
 function fixture(cache = false) {
   const dir = mkdtempSync(join(tmpdir(), "customer-consultation-")),
