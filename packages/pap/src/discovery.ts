@@ -98,10 +98,7 @@ export async function inspectImport(input: unknown, wire: Transport) {
     source.search ||
     first.domain !== source.host ||
     config.sites.some(
-      (s) =>
-        s.domain !== first.domain ||
-        s.issuer !== first.issuer ||
-        new URL(s.resource).origin !== source.origin,
+      (s) => s.domain !== first.domain || s.issuer !== first.issuer,
     ) ||
     (config.authorization?.resource &&
       !config.sites.some((s) => s.resource === config.authorization!.resource))
@@ -122,15 +119,20 @@ export async function inspectImport(input: unknown, wire: Transport) {
     )
       fail("DISCOVERY_MISMATCH");
   const result: ImportedSite[] = [];
-  for (const api of doc.apis.slice(0, 20)) {
-    if (
-      api.type !== "openapi" ||
-      !httpsUrl.safeParse(api.resource).success ||
-      !httpsUrl.safeParse(api.url).success ||
-      new URL(api.resource).origin !== source.origin ||
-      new URL(api.url).origin !== source.origin
-    )
-      continue;
+  // Shared discovery may publish many shops. Inspect only exported resource
+  // origins, including their sibling services; contracts stay on that origin.
+  const resourceOrigins = new Set(
+    config.sites.map((s) => new URL(s.resource).origin),
+  );
+  const apis = doc.apis.filter(
+    (api: any) =>
+      api?.type === "openapi" &&
+      httpsUrl.safeParse(api.resource).success &&
+      httpsUrl.safeParse(api.url).success &&
+      resourceOrigins.has(new URL(api.resource).origin) &&
+      new URL(api.url).origin === new URL(api.resource).origin,
+  );
+  for (const api of apis.slice(0, 20)) {
     if (result.some((s) => s.resource === api.resource))
       fail("INVALID_SERVICE_CONTRACT");
     const declared = config.sites.find((s) => s.resource === api.resource);
@@ -153,7 +155,8 @@ export async function inspectImport(input: unknown, wire: Transport) {
       openrpcUrl: string | undefined;
     if (openapi.externalDocs?.url) {
       const u = httpsUrl.parse(openapi.externalDocs.url);
-      if (new URL(u).origin !== source.origin) fail("CONTRACT_ORIGIN_MISMATCH");
+      if (new URL(u).origin !== new URL(api.resource).origin)
+        fail("CONTRACT_ORIGIN_MISMATCH");
       const rpc = await wire({ url: u, method: "GET" });
       if (!rpc.openrpc || !Array.isArray(rpc.methods))
         fail("INVALID_SERVICE_CONTRACT");
@@ -196,12 +199,21 @@ export async function inspectImport(input: unknown, wire: Transport) {
         methods: names,
       },
       ...(declared
-        ? { allowedClientIds: config.authorization?.admission === "automatic" ? undefined : config.authorization?.allowed_client_ids }
+        ? {
+            allowedClientIds:
+              config.authorization?.admission === "automatic"
+                ? undefined
+                : config.authorization?.allowed_client_ids,
+          }
         : {}),
       service: config.service,
     });
   }
-  if (!result.some((s) => s.resource === first.resource))
+  if (
+    config.sites.some(
+      (site) => !result.some((s) => s.resource === site.resource),
+    )
+  )
     fail("INVALID_SERVICE_CONTRACT");
   return result;
 }

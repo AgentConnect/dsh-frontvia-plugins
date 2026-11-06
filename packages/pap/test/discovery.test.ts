@@ -1,8 +1,10 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { mkdtempSync } from "node:fs";
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import https from "node:https";
+import { execFileSync } from "node:child_process";
 import { generateKeyPairSync, randomBytes, createHash } from "node:crypto";
 import {
   PapService,
@@ -13,7 +15,7 @@ import {
 import { publicTransport, isPublicAddress } from "../src/network.js";
 const origin = "https://merchant.test",
   issuer = origin + "/companies/a";
-function fixture() {
+function fixture(resourceOrigin = origin) {
   const dir = mkdtempSync(join(tmpdir(), "pap-import-")),
     storage = randomBytes(32).toString("base64url"),
     key = generateKeyPairSync("ec", {
@@ -34,19 +36,19 @@ function fixture() {
     format: "frontvia.consultation.connection.v1",
     profile: "frontvia.merchant_consultation.v1",
     discovery_url: origin + "/.well-known/poppy.json",
-    openapi_url: origin + "/consultation/openapi.json",
+    openapi_url: resourceOrigin + "/consultation/openapi.json",
     sites: [
       {
         id: "consult",
         label: "商家咨询",
         domain: "merchant.test",
         issuer,
-        resource: origin + "/consultation/rpc",
+        resource: resourceOrigin + "/consultation/rpc",
       },
     ],
     authorization: {
       allowed_client_ids: [config.clientId],
-      resource: origin + "/consultation/rpc",
+      resource: resourceOrigin + "/consultation/rpc",
       token_type: "DPoP",
     },
     service: { store_id: "a1", environment: "test" },
@@ -56,6 +58,11 @@ function fixture() {
     calls: [] as any[],
     foreignContract: false,
     badIssuer: false,
+    apis: ["consultation", "commerce"].map((name) => ({
+      type: "openapi",
+      url: `${resourceOrigin}/${name}/openapi.json`,
+      resource: `${resourceOrigin}/${name}/rpc`,
+    })),
     beforeRpc: undefined as undefined | (() => Promise<void>),
     beforeToken: undefined as undefined | (() => Promise<void>),
   };
@@ -65,11 +72,7 @@ function fixture() {
       return {
         protocol_version: "0.2",
         auth: { issuer: record.badIssuer ? "https://evil.test" : issuer },
-        apis: ["consultation", "commerce"].map((name) => ({
-          type: "openapi",
-          url: `${origin}/${name}/openapi.json`,
-          resource: `${origin}/${name}/rpc`,
-        })),
+        apis: record.apis,
       };
     if (r.url.includes("oauth-authorization-server"))
       return {
@@ -98,7 +101,7 @@ function fixture() {
         externalDocs: {
           url: record.foreignContract
             ? "https://other.test/openrpc.json"
-            : origin + "/commerce/openrpc.json",
+            : resourceOrigin + "/commerce/openrpc.json",
         },
       };
     if (r.url.endsWith("openrpc.json"))
@@ -126,17 +129,15 @@ function fixture() {
     const body = JSON.parse(r.body!);
     return { jsonrpc: "2.0", id: body.id, result: { data: { ok: true } } };
   };
+  const secrets = { get: async () => key, set: async () => {} };
   let vault = new Vault(join(dir, "pap.sqlite"), storage),
-    service = new PapService(
-      config,
-      { get: async () => key, set: async () => {} },
-      vault,
-      wire,
-    );
+    service = new PapService(config, secrets, vault, wire);
   return {
     config,
     exported,
     record,
+    wire,
+    secrets,
     get service() {
       return service;
     },
@@ -146,74 +147,323 @@ function fixture() {
     restart() {
       vault.close();
       vault = new Vault(join(dir, "pap.sqlite"), storage);
-      service = new PapService(
-        config,
-        { get: async () => key, set: async () => {} },
-        vault,
-        wire,
-      );
+      service = new PapService(config, secrets, vault, wire);
     },
     close() {
       vault.close();
     },
   };
 }
-test("inspect verifies two published resources without authentication; import and audience isolation survive restart", async () => {
-  const f = fixture();
+for (const resourceOrigin of [origin, "https://store.test"])
+  test(`inspect ${resourceOrigin} without authentication; import and audience isolation survive restart`, async () => {
+    const f = fixture(resourceOrigin);
+    try {
+      if (resourceOrigin !== origin) {
+        // Shared discovery can list many other shops before this exported shop.
+        f.record.apis.unshift(
+          ...Array.from({ length: 25 }, (_, i) => ({
+            type: "openapi",
+            url: `${origin}/stores/other-${i}/openapi.json`,
+            resource: `${origin}/stores/other-${i}/rpc`,
+          })),
+          {
+            type: "openapi",
+            url: "https://other-store.test/openapi.json",
+            resource: "https://other-store.test/rpc",
+          },
+        );
+      }
+      const preview = await f.service.inspect(f.exported);
+      assert.equal(preview.verification, "discovered");
+      assert.equal(preview.sites.length, 2);
+      assert.equal(f.service.sites().length, 0);
+      assert.deepEqual(f.service.status(), []);
+      assert.ok(
+        f.record.calls.every(
+          (r) => r.method === "GET" && !r.headers?.Authorization,
+        ),
+      );
+      assert.deepEqual(
+        f.record.calls.map((r) => r.url),
+        [
+          f.exported.discovery_url,
+          f.exported.openapi_url,
+          resourceOrigin + "/commerce/openapi.json",
+          resourceOrigin + "/commerce/openrpc.json",
+        ],
+      );
+      assert(
+        preview.sites.every(
+          (s) => new URL(s.resource).origin === resourceOrigin,
+        ),
+      );
+      await f.service.importResources(
+        preview.previewId,
+        preview.sites.map((s) => s.resource),
+      );
+      f.restart();
+      const sites = f.service.sites(),
+        commerce = sites.find((s) =>
+          s.description!.methods.includes("commerce.capabilities.get"),
+        )!;
+      const a = await f.service.connect("consult"),
+        b = await f.service.connect(commerce.id);
+      assert.equal(
+        f.service.identity(a.connectionRef).userId,
+        f.service.identity(b.connectionRef).userId,
+      );
+      await f.service.request(
+        a.connectionRef,
+        "consultation.capabilities.get",
+        {},
+      );
+      await f.service.request(b.connectionRef, "commerce.capabilities.get", {});
+      const requests = f.record.calls.filter((r) => r.url.endsWith("/rpc"));
+      assert.deepEqual(
+        requests.map((r) => r.url),
+        [
+          resourceOrigin + "/consultation/rpc",
+          resourceOrigin + "/commerce/rpc",
+        ],
+      );
+      for (const r of requests) {
+        const claims = JSON.parse(
+          Buffer.from(r.headers.DPoP.split(".")[1], "base64url").toString(),
+        );
+        assert.equal(claims.htu, r.url);
+        assert.equal(r.headers.Authorization, `DPoP token:${r.url}`);
+      }
+      assert(
+        f.record.calls
+          .filter((r) => r.url.endsWith("/token"))
+          .every((r) => r.url === origin + "/token"),
+      );
+      assert.notEqual(
+        requests[0].headers.Authorization,
+        requests[1].headers.Authorization,
+      );
+      const header = (r: any) =>
+        JSON.parse(
+          Buffer.from(r.headers.DPoP.split(".")[0], "base64url").toString(),
+        );
+      assert.notDeepEqual(header(requests[0]).jwk, header(requests[1]).jwk);
+      const before = f.record.calls.length;
+      await assert.rejects(
+        f.service.request(a.connectionRef, "commerce.checkouts.confirm", {}),
+        /METHOD_NOT_ADVERTISED/,
+      );
+      assert.equal(f.record.calls.length, before);
+      const subject = f.service.identity(b.connectionRef).userId;
+      f.restart();
+      assert.equal(f.service.identity(b.connectionRef).userId, subject);
+      assert.equal(f.service.sites().length, 2);
+    } finally {
+      f.close();
+    }
+  });
+
+test("cross-origin import rejects unpublished resources and mismatched issuer, URLs and profiles before saving", async () => {
+  const f = fixture("https://store.test");
   try {
-    const preview = await f.service.inspect(f.exported);
-    assert.equal(preview.verification, "discovered");
+    const mismatches: [string, (config: typeof f.exported) => void, RegExp][] =
+      [
+        [
+          "domain",
+          (c) => {
+            c.sites[0].domain = "other.test";
+          },
+          /IMPORT_BINDING_MISMATCH/,
+        ],
+        [
+          "issuer",
+          (c) => {
+            c.sites[0].issuer = "https://other.test/companies/a";
+          },
+          /DISCOVERY_MISMATCH/,
+        ],
+        [
+          "resource",
+          (c) => {
+            c.sites[0].resource = c.authorization.resource =
+              "https://other.test/rpc";
+          },
+          /DISCOVERY_MISMATCH/,
+        ],
+        [
+          "openapi",
+          (c) => {
+            c.openapi_url = "https://other.test/openapi.json";
+          },
+          /IMPORT_BINDING_MISMATCH/,
+        ],
+        [
+          "profile",
+          (c) => {
+            c.profile = "different.profile.v1";
+          },
+          /IMPORT_BINDING_MISMATCH/,
+        ],
+      ];
+    for (const [name, mutate, expected] of mismatches) {
+      const exported = structuredClone(f.exported);
+      mutate(exported);
+      f.record.calls.length = 0;
+      await assert.rejects(f.service.inspect(exported), expected, name);
+      assert(
+        f.record.calls.every(
+          (r) => r.method === "GET" && !r.url.startsWith("https://other.test"),
+        ),
+        name,
+      );
+      assert.equal(f.vault.get("imported-sites"), undefined);
+    }
+    f.record.foreignContract = true;
+    await assert.rejects(
+      f.service.inspect(f.exported),
+      /CONTRACT_ORIGIN_MISMATCH/,
+    );
+    assert(!f.record.calls.some((r) => r.url.startsWith("https://other.test")));
+  } finally {
+    f.close();
+  }
+});
+
+test("every declared resource needs a verified contract on its own origin", async () => {
+  const f = fixture("https://store.test");
+  try {
+    f.exported.sites.push({
+      ...f.exported.sites[0],
+      id: "commerce",
+      resource: "https://store.test/commerce/rpc",
+    });
+    f.record.apis[1].url = "https://other.test/commerce/openapi.json";
+    await assert.rejects(
+      f.service.inspect(f.exported),
+      /INVALID_SERVICE_CONTRACT/,
+    );
+    assert(!f.record.calls.some((r) => r.url.startsWith("https://other.test")));
+    assert.equal(f.vault.get("imported-sites"), undefined);
+  } finally {
+    f.close();
+  }
+});
+
+test("production import transport permits the declared resource origin but blocks private DNS; explicit TLS targets connect", async () => {
+  const f = fixture("https://localhost");
+  const dir = mkdtempSync(join(tmpdir(), "pap-cross-origin-tls-"));
+  const key = join(dir, "key.pem"),
+    cert = join(dir, "cert.pem"),
+    cnf = join(dir, "cert.cnf");
+  writeFileSync(
+    cnf,
+    "[req]\ndistinguished_name=dn\nx509_extensions=ext\nprompt=no\n[dn]\nCN=merchant.test\n[ext]\nsubjectAltName=DNS:merchant.test,DNS:localhost\nbasicConstraints=critical,CA:TRUE\n",
+  );
+  execFileSync(
+    "openssl",
+    [
+      "req",
+      "-x509",
+      "-newkey",
+      "rsa:2048",
+      "-nodes",
+      "-days",
+      "1",
+      "-keyout",
+      key,
+      "-out",
+      cert,
+      "-config",
+      cnf,
+    ],
+    { stdio: "ignore" },
+  );
+  const server = https.createServer(
+    { key: readFileSync(key), cert: readFileSync(cert) },
+    async (req, res) => {
+      try {
+        let body = "";
+        for await (const chunk of req) body += chunk;
+        const value = await f.wire({
+          url: `https://${req.headers.host}${req.url}`,
+          method: req.method!,
+          headers: {
+            ...(req.headers.authorization
+              ? { Authorization: req.headers.authorization }
+              : {}),
+            ...(req.headers.dpop ? { DPoP: String(req.headers.dpop) } : {}),
+          },
+          body: body || undefined,
+        });
+        res.writeHead(200, { "content-type": "application/json" });
+        res.end(JSON.stringify(value));
+      } catch {
+        res.writeHead(500);
+        res.end("{}");
+      }
+    },
+  );
+  await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+  const target = {
+    origin,
+    address: "127.0.0.1",
+    port: 443,
+    connectPort: (server.address() as { port: number }).port,
+  };
+  f.config.targets.push(target);
+  f.config.caFile = cert;
+  const service = new PapService(f.config, f.secrets, f.vault);
+  try {
+    // No injected Transport: exercise inspect's real destination allowlist and
+    // publicTransport's DNS check. localhost is declared but never public.
+    await assert.rejects(service.inspect(f.exported), /PUBLIC_HTTPS_REQUIRED/);
+    assert.deepEqual(
+      f.record.calls.map((r) => r.url),
+      [f.exported.discovery_url],
+    );
+    assert.equal(f.vault.get("imported-sites"), undefined);
+
+    // The isolated TLS fixture is now explicitly approved, as for local stacks.
+    f.config.targets.push({ ...target, origin: "https://localhost" });
+    const preview = await service.inspect(f.exported);
     assert.equal(preview.sites.length, 2);
-    assert.equal(f.service.sites().length, 0);
-    assert.deepEqual(f.service.status(), []);
-    assert.ok(
+    assert(
       f.record.calls.every(
         (r) => r.method === "GET" && !r.headers?.Authorization,
       ),
     );
-    await f.service.importResources(
+    await service.importResources(
       preview.previewId,
       preview.sites.map((s) => s.resource),
     );
-    f.restart();
-    const sites = f.service.sites(),
-      commerce = sites.find((s) =>
-        s.description!.methods.includes("commerce.capabilities.get"),
-      )!;
-    const a = await f.service.connect("consult"),
-      b = await f.service.connect(commerce.id);
-    assert.equal(
-      f.service.identity(a.connectionRef).userId,
-      f.service.identity(b.connectionRef).userId,
+    for (const site of preview.sites) {
+      const connection = await service.connect(site.id);
+      const method = site.description.methods[0];
+      const reply = await service.request(connection.connectionRef, method, {});
+      assert.deepEqual(reply.result.data, { ok: true });
+    }
+    const requests = f.record.calls.filter((r) => r.method === "POST");
+    assert.deepEqual(
+      requests.map((r) => r.url),
+      [
+        origin + "/token",
+        "https://localhost/consultation/rpc",
+        origin + "/token",
+        "https://localhost/commerce/rpc",
+      ],
     );
-    await f.service.request(
-      a.connectionRef,
-      "consultation.capabilities.get",
-      {},
-    );
-    await f.service.request(b.connectionRef, "commerce.capabilities.get", {});
-    const requests = f.record.calls.filter((r) => r.url.endsWith("/rpc"));
-    assert.notEqual(
-      requests[0].headers.Authorization,
-      requests[1].headers.Authorization,
-    );
-    const header = (r: any) =>
-      JSON.parse(
-        Buffer.from(r.headers.DPoP.split(".")[0], "base64url").toString(),
+    for (const r of requests.filter((r) => r.url.endsWith("/rpc"))) {
+      assert.equal(r.headers.Authorization, `DPoP token:${r.url}`);
+      const claims = JSON.parse(
+        Buffer.from(r.headers.DPoP.split(".")[1], "base64url").toString(),
       );
-    assert.notDeepEqual(header(requests[0]).jwk, header(requests[1]).jwk);
-    const before = f.record.calls.length;
-    await assert.rejects(
-      f.service.request(a.connectionRef, "commerce.checkouts.confirm", {}),
-      /METHOD_NOT_ADVERTISED/,
-    );
-    assert.equal(f.record.calls.length, before);
-    const subject = f.service.identity(b.connectionRef).userId;
-    f.restart();
-    assert.equal(f.service.identity(b.connectionRef).userId, subject);
-    assert.equal(f.service.sites().length, 2);
+      assert.equal(claims.htu, r.url);
+    }
   } finally {
+    service.close();
     f.close();
+    server.closeAllConnections();
+    await new Promise<void>((resolve) => server.close(() => resolve()));
+    rmSync(dir, { recursive: true, force: true });
   }
 });
 test("legacy exported allowlists no longer require merchant approval; actual token authentication still runs", async () => {

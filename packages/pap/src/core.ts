@@ -345,6 +345,7 @@ export class PapService {
       origins = [
         new URL(config.discovery_url).origin,
         ...config.sites.map((s) => new URL(s.issuer).origin),
+        ...config.sites.map((s) => new URL(s.resource).origin),
       ];
     const sites = await inspectImport(
       config,

@@ -71,7 +71,7 @@ Profile patch 使用 rc.3 的按 ID 配置语法：
 
 PAP 页面接受商家导出的 `frontvia.consultation.connection.v1` JSON。点击“检查服务”时，插件公开读取发现文档及其 OpenAPI/OpenRPC，核对 issuer、resource、接口路径和方法；检查不会创建 PAP 会话或发出业务请求。选择资源后保存到当前 Profile 的加密存储，重启保留。预览有效十分钟，不能添加未检查的资源或覆盖已有连接的身份绑定。
 
-导入仅支持公网 HTTPS 443，同源接口契约；DNS 解析拒绝内网/保留地址并在每次请求固定连接 IP，保留 TLS 证书校验，不跟随重定向。本地隔离测试继续通过显式 `targets` 配置。公开 JSON 不接受私钥/Token 字段。
+导入仅支持公网 HTTPS 443。发现文档可位于公共商家域名，资源可位于配置明确声明的店铺域名；发现文档必须公布相同的 issuer 和完整 resource 地址，OpenAPI 地址须与导出配置一致，OpenAPI/OpenRPC 契约须与对应 resource 同源。只检查配置声明的资源域名及该域名下发布的其他服务，不扩展到发现文档中其他店铺的域名。DNS 解析拒绝内网/保留地址并在每次请求固定连接 IP，保留 TLS 证书校验，不跟随重定向。本地隔离测试继续通过显式 `targets` 配置。公开 JSON 不接受私钥/Token 字段。
 
 如果本机代理的 Fake-IP DNS 返回 `198.18.*`，导入会按保留地址拒绝请求。可在受保护的 PAP 配置 `targets` 中为该 origin 显式登记已核实的公网 IP；导入检查和后续资源请求都会遵守此配置，不关闭内网保护。若同一配置仍有隔离栈 `caFile`，公网目标需设 `systemCa: true` 使用系统公开 CA；仍核验原 HTTPS 域名证书，IP 变化后需重新核实更新。本机已通过 Google 与 Cloudflare 公共 DNS 的 HTTPS 查询交叉核实商家 IP，并成功验证目标域名 TLS；没有改变系统代理/DNS。
 
