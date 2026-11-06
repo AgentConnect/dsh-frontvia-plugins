@@ -3,6 +3,7 @@ import { ConversationShopping } from "./conversation-shopping.js";
 import React, { useEffect, useRef, useState } from "react";
 import {
   BookOpen,
+  ChevronRight,
   Download,
   Info,
   MessageCircle,
@@ -200,24 +201,6 @@ export function ConsultationCard({
               busy={!!busy}
               onConfirm={confirmShopping}
             />
-            <div className="fv-between">
-              <span className="fv-muted">
-                {data.pending
-                  ? "原请求结果待核对"
-                  : data.conversation?.status === "pending"
-                    ? "商家正在处理"
-                    : data.conversation?.status === "failed"
-                      ? "本次答复未完成"
-                      : data.conversation?.status === "needs_human"
-                        ? "等待人工回复"
-                        : "当前会话"}
-              </span>
-              <Badge>
-                {data.capabilities?.knowledge === "supported"
-                  ? "公开知识已开放"
-                  : "暂未开放知识"}
-              </Badge>
-            </div>
             {data.conversation?.status === "failed" && (
               <Alert variant="destructive">
                 <Info aria-hidden />
@@ -226,43 +209,66 @@ export function ConsultationCard({
                 </AlertDescription>
               </Alert>
             )}
-            {(data.conversation?.messages ?? []).length ? (
-              data.conversation.messages.map((m: any) => (
-                <article className="fv-consult-message" key={m.id}>
-                  <p className="fv-muted">
-                    {m.actor === "agent" || m.actor === "merchant"
-                      ? "商家回复"
-                      : "你的问题"}
-                  </p>
-                  <p>
-                    {m.text
-                      .replace(
-                        /https:\/\/[^\s<>"']+\/pay\/[^\s<>"']+/gu,
-                        "请在上方购物卡片打开付款页",
-                      )
-                      .replace(
-                        /确认购买\s+[A-Za-z0-9_-]{4,80}/gu,
-                        "请在购物卡片核对后点击确认购买",
+            <details className="fv-consult-conversation" key={scope}>
+              <summary>
+                <span className="fv-consult-heading fv-muted">
+                  <ChevronRight aria-hidden />
+                  {data.pending
+                    ? "原请求结果待核对"
+                    : data.conversation?.status === "pending"
+                      ? "商家正在处理"
+                      : data.conversation?.status === "failed"
+                        ? "本次答复未完成"
+                        : data.conversation?.status === "needs_human"
+                          ? "等待人工回复"
+                          : "当前会话"}
+                </span>
+                <Badge>
+                  {data.capabilities?.knowledge === "supported"
+                    ? "公开知识已开放"
+                    : "暂未开放知识"}
+                </Badge>
+              </summary>
+              <div className="fv-stack">
+                {(data.conversation?.messages ?? []).length ? (
+                  data.conversation.messages.map((m: any) => (
+                    <article className="fv-consult-message" key={m.id}>
+                      <p className="fv-muted">
+                        {m.actor === "agent" || m.actor === "merchant"
+                          ? "商家回复"
+                          : "你的问题"}
+                      </p>
+                      <p>
+                        {m.text
+                          .replace(
+                            /https:\/\/[^\s<>"']+\/pay\/[^\s<>"']+/gu,
+                            "请在上方购物卡片打开付款页",
+                          )
+                          .replace(
+                            /确认购买\s+[A-Za-z0-9_-]{4,80}/gu,
+                            "请在购物卡片核对后点击确认购买",
+                          )}
+                      </p>
+                      {m.knowledge_status && m.knowledge_status !== "none" && (
+                        <span className="fv-muted">
+                          {m.knowledge_status === "current"
+                            ? "引用已核对"
+                            : "引用状态已变化，请重新查询"}
+                        </span>
                       )}
-                  </p>
-                  {m.knowledge_status && m.knowledge_status !== "none" && (
-                    <span className="fv-muted">
-                      {m.knowledge_status === "current"
-                        ? "引用已核对"
-                        : "引用状态已变化，请重新查询"}
-                    </span>
-                  )}
-                </article>
-              ))
-            ) : (
-              <Empty>
-                <MessageCircle aria-hidden />
-                <EmptyTitle>在聊天中向商家提问</EmptyTitle>
-                <EmptyDescription>
-                  只会发送本次问题及你选择的商品，不会转发整段私人聊天。
-                </EmptyDescription>
-              </Empty>
-            )}
+                    </article>
+                  ))
+                ) : (
+                  <Empty>
+                    <MessageCircle aria-hidden />
+                    <EmptyTitle>在聊天中向商家提问</EmptyTitle>
+                    <EmptyDescription>
+                      只会发送本次问题及你选择的商品，不会转发整段私人聊天。
+                    </EmptyDescription>
+                  </Empty>
+                )}
+              </div>
+            </details>
             {!!sources.length && (
               <div className="fv-stack">
                 <h4>

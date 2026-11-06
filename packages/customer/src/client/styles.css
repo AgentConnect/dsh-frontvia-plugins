@@ -48,6 +48,31 @@
   white-space: pre-wrap;
   overflow-wrap: anywhere;
 }
+.fv .fv-consult-conversation > summary {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 12px;
+  padding-block: 8px;
+  cursor: pointer;
+  list-style: none;
+  font-weight: 400;
+}
+.fv .fv-consult-conversation > summary::-webkit-details-marker {
+  display: none;
+}
+.fv .fv-consult-heading {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+.fv .fv-consult-conversation[open] > summary {
+  margin-bottom: 12px;
+}
+.fv .fv-consult-conversation[open] > summary .fv-consult-heading > svg {
+  transform: rotate(90deg);
+}
 .fv .fv-consult-actions {
   display: flex;
   gap: 12px;
