@@ -68,6 +68,77 @@ async function purchaseFlow(f: ReturnType<typeof fixture>) {
   return { flowId, view: await f.service.consultation.view("session", flowId) };
 }
 
+test("CNY free-text addresses reach owner confirmation without inventing region or city", async () => {
+  const f = fixture();
+  try {
+    const { flowId } = await purchaseFlow(f);
+    const address = f.remote.shopping.summary.shipping_address;
+    address.line1 = "测试省测试市测试路 1 号";
+    delete address.region;
+    delete address.city;
+    const before = f.remote.submits;
+    const view = await f.service.consultation.view("session", flowId);
+    assert.equal(view.shopping.state, "requires_confirmation");
+    assert.deepEqual(view.shopping.summary.shipping_address, address);
+    assert(view.shopping.intentId);
+    assert.equal(
+      f.remote.submits,
+      before,
+      "reading the card never confirms the order",
+    );
+    await f.service.consultation.confirmShopping(
+      "session",
+      flowId,
+      view.shopping.intentId,
+    );
+    assert.equal(f.remote.submits, before + 1);
+    const submit = f.remote.calls
+      .filter((c) => c.method === "consultation.messages.submit")
+      .at(-1);
+    assert.equal(submit.params.text, "确认购买 ABCDEF0123456789");
+  } finally {
+    f.close();
+  }
+});
+
+test("CNY address validation accepts optional locality fields but rejects incomplete recipient details", () => {
+  const site = { issuer: "https://shop.test/companies/a" };
+  for (const optional of [
+    {},
+    { region: "", city: "" },
+    { region: null, city: null },
+    { region: "测试省", city: "测试市" },
+  ]) {
+    const value = purchase();
+    const address: any = value.summary.shipping_address;
+    delete address.region;
+    delete address.city;
+    Object.assign(address, optional);
+    assert.deepEqual(
+      shoppingView(value, site).summary.shipping_address,
+      address,
+    );
+  }
+  for (const key of ["recipient", "phone", "line1"]) {
+    for (const invalid of [undefined, null, "", "  ", 123, {}]) {
+      const value = purchase();
+      (value.summary.shipping_address as any)[key] = invalid;
+      assert.throws(
+        () => shoppingView(value, site),
+        /SHOPPING_RESPONSE_INVALID/,
+      );
+    }
+  }
+  for (const key of ["region", "city", "line2", "postal_code"]) {
+    const value = purchase();
+    (value.summary.shipping_address as any)[key] = {};
+    assert.throws(() => shoppingView(value, site), /SHOPPING_RESPONSE_INVALID/);
+  }
+  const foreign = purchase();
+  foreign.summary.shipping_address.country = "US";
+  assert.throws(() => shoppingView(foreign, site), /SHOPPING_RESPONSE_INVALID/);
+});
+
 test("CNY confirmation is owner-only, bound to displayed quote/version, and idempotent across restart", async () => {
   const f = fixture();
   try {
