@@ -30,7 +30,7 @@ PAP 配置（0600）：
 }
 ```
 
-`targets.origin` 必须采用 URL 的规范 origin（HTTPS 默认 443 时写 `https://shop.example.test`，不要保留 `:443`）。`address` 必须是明确批准的 IPv4/IPv6 地址；`port` 匹配 URL 端口；测试隧道可单独配置 `connectPort`。不跟随重定向，启用 TLS 证书检查、响应大小及超时上限。首次安装默认账号域名遇到 Fake-IP 时会通过经过 TLS 校验的公共 DNS 查询该固定域名的 A 记录，仍只拨号公网 IP。其他导入域名继续执行原地址检查。生产 CA 可省略 `caFile`，但本轮没有生产验证。
+`targets.origin` 必须采用 URL 的规范 origin（HTTPS 默认 443 时写 `https://shop.example.test`，不要保留 `:443`）。`address` 必须是明确批准的 IPv4/IPv6 地址；`port` 匹配 URL 端口；测试隧道可单独配置 `connectPort`。不跟随重定向，启用 TLS 证书检查、响应大小及超时上限。已批准访问的账号或商家域名遇到全量 Fake-IP 响应时，会通过经过 TLS 校验的公共 DNS 查询原域名的 A 记录，仍只拨号公网 IP；具体条件见下方导入说明。生产 CA 可省略 `caFile`，本地隔离测试应保留专用 CA。
 
 Customer 配置（0600）：
 
@@ -73,7 +73,7 @@ PAP 页面接受商家导出的 `frontvia.consultation.connection.v1` JSON。点
 
 导入仅支持公网 HTTPS 443。发现文档可位于公共商家域名，资源可位于配置明确声明的店铺域名；发现文档必须公布相同的 issuer 和完整 resource 地址，OpenAPI 地址须与导出配置一致，OpenAPI/OpenRPC 契约须与对应 resource 同源。只检查配置声明的资源域名及该域名下发布的其他服务，不扩展到发现文档中其他店铺的域名。DNS 解析拒绝内网/保留地址并在每次请求固定连接 IP，保留 TLS 证书校验，不跟随重定向。本地隔离测试继续通过显式 `targets` 配置。公开 JSON 不接受私钥/Token 字段。
 
-如果本机代理的 Fake-IP DNS 返回 `198.18.*`，导入会按保留地址拒绝请求。可在受保护的 PAP 配置 `targets` 中为该 origin 显式登记已核实的公网 IP；导入检查和后续资源请求都会遵守此配置，不关闭内网保护。若同一配置仍有隔离栈 `caFile`，公网目标需设 `systemCa: true` 使用系统公开 CA；仍核验原 HTTPS 域名证书，IP 变化后需重新核实更新。本机已通过 Google 与 Cloudflare 公共 DNS 的 HTTPS 查询交叉核实商家 IP，并成功验证目标域名 TLS；没有改变系统代理/DNS。
+如果已批准访问的域名被本机代理解析为全量 `198.18.0.0/15` Fake-IP，插件会通过 `https://dns.google/resolve` 回查该域名的 A 记录。回查受 HTTPS 证书、超时和响应大小限制；仅使用名称匹配的 IPv4 答案，结果仍须全部通过公网地址检查，随后固定连接 IP 并核验原商家域名证书。直接填写保留 IP、真实内网地址、空答案或混合地址不会触发回查；公共 DNS 失败或返回内网地址仍拒绝请求。此流程不修改系统代理或 DNS，也不扩展已批准访问的域名白名单。受保护配置中的显式 `targets` 仍优先；若为核实后的公网地址配置目标且同时保留隔离栈 `caFile`，需设 `systemCa: true` 使用系统公开 CA，并在 IP 变化后重新核实更新。
 
 同一发现文档可以发布多个资源：咨询与 Commerce 分别添加，分别核验权限。配置的咨询 `allowed_client_ids` 只适用于该声明资源，不推导另一资源的授权。新资源在同 client/issuer 下使用同一稳定随机主体，但 Token、会话、DPoP 和业务流程按资源隔离。
 

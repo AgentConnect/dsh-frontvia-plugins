@@ -207,24 +207,27 @@ export const isPublicAddress = (address: string) =>
       public6.check(address, "ipv6") &&
       !reserved6.check(address, "ipv6");
 
-// Only the built-in Frontvia account host gets a fallback when a local proxy
-// synthesizes a benchmark-range address. Imported hostnames keep strict DNS checks.
+// publicTransport checks the approved origin before resolving it. A proxy's
+// all-Fake-IP answer can be replaced with public DNS; private/mixed answers and
+// literal IPs must retain the normal rejection path. TLS still binds the host.
 const frontviaAccountHost = "frontvia-shop.agent-connect.cn";
 export const frontviaAccountOrigin = "https://" + frontviaAccountHost;
 export async function resolvePublicHost(hostname: string, options: { all: true; verbatim: true }): Promise<LookupAddress[]> {
   const addresses = await lookup(hostname, options);
-  if (hostname !== frontviaAccountHost || !addresses.length ||
-      !addresses.every(a => /^198\.(18|19)\./.test(a.address))) return addresses;
+  if (isIP(hostname) || !addresses.length ||
+      !addresses.every(a => isIP(a.address) === 4 && /^198\.(18|19)\./.test(a.address))) return addresses;
   const resolver = await lookup("dns.google");
   const pools = new PinnedAgents();
   const dns = httpsTransport([{ origin: "https://dns.google", address: resolver.address, port: 443 }], undefined, pools);
   const reply = await dns({
-    url: "https://dns.google/resolve?name=" + hostname + "&type=A",
+    url: "https://dns.google/resolve?" + new URLSearchParams({ name: hostname, type: "A" }),
     method: "GET", timeoutMs: 4000, maxResponseBytes: 16384,
   }).finally(() => pools.close());
-  if (reply.Status !== 0 || !Array.isArray(reply.Answer)) return [];
-  return reply.Answer.filter((r: { name: string; type: number }) =>
-    r.type === 1 && r.name.replace(/\.$/, "") === hostname)
+  if (reply?.Status !== 0 || !Array.isArray(reply.Answer)) return [];
+  return reply.Answer.filter((r: { name?: string; type?: number; data?: string } | null) =>
+    r?.type === 1 && typeof r.name === "string" &&
+    r.name.replace(/\.$/, "") === hostname &&
+    typeof r.data === "string" && isIP(r.data) === 4)
     .map((r: { data: string }) => ({ address: r.data, family: 4 }));
 }
 
