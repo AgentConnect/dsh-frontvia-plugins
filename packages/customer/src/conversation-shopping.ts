@@ -48,10 +48,15 @@ export function shoppingView(value: any, site: any, now = Date.now()): any {
         money(line.line_total),
     ) ||
     q.shipping_address?.country !== "CN" ||
-    !["recipient", "phone", "region", "city", "line1"].every(
+    !["recipient", "phone", "line1"].every(
       (k) =>
         typeof q.shipping_address[k] === "string" &&
         q.shipping_address[k].trim(),
+    ) ||
+    !["region", "city", "line2", "postal_code"].every(
+      (k) =>
+        q.shipping_address[k] == null ||
+        typeof q.shipping_address[k] === "string",
     ) ||
     q.totals?.complete !== true ||
     !money(q.totals.grand_total) ||
