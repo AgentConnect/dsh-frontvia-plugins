@@ -16,6 +16,7 @@ import { schemas, tools } from "../src/tools.js";
 import { uiSchemas } from "../src/ui-contract.js";
 import { shoppingReference } from "../src/client/history.js";
 import { shoppingStep } from "../src/client/shopping-progress.js";
+import { isRequiredContact } from "../src/contact-fields.js";
 const copy = (v: any) => structuredClone(v);
 function fixture(cache = false, cny = false, language?: string) {
   const currency = cny ? "CNY" : "USD",
@@ -1533,6 +1534,131 @@ test("owner contact omits blank optional address values from actual Commerce wri
     }
   }
 });
+for (const optional of [undefined, "   "])
+  test(`CN full address reaches delivery and confirmation with ${optional === undefined ? "absent" : "blank"} city and region`, async () => {
+    const f = fixture(false, true);
+    try {
+      const flow = await f.flow();
+      await f.service.tool(
+        "session-a",
+        "frontvia_cart",
+        { flowId: flow, action: "add", variant_id: "variant", quantity: 1 },
+        "add",
+      );
+      const address = {
+        country: "CN",
+        recipient: "测试收件人",
+        phone: "13800138000",
+        line1: "浙江省杭州市测试路1号",
+        ...(optional === undefined
+          ? {}
+          : { city: optional, region: optional, postal_code: optional }),
+      };
+      const request = uiSchemas.contact.parse({
+        sessionId: "session-a",
+        flowId: flow,
+        expected_version: "v1",
+        patch: { shipping_address: address },
+        actionId: "00000000-0000-4000-8000-000000000001",
+      });
+      await f.service.contact(
+        "session-a",
+        flow,
+        request.expected_version,
+        request.patch,
+        request.actionId,
+      );
+      assert.equal(f.remote.cart.shipping_address.line1, address.line1);
+      for (const field of ["city", "region", "postal_code"]) {
+        assert.equal(
+          Object.hasOwn(f.remote.cart.shipping_address, field),
+          false,
+        );
+        assert.equal(isRequiredContact("CN", field), false);
+      }
+      f.restart();
+      const restored = await f.service.tool(
+        "session-a",
+        "frontvia_cart",
+        { flowId: flow, action: "get" },
+        "restored-address",
+      );
+      assert.equal(restored.contactReady, true);
+      assert.equal(JSON.stringify(restored).includes(address.phone), false);
+      await f.service.tool(
+        "session-a",
+        "frontvia_cart",
+        {
+          flowId: flow,
+          action: "delivery_select",
+          expected_version: "v2",
+          group_id: "group",
+          option_id: "standard",
+        },
+        "delivery",
+      );
+      await f.service.tool(
+        "session-a",
+        "frontvia_checkout",
+        { flowId: flow, action: "quote", expected_version: "v3" },
+        "quote",
+      );
+      await f.service.tool(
+        "session-a",
+        "frontvia_checkout",
+        { flowId: flow, action: "prepare" },
+        "checkout",
+      );
+      const view = await f.service.review("session-a", flow);
+      assert.equal(f.remote.confirms, 0);
+      await f.service.confirm("session-a", flow, view.intent!.id);
+      assert.equal(f.remote.confirms, 1);
+      assert.ok(
+        (await f.service.view("session-a", flow)).checkout?.paymentAction,
+      );
+    } finally {
+      f.close();
+    }
+  });
+
+test("US owner address still requires city and region before any Commerce write", async () => {
+  const f = fixture();
+  try {
+    const flow = await f.flow();
+    await f.service.tool(
+      "session-a",
+      "frontvia_cart",
+      { flowId: flow, action: "add", variant_id: "variant", quantity: 1 },
+      "add",
+    );
+    const before = f.remote.writes;
+    for (const field of ["city", "region"] as const) {
+      const address = {
+        country: "US",
+        recipient: "Recipient",
+        line1: "Street",
+        city: "City",
+        region: "CA",
+        postal_code: "94105",
+        [field]: "",
+      };
+      assert.equal(isRequiredContact("US", field), true);
+      await assert.rejects(
+        f.service.contact(
+          "session-a",
+          flow,
+          "v1",
+          { email: "owner@example.test", shipping_address: address },
+          "missing-" + field,
+        ),
+      );
+    }
+    assert.equal(f.remote.writes, before);
+  } finally {
+    f.close();
+  }
+});
+
 test("CNY delivery requires a phone and refuses a foreign-country patch without dispatch", async () => {
   const f = fixture(false, true);
   try {

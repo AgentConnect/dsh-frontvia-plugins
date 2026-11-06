@@ -2,6 +2,7 @@ import { useAccountRevision } from "./account.js";
 import { accountRequest } from "./account-request.js";
 import { ServicePage } from "./service-page.js";
 import { shoppingStep } from "./shopping-progress.js";
+import { isRequiredContact as contactFieldRequired } from "../contact-fields.js";
 import React, { useEffect, useId, useState } from "react";
 import {
   ArrowRight,
@@ -363,21 +364,22 @@ export function apply(ctx: any) {
       [fieldErrors, setFieldErrors] = useState<Partial<Contact>>({});
     const formId = useId();
     const isRequiredContact = (key: keyof Contact) =>
-      !(
-        (data?.pricing?.country === "CN" &&
-          (key === "email" || key === "postal_code")) ||
-        (data?.pricing?.country === "US" && key === "phone")
-      );
+      contactFieldRequired(data?.pricing?.country, key);
     const contactFields = baseContactFields.map((field) => {
       const local =
         data?.pricing?.country === "CN"
-          ? field.key === "region"
-            ? { label: "省 / 自治区 / 直辖市", placeholder: "例如 浙江省" }
-            : field.key === "city"
-              ? { placeholder: "例如 杭州市" }
-              : field.key === "postal_code"
-                ? { placeholder: "例如 310000" }
-                : {}
+          ? field.key === "line1"
+            ? {
+                label: "完整收货地址",
+                placeholder: "填写省、市、区及街道门牌号",
+              }
+            : field.key === "region"
+              ? { label: "省 / 自治区 / 直辖市", placeholder: "例如 浙江省" }
+              : field.key === "city"
+                ? { placeholder: "例如 杭州市" }
+                : field.key === "postal_code"
+                  ? { placeholder: "例如 310000" }
+                  : {}
           : {};
       return {
         ...field,
@@ -457,7 +459,7 @@ export function apply(ctx: any) {
       ({ key }) => form[key] !== contactFrom(data)[key],
     );
     const contactReady = contactFields.every(
-      ({ key }) => !isRequiredContact(key) || !!contactFrom(data)[key],
+      ({ key }) => !isRequiredContact(key) || !!contactFrom(data)[key].trim(),
     );
     const locked = !!data?.intent?.submitted || !!data?.order;
     const saveContact = async (e: React.FormEvent<HTMLFormElement>) => {

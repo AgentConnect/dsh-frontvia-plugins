@@ -9,6 +9,7 @@ import {
 } from "dsh-pap/core";
 import { ReadCache, SharedReads } from "./read-cache.js";
 import { z } from "zod";
+import { isRequiredContact } from "./contact-fields.js";
 import { ConsultationService, consultationSite } from "./consultation.js";
 export type CustomerConfig = {
   dataDir: string;
@@ -105,8 +106,8 @@ const address = z
     recipient: z.string().min(1).max(200),
     line1: z.string().min(1).max(300),
     line2: z.string().max(300).optional(),
-    city: z.string().min(1).max(100),
-    region: z.string().min(1).max(100),
+    city: z.string().trim().max(100).optional(),
+    region: z.string().trim().max(100).optional(),
     postal_code: z.string().trim().max(40).optional(),
     phone: z.string().trim().max(40).optional(),
   })
@@ -122,8 +123,17 @@ export const contactSchema = z
         path: ["shipping_address", "phone"],
         message: "有效收货电话必填",
       });
-    if (a.country === "US" && (!v.email || !a.postal_code))
-      ctx.addIssue({ code: "custom", message: "美国地址需要邮箱和邮编" });
+    for (const field of ["city", "region", "postal_code", "email"] as const) {
+      if (
+        isRequiredContact(a.country, field) &&
+        !(field === "email" ? v.email : a[field])
+      )
+        ctx.addIssue({
+          code: "custom",
+          path: field === "email" ? [field] : ["shipping_address", field],
+          message: "美国地址需要城市、州、邮箱和邮编",
+        });
+    }
   });
 const privateKeys = new Set([
   "email",
@@ -991,8 +1001,8 @@ export class CustomerService {
     this.views.clear();
     const contact = contactSchema.parse(patch);
     // Empty optional form fields are absent on the Commerce wire, which rejects
-    // supplied empty phone/postal values. Country-required fields were checked above.
-    for (const key of ["postal_code", "phone"] as const) {
+    // supplied empty address values. Country-required fields were checked above.
+    for (const key of ["city", "region", "postal_code", "phone"] as const) {
       if (!contact.shipping_address[key]) delete contact.shipping_address[key];
     }
     return this.serial.run(flowId, async () => {
