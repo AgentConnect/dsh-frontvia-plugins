@@ -87,7 +87,41 @@ const methods = (values: unknown[]) =>
       ),
     ),
   ].slice(0, 150);
+/** Frontvia's single-service link format; not a PAP authorization grant. */
+export function parseServiceLink(input: string) {
+  if (input.length > 8192) fail("INVALID_SERVICE_LINK");
+  let url: URL;
+  try { url = new URL(input.trim()); } catch { return fail("INVALID_SERVICE_LINK"); }
+  const selector = new URLSearchParams(url.hash.slice(1));
+  if (url.pathname !== "/.well-known/poppy.json" || url.search ||
+      [...selector.keys()].length !== 1 || !selector.has("resource"))
+    fail("INVALID_SERVICE_LINK");
+  const resource = httpsUrl.parse(selector.get("resource"));
+  if (new URL(resource).search) fail("INVALID_SERVICE_LINK");
+  url.hash = "";
+  return { discoveryUrl: httpsUrl.parse(url.href), resource };
+}
+
 export async function inspectImport(input: unknown, wire: Transport) {
+  const link = typeof input === "string" ? parseServiceLink(input) : null;
+  let discovery: any;
+  if (link) {
+    discovery = await wire({ url: link.discoveryUrl, method: "GET" });
+    if (discovery.protocol_version !== "0.2" ||
+        !httpsUrl.safeParse(discovery.auth?.issuer).success || !Array.isArray(discovery.apis))
+      fail("DISCOVERY_MISMATCH");
+    const advertised = discovery.apis.filter((api: any) => api?.type === "openapi" && api.resource === link.resource);
+    if (advertised.length !== 1) fail("DISCOVERY_MISMATCH");
+    input = {
+      discovery_url: link.discoveryUrl,
+      profile: "frontvia.merchant_consultation.v1",
+      sites: [{
+        id: `resource-${createHash("sha256").update(discovery.auth.issuer + "\0" + link.resource).digest("hex").slice(0, 20)}`,
+        label: "商家咨询", domain: new URL(link.discoveryUrl).host,
+        issuer: discovery.auth.issuer, resource: link.resource,
+      }],
+    };
+  }
   const config = importSchema.parse(input),
     source = new URL(config.discovery_url),
     first = config.sites[0];
@@ -104,7 +138,7 @@ export async function inspectImport(input: unknown, wire: Transport) {
       !config.sites.some((s) => s.resource === config.authorization!.resource))
   )
     fail("IMPORT_BINDING_MISMATCH");
-  const doc = await wire({ url: config.discovery_url, method: "GET" });
+  const doc = discovery ?? await wire({ url: config.discovery_url, method: "GET" });
   if (
     doc.protocol_version !== "0.2" ||
     doc.auth?.issuer !== first.issuer ||
@@ -127,6 +161,7 @@ export async function inspectImport(input: unknown, wire: Transport) {
   const apis = doc.apis.filter(
     (api: any) =>
       api?.type === "openapi" &&
+      (!link || api.resource === link.resource) &&
       httpsUrl.safeParse(api.resource).success &&
       httpsUrl.safeParse(api.url).success &&
       resourceOrigins.has(new URL(api.resource).origin) &&
@@ -176,6 +211,8 @@ export async function inspectImport(input: unknown, wire: Transport) {
       config.profile !== profile
     )
       fail("IMPORT_BINDING_MISMATCH");
+    if (link && profile !== "frontvia.merchant_consultation.v1")
+      fail("INVALID_SERVICE_CONTRACT");
     result.push({
       id:
         declared?.id ??
@@ -184,7 +221,7 @@ export async function inspectImport(input: unknown, wire: Transport) {
           .digest("hex")
           .slice(0, 20)}`,
       label:
-        declared?.label ??
+        (link ? String(openapi.info?.title ?? "商家咨询").slice(0, 200) : declared?.label) ??
         String(openapi.info?.title ?? "商家服务").slice(0, 200),
       domain: first.domain,
       issuer: first.issuer,

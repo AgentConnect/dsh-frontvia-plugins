@@ -797,3 +797,129 @@ test("deletion drains in-flight requests and connections before disabling subseq
     }
   }
 });
+
+for (const resourceOrigin of [origin, "https://store.test"]) {
+  test(`single-service link imports only its consultation and survives restart: ${resourceOrigin}`, async () => {
+    const f = fixture(resourceOrigin);
+    try {
+      const resource = f.exported.sites[0].resource;
+      const link = f.exported.discovery_url + "#" + new URLSearchParams({resource});
+      f.record.apis.unshift(...Array.from({length:25}, (_,i)=>({type:"openapi",resource:`${resourceOrigin}/other-${i}/rpc`,url:`${resourceOrigin}/other-${i}/openapi.json`})));
+      const preview = await f.service.inspect(link);
+      assert.deepEqual(preview.sites.map(s=>s.resource), [resource]);
+      assert.deepEqual(f.record.calls.map(r=>r.url), [f.exported.discovery_url,f.exported.openapi_url]);
+      assert(f.record.calls.every(r=>r.method==="GET"&&!r.headers?.authorization&&!r.body));
+      assert.equal(f.service.sites().length,0);
+      await f.service.importResources(preview.previewId,[resource]);
+      const site = f.service.sites()[0];
+      const connection = await f.service.connect(site.id);
+      await f.service.request(connection.connectionRef,"consultation.capabilities.get",{});
+      f.restart();
+      assert.equal(f.service.sites()[0].id,site.id);
+      assert.equal(f.service.sites().length,1);
+      await f.service.request(connection.connectionRef,"consultation.messages.submit",{});
+    } finally { f.close(); }
+  });
+}
+
+test("link import reuses the prior JSON binding and does not replace client identity", async () => {
+  const f=fixture();
+  try {
+    const resource=f.exported.sites[0].resource;
+    const json=await f.service.inspect(f.exported);
+    await f.service.importResources(json.previewId,[resource]);
+    const connection=await f.service.connect('consult');
+    const identity=f.service.identity(connection.connectionRef);
+    const preview=await f.service.inspect(f.exported.discovery_url+'#'+new URLSearchParams({resource}));
+    assert.equal(preview.sites[0].id,'consult');
+    await f.service.importResources(preview.previewId,[resource]);
+    assert.equal(f.service.sites().length,1);
+    assert.deepEqual(f.service.identity(connection.connectionRef),identity);
+    assert.equal(f.service.sites()[0].service?.store_id,'a1');
+  } finally { f.close(); }
+});
+
+test("link rejects absent, duplicated or substituted resources without fetching their contracts",async()=>{
+  for(const mode of ['missing','duplicate','foreign'] as const){
+    const f=fixture();
+    try{
+      const resource=mode==='foreign'?'https://other.test/consultation/rpc':f.exported.sites[0].resource;
+      if(mode==='missing')f.record.apis=[];
+      if(mode==='duplicate')f.record.apis.push(f.record.apis[0]);
+      await assert.rejects(f.service.inspect(f.exported.discovery_url+'#'+new URLSearchParams({resource})),/DISCOVERY_MISMATCH/);
+      assert.deepEqual(f.record.calls.map(r=>r.url),[f.exported.discovery_url]);
+      assert.equal(f.service.sites().length,0);
+    }finally{f.close();}
+  }
+});
+
+test("malformed or credential-bearing links are rejected before network I/O",async()=>{
+  const f=fixture();
+  try{
+    const resource=f.exported.sites[0].resource,hash='#'+new URLSearchParams({resource});
+    for(const link of [
+      f.exported.discovery_url,
+      f.exported.discovery_url+hash+'&resource='+encodeURIComponent(resource),
+      f.exported.discovery_url+hash+'&token=secret',
+      f.exported.discovery_url.replace('https:','http:')+hash,
+      f.exported.discovery_url.replace('https://','https://user:secret@')+hash,
+      f.exported.discovery_url+'?token=secret'+hash,
+      origin+'/other.json'+hash,
+      f.exported.discovery_url+'#'+new URLSearchParams({resource:'http://store.test/rpc'}),
+    ])await assert.rejects(f.service.inspect(link));
+    assert.equal(f.record.calls.length,0);
+  }finally{f.close();}
+});
+
+test("consultation link cannot silently become a Commerce connection",async()=>{
+  const f=fixture();
+  try{
+    const resource=origin+'/commerce/rpc';
+    await assert.rejects(f.service.inspect(f.exported.discovery_url+'#'+new URLSearchParams({resource})),/INVALID_SERVICE_CONTRACT|IMPORT_BINDING_MISMATCH/);
+    assert.equal(f.service.sites().length,0);
+  }finally{f.close();}
+});
+
+for (const firstFormat of ['link', 'json'] as const) {
+  for (const overlappingPreviews of [false, true]) {
+    test(`mixed imports retain one connection: ${firstFormat} first, overlapping=${overlappingPreviews}`, async () => {
+      const f = fixture();
+      try {
+        const resource = f.exported.sites[0].resource;
+        const link = f.exported.discovery_url + '#' + new URLSearchParams({resource});
+        const inputs = firstFormat === 'link' ? [link, f.exported] : [f.exported, link];
+        const first = await f.service.inspect(inputs[0]);
+        let second = overlappingPreviews ? await f.service.inspect(inputs[1]) : undefined;
+        await f.service.importResources(first.previewId, [resource]);
+        const original = f.service.sites()[0]!;
+        const connection = await f.service.connect(original.id);
+        const identity = f.service.identity(connection.connectionRef);
+        second ??= await f.service.inspect(inputs[1]);
+        await f.service.importResources(second.previewId, [resource]);
+        assert.equal(f.service.sites().length, 1);
+        assert.equal(f.service.sites()[0]!.id, original.id);
+        assert.equal(f.service.sites()[0]!.service?.store_id, 'a1');
+        assert.equal((await f.service.connect(original.id)).connectionRef, connection.connectionRef);
+        assert.deepEqual(f.service.identity(connection.connectionRef), identity);
+        f.restart();
+        assert.equal(f.service.sites().length, 1);
+        await f.service.request(connection.connectionRef, 'consultation.messages.submit', {});
+      } finally { f.close(); }
+    });
+  }
+}
+
+test('stale link preview keeps metadata from a newer JSON import', async () => {
+  const f = fixture();
+  try {
+    const resource = f.exported.sites[0].resource;
+    const initial = await f.service.inspect(f.exported);
+    await f.service.importResources(initial.previewId, [resource]);
+    const stale = await f.service.inspect(f.exported.discovery_url + '#' + new URLSearchParams({resource}));
+    const latest = await f.service.inspect({...f.exported, service: {...f.exported.service, publication_revision: 8}});
+    await f.service.importResources(latest.previewId, [resource]);
+    await f.service.importResources(stale.previewId, [resource]);
+    assert.equal(f.service.sites().length, 1);
+    assert.equal(f.service.sites()[0]!.service?.publication_revision, 8);
+  } finally { f.close(); }
+});

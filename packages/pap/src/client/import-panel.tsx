@@ -45,11 +45,12 @@ export function ImportPanel({
     setPreview(undefined);
     try {
       if (text.length > 64000) throw new Error("INVALID_CONNECTION_CONFIG");
-      const result = await call("inspect", { configuration: JSON.parse(text) });
+      const result = await call("inspect", { configuration: text.trim().startsWith("{") ? JSON.parse(text) : text.trim() });
       setPreview(result);
       setSelected(result.sites.map((s: any) => s.resource));
     } catch (e: any) {
       const messages: Record<string, string> = {
+        INVALID_SERVICE_LINK: "链接不完整，请复制商家提供的完整 PAP 服务链接。",
         IMPORT_BINDING_MISMATCH:
           "配置与商家发布的地址不一致，请重新导出连接配置。",
         DISCOVERY_MISMATCH: "商家发现信息与配置不一致。",
@@ -105,7 +106,7 @@ export function ImportPanel({
       <header className="pap-import-header">
         <div>
           <h3>添加商家</h3>
-          <p>粘贴商家提供的配置，连接你需要的服务。</p>
+          <p>粘贴商家提供的 PAP 链接，检查后添加服务。</p>
         </div>
         <Button
           variant="ghost"
@@ -119,7 +120,7 @@ export function ImportPanel({
       </header>
       <ol className="pap-import-steps" aria-label="添加步骤">
         <li data-active={!preview} aria-current={!preview ? "step" : undefined}>
-          <span>{preview ? <Check aria-hidden /> : "1"}</span>粘贴配置
+          <span>{preview ? <Check aria-hidden /> : "1"}</span>粘贴链接
         </li>
         <li className="pap-step-line" aria-hidden />
         <li data-active={!!preview} aria-current={preview ? "step" : undefined}>
@@ -129,7 +130,7 @@ export function ImportPanel({
       {!preview ? (
         <form onSubmit={inspect}>
           <Field>
-            <FieldLabel htmlFor={id}>商家连接 JSON</FieldLabel>
+            <FieldLabel htmlFor={id}>PAP 服务链接或 JSON</FieldLabel>
             <textarea
               ref={input}
               id={id}
@@ -140,7 +141,7 @@ export function ImportPanel({
                 setError("");
               }}
               placeholder={
-                '{\n  "discovery_url": "https://…",\n  "sites": […]\n}'
+                'https://…/.well-known/poppy.json#resource=…'
               }
               spellCheck={false}
               autoComplete="off"
@@ -150,7 +151,7 @@ export function ImportPanel({
               aria-describedby={error ? `${id}-error` : `${id}-hint`}
             />
             <p id={`${id}-hint`} className="pap-field-help">
-              粘贴商家导出的完整配置，不需要填写密钥或令牌。
+              支持一条 PAP 服务链接，也兼容原来的完整 JSON 配置。无需填写密钥或令牌。
             </p>
           </Field>
           {error && (
