@@ -20,6 +20,7 @@ import {
 } from "./network.js";
 import {
   inspectImport,
+  parseServiceLink,
   importSchema,
   type ImportedSite,
   type ResourceDescription,
@@ -341,14 +342,15 @@ export class PapService {
   }
   /** Owner UI only. Discovery is not authentication or business authorization. */
   async inspect(input: unknown) {
-    const config = importSchema.parse(input),
-      origins = [
-        new URL(config.discovery_url).origin,
-        ...config.sites.map((s) => new URL(s.issuer).origin),
-        ...config.sites.map((s) => new URL(s.resource).origin),
+    const link = typeof input === "string" ? parseServiceLink(input) : null;
+    const config = link ? null : importSchema.parse(input),
+      origins = link ? [new URL(link.discoveryUrl).origin, new URL(link.resource).origin] : [
+        new URL(config!.discovery_url).origin,
+        ...config!.sites.map((s) => new URL(s.issuer).origin),
+        ...config!.sites.map((s) => new URL(s.resource).origin),
       ];
     const sites = await inspectImport(
-      config,
+      link ? input : config,
       this.inspectionWire ??
         ((request) =>
           this.config.targets.some(
@@ -357,6 +359,12 @@ export class PapService {
             ? httpsTransport(this.config.targets, this.config.caFile)(request)
             : publicTransport(origins)(request)),
     );
+    // Importing a link for a previously configured binding must retain its
+    // local ID, sessions and account association rather than create a duplicate.
+    if (link) for (const site of sites) {
+      const prior = this.configuredSites().find(s => s.imported && s.domain === site.domain && s.issuer === site.issuer && s.resource === site.resource);
+      if (prior) { site.id = prior.id; site.service = prior.service; }
+    }
     const previewId = randomUUID();
     for (const [key, p] of this.previews)
       if (p.expires < Date.now()) this.previews.delete(key);
