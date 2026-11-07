@@ -5,6 +5,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
   randomBytes,
+  randomUUID,
   createHmac,
   generateKeyPairSync,
   createPublicKey,
@@ -44,6 +45,7 @@ function fixture(cache = false, cny = false, language?: string) {
     writes: 0,
     confirms: 0,
     lose: "",
+    fail: "",
     price: "1234",
     purchase: true,
     generation: "one",
@@ -222,6 +224,13 @@ function fixture(cache = false, cny = false, language?: string) {
         });
       const k = p.meta?.idempotency_key ?? p.idempotency_key;
       if (remote.ops.has(k)) return response(remote.ops.get(k));
+      if (remote.fail === m) {
+        const data = {
+          operation: { id: "failed-op", status: "failed", effects: "none" },
+        };
+        remote.ops.set(k, data);
+        return response(data);
+      }
       let resource: any;
       if (m === "commerce.carts.create")
         remote.cart = {
@@ -2194,6 +2203,283 @@ test("payment winning at the server cancel boundary preserves the paid order and
     assert.equal(view.pending, false);
     assert.equal(view.canCancelOrder, false);
     assert.equal(view.paymentQr, undefined);
+  } finally {
+    f.close();
+  }
+});
+
+test("manual service-page shopping browses, selects, adds and quotes without a model or purchase confirmation", async () => {
+  const f = fixture(false, true);
+  try {
+    const flow = await f.flow();
+    const act = (
+      intent: any,
+      expected_version?: string,
+      actionId = randomUUID(),
+    ) =>
+      f.service.shopping("session-a", flow, {
+        intent,
+        expected_version,
+        actionId,
+      });
+    let view = await act({ action: "browse" });
+    assert.equal(view.products.items[0].title, "Test Mug");
+    view = await act({
+      action: "variants",
+      productId: "prod",
+      productName: "Test Mug",
+    });
+    assert.equal(view.variants.items[0].id, "variant");
+    const add = {
+      action: "add",
+      variantId: "variant",
+      productName: "Test Mug",
+      variantName: "Blue",
+      quantity: 1,
+    };
+    const actionId = randomUUID();
+    view = await act(add, undefined, actionId);
+    assert.equal(view.cart.version, "v1");
+    f.restart();
+    await act(add, undefined, actionId);
+    assert.equal(
+      f.remote.calls.filter((m) => m === "commerce.carts.create").length,
+      1,
+    );
+    view = await f.service.contact(
+      "session-a",
+      flow,
+      "v1",
+      {
+        shipping_address: {
+          country: "CN",
+          phone: "13800138000",
+          recipient: "测试收件人",
+          line1: "浙江省杭州市测试路1号",
+        },
+      },
+      randomUUID(),
+    );
+    view = await act({ action: "delivery-options" });
+    assert.equal(view.delivery.delivery_groups[0].options[0].id, "standard");
+    view = await act(
+      {
+        action: "delivery",
+        groupId: "group",
+        optionId: "standard",
+        optionName: "Standard",
+      },
+      view.cart.version,
+    );
+    assert.equal(view.quote.cart_version, view.cart.version);
+    assert.equal(view.checkout.status, "requires_action");
+    assert.equal(view.intent, undefined);
+    assert.equal(f.remote.confirms, 0);
+    assert.equal(f.remote.paymentCalls, 0);
+    // A page reload reads the same durable flow, ready for explicit owner review.
+    f.restart();
+    const restored = await f.service.view("session-a", flow);
+    assert.equal(restored.checkout.id, view.checkout.id);
+    view = await act({ action: "requote" }, restored.cart.version);
+    assert.equal(view.checkout.status, "requires_action");
+    assert.equal(f.remote.confirms, 0);
+  } finally {
+    f.close();
+  }
+});
+
+test("manual actions reject stale carts, another session and unapproved purchase actions", async () => {
+  const f = fixture();
+  try {
+    const flow = await f.flow();
+    const intent = {
+      action: "add" as const,
+      variantId: "variant",
+      productName: "Mug",
+      variantName: "Blue",
+      quantity: 1 as const,
+    };
+    await f.service.shopping("session-a", flow, {
+      intent,
+      actionId: randomUUID(),
+    });
+    const writes = f.remote.writes;
+    await assert.rejects(
+      f.service.shopping("session-a", flow, {
+        intent,
+        expected_version: "stale",
+        actionId: randomUUID(),
+      }),
+      { code: "CART_VERSION_CHANGED" },
+    );
+    await assert.rejects(
+      f.service.shopping("other-session", flow, {
+        intent,
+        expected_version: "v1",
+        actionId: randomUUID(),
+      }),
+      { code: "FLOW_NOT_OWNED" },
+    );
+    for (const action of ["confirm", "payment-start", "order-cancel"]) {
+      assert.equal(
+        uiSchemas.shopping.safeParse({
+          sessionId: "session-a",
+          flowId: flow,
+          intent: { action },
+          actionId: randomUUID(),
+        }).success,
+        false,
+      );
+    }
+    assert.equal(
+      uiSchemas.shopping.safeParse({
+        sessionId: "session-a",
+        flowId: flow,
+        intent,
+        actionId: randomUUID(),
+        amount: "0.01",
+      }).success,
+      false,
+    );
+    assert.equal(f.remote.writes, writes);
+  } finally {
+    f.close();
+  }
+});
+
+test("lost manual delivery receipt stops before quoting and recovers the original operation after restart", async () => {
+  const f = fixture();
+  try {
+    const flow = await f.flow();
+    await f.service.shopping("session-a", flow, {
+      intent: {
+        action: "add",
+        variantId: "variant",
+        productName: "Mug",
+        variantName: "Blue",
+        quantity: 1,
+      },
+      actionId: randomUUID(),
+    });
+    f.remote.lose = "commerce.carts.delivery_option.select";
+    const action = {
+      intent: {
+        action: "delivery" as const,
+        groupId: "group",
+        optionId: "standard",
+        optionName: "Standard",
+      },
+      expected_version: "v1",
+      actionId: randomUUID(),
+    };
+    await assert.rejects(f.service.shopping("session-a", flow, action), {
+      code: "NETWORK_UNCERTAIN",
+    });
+    assert.equal(f.remote.calls.includes("commerce.quotes.create"), false);
+    assert.equal((await f.service.view("session-a", flow)).pending, true);
+    f.restart();
+    await f.service.tool(
+      "session-a",
+      "frontvia_orders",
+      { flowId: flow, action: "recover" },
+      "manual-recover",
+    );
+    const recovered = await f.service.view("session-a", flow);
+    assert.equal(recovered.pending, false);
+    assert.equal(recovered.cart.version, "v2");
+    assert.equal(recovered.quote, undefined);
+    assert.equal(
+      f.remote.calls.filter(
+        (m) => m === "commerce.carts.delivery_option.select",
+      ).length,
+      1,
+    );
+    assert.equal(f.remote.confirms, 0);
+  } finally {
+    f.close();
+  }
+});
+
+test("simultaneous manual additions use the displayed version and only one changes the cart", async () => {
+  const f = fixture();
+  try {
+    const flow = await f.flow();
+    const intent = {
+      action: "add" as const,
+      variantId: "variant",
+      productName: "Mug",
+      variantName: "Blue",
+      quantity: 1 as const,
+    };
+    await f.service.shopping("session-a", flow, {
+      intent,
+      actionId: randomUUID(),
+    });
+    const results = await Promise.allSettled(
+      [1, 2].map(() =>
+        f.service.shopping("session-a", flow, {
+          intent,
+          expected_version: "v1",
+          actionId: randomUUID(),
+        }),
+      ),
+    );
+    assert.equal(results.filter((r) => r.status === "fulfilled").length, 1);
+    assert.equal(
+      results.filter(
+        (r) =>
+          r.status === "rejected" && r.reason.code === "CART_VERSION_CHANGED",
+      ).length,
+      1,
+    );
+    assert.equal(
+      f.remote.calls.filter((m) => m === "commerce.carts.lines.add").length,
+      1,
+    );
+  } finally {
+    f.close();
+  }
+});
+
+test("failed manual delivery and its duplicate do not quote an unselected delivery option", async () => {
+  const f = fixture();
+  try {
+    const flow = await f.flow();
+    await f.service.shopping("session-a", flow, {
+      intent: {
+        action: "add",
+        variantId: "variant",
+        productName: "Mug",
+        variantName: "Blue",
+        quantity: 1,
+      },
+      actionId: randomUUID(),
+    });
+    f.remote.fail = "commerce.carts.delivery_option.select";
+    const request = {
+      intent: {
+        action: "delivery" as const,
+        groupId: "group",
+        optionId: "standard",
+        optionName: "Standard",
+      },
+      expected_version: "v1",
+      actionId: randomUUID(),
+    };
+    for (let attempt = 0; attempt < 2; attempt++) {
+      await assert.rejects(f.service.shopping("session-a", flow, request), {
+        code: "OPERATION_NOT_COMPLETED",
+      });
+      f.restart();
+    }
+    assert.equal(f.remote.calls.includes("commerce.quotes.create"), false);
+    assert.equal(
+      f.remote.calls.filter(
+        (m) => m === "commerce.carts.delivery_option.select",
+      ).length,
+      1,
+    );
+    assert.equal(f.remote.confirms, 0);
   } finally {
     f.close();
   }

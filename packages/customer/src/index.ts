@@ -96,6 +96,17 @@ export async function apply(
               value = service.consultation.owns(a.flowId)
                 ? await service.consultation.view(a.sessionId, a.flowId)
                 : await service.view(a.sessionId, a.flowId);
+            if (operation === "shopping")
+              value = await service.shopping(
+                a.sessionId,
+                a.flowId,
+                {
+                  intent: a.intent,
+                  expected_version: a.expected_version,
+                  actionId: a.actionId,
+                },
+                request.signal,
+              );
             if (operation === "original")
               value = await service.consultation.original(
                 a.sessionId,

@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { shoppingActionSchema } from "./shopping-action.js";
 import { contactSchema } from "./core.js";
 const ref = z.string().min(1).max(200);
 const common = {
@@ -20,6 +21,7 @@ export const uiSchemas = {
   "personal-logout": z.object({}).strict(),
   list: z.object({}).strict(),
   view: z.object(common).strict(),
+  shopping: shoppingActionSchema.extend(common).strict(),
   review: z.object(common).strict(),
   "order-cancel": z.object(common).strict(),
   "payment-start": z.object(common).strict(),

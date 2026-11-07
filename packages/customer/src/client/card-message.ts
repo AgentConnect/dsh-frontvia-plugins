@@ -1,42 +1,11 @@
 import { z } from "zod";
 
-const id = z
-  .string()
-  .min(1)
-  .max(128)
-  .regex(/^[A-Za-z0-9][A-Za-z0-9._:-]*$/);
-const label = z.string().max(500);
-const intentSchema = z.discriminatedUnion("action", [
-  z
-    .object({
-      action: z.literal("variants"),
-      productId: id,
-      productName: label,
-    })
-    .strict(),
-  z
-    .object({
-      action: z.literal("add"),
-      variantId: id,
-      productName: label,
-      variantName: label,
-      quantity: z.literal(1),
-    })
-    .strict(),
-  z
-    .object({
-      action: z.literal("delivery"),
-      groupId: id,
-      optionId: id,
-      optionName: label,
-    })
-    .strict(),
-  z.object({ action: z.literal("delivery-options") }).strict(),
-  z.object({ action: z.literal("requote") }).strict(),
-  z.object({ action: z.literal("prepare") }).strict(),
-]);
+import {
+  cardIntentSchema as intentSchema,
+  type CardIntent,
+} from "../shopping-action.js";
+export type { CardIntent } from "../shopping-action.js";
 const envelope = z.object({ flowId: z.uuid(), intent: intentSchema }).strict();
-export type CardIntent = z.infer<typeof intentSchema>;
 const prefix = "[Frontvia 卡片请求 v1]\n";
 const clean = (name: string, fallback: string) =>
   name.replace(/\s+/g, " ").trim() || fallback;

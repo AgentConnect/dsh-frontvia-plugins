@@ -9,6 +9,10 @@ import {
 } from "dsh-pap/core";
 import { ReadCache, SharedReads } from "./read-cache.js";
 import { z } from "zod";
+import {
+  shoppingActionSchema,
+  type ShoppingAction,
+} from "./shopping-action.js";
 import { isRequiredContact } from "./contact-fields.js";
 import { ConsultationService, consultationSite } from "./consultation.js";
 export type CustomerConfig = {
@@ -591,278 +595,384 @@ export class CustomerService {
       };
     }
     const flowId = id.parse(args.flowId);
-    return this.serial.run(flowId, async () => {
-      const f = this.flow(sessionId, flowId);
-      this.policy(f);
-      // Every write rechecks in write(); recovery may dispatch the original
-      // command directly, so it also requires fresh discovery here.
-      await this.currentCapabilities(
-        f,
-        name === "frontvia_orders" && args.action === "recover",
-      );
-      const invocationKey = digest(callId),
-        inputHash = digest([name, args]);
-      f.invocations ??= {};
-      if (
-        f.invocations[invocationKey] &&
-        f.invocations[invocationKey] !== inputHash
-      )
-        fail("IDEMPOTENCY_CONFLICT");
-      f.invocations[invocationKey] = inputHash;
-      this.save(f);
-      const original = Object.values(f.commands).find(
-        (c) => c.key === digest([f.id, callId, c.method]),
-      );
-      if (original) {
-        if (original.status === "done")
-          return this.result(f, "cart", original.result);
-        return this.result(f, "order", await this.recover(f));
-      }
-      let data: any;
-      let card = "cart";
-      if (name === "frontvia_products") {
-        card = "products";
-        if (args.action === "browse" || args.action === "search") {
-          const query =
-            args.action === "search" ? args.query?.trim() : undefined;
-          data = await this.read(
-            f,
-            "products.search",
-            {
-              context: pricing(f),
-              ...(query ? { query } : {}),
-              page: {
-                limit: 8,
-                ...(args.cursor ? { cursor: args.cursor } : {}),
-              },
+    return this.serial.run(flowId, () =>
+      this.shoppingTool(sessionId, flowId, name, args, callId, signal),
+    );
+  }
+  // Caller holds the flow lease, including all steps of a manual UI action.
+  private async shoppingTool(
+    sessionId: string,
+    flowId: string,
+    name: string,
+    args: any,
+    callId: string,
+    signal?: AbortSignal,
+  ) {
+    const f = this.flow(sessionId, flowId);
+    this.policy(f);
+    // Every write rechecks in write(); recovery may dispatch the original
+    // command directly, so it also requires fresh discovery here.
+    await this.currentCapabilities(
+      f,
+      name === "frontvia_orders" && args.action === "recover",
+    );
+    const invocationKey = digest(callId),
+      inputHash = digest([name, args]);
+    f.invocations ??= {};
+    if (
+      f.invocations[invocationKey] &&
+      f.invocations[invocationKey] !== inputHash
+    )
+      fail("IDEMPOTENCY_CONFLICT");
+    f.invocations[invocationKey] = inputHash;
+    this.save(f);
+    const original = Object.values(f.commands).find(
+      (c) => c.key === digest([f.id, callId, c.method]),
+    );
+    if (original) {
+      if (original.status === "done")
+        return this.result(f, "cart", original.result);
+      return this.result(f, "order", await this.recover(f));
+    }
+    let data: any;
+    let card = "cart";
+    if (name === "frontvia_products") {
+      card = "products";
+      if (args.action === "browse" || args.action === "search") {
+        const query = args.action === "search" ? args.query?.trim() : undefined;
+        data = await this.read(
+          f,
+          "products.search",
+          {
+            context: pricing(f),
+            ...(query ? { query } : {}),
+            page: {
+              limit: 8,
+              ...(args.cursor ? { cursor: args.cursor } : {}),
             },
-            signal,
-          );
-          f.products = data;
-          delete f.variants;
-          delete f.variantProductId;
-        } else if (args.action === "get") {
-          data = await this.read(
-            f,
-            "products.get",
-            { product_id: id.parse(args.product_id), context: pricing(f) },
-            signal,
-          );
-          f.products = { items: [data] };
-          delete f.variants;
-          delete f.variantProductId;
-        } else if (args.action === "variants") {
-          data = await this.read(
-            f,
-            "variants.list",
-            {
-              product_id: id.parse(args.product_id),
-              context: pricing(f),
-              page: {
-                limit: 20,
-                ...(args.cursor ? { cursor: args.cursor } : {}),
-              },
+          },
+          signal,
+        );
+        f.products = data;
+        delete f.variants;
+        delete f.variantProductId;
+      } else if (args.action === "get") {
+        data = await this.read(
+          f,
+          "products.get",
+          { product_id: id.parse(args.product_id), context: pricing(f) },
+          signal,
+        );
+        f.products = { items: [data] };
+        delete f.variants;
+        delete f.variantProductId;
+      } else if (args.action === "variants") {
+        data = await this.read(
+          f,
+          "variants.list",
+          {
+            product_id: id.parse(args.product_id),
+            context: pricing(f),
+            page: {
+              limit: 20,
+              ...(args.cursor ? { cursor: args.cursor } : {}),
             },
-            signal,
-          );
-          f.variants = data;
-          f.variantProductId = args.product_id;
-        } else fail("INVALID_ACTION");
-      } else if (name === "frontvia_cart") {
-        if (args.action === "get") {
-          data = f.cart
-            ? await this.read(f, "carts.get", { cart_id: f.cart.id }, signal)
-            : { cart: null };
-          if (data.id) f.cart = data;
-        } else if (args.action === "delivery_options") {
-          if (!f.cart) fail("CART_REQUIRED");
-          data = await this.read(
-            f,
-            "carts.delivery_options.list",
-            { cart_id: f.cart.id },
-            signal,
-          );
-          f.delivery = data;
-        } else {
-          let method: string;
-          let params: any;
-          if (args.action === "add" && !f.cart) {
-            method = "carts.create";
-            params = {
-              context: pricing(f),
-              lines: [
-                {
-                  variant_id: id.parse(args.variant_id),
-                  quantity: z
-                    .number()
-                    .int()
-                    .min(1)
-                    .max(100)
-                    .parse(args.quantity),
-                },
-              ],
-            };
-          } else {
-            const base = this.change(f, args.expected_version);
-            if (args.action === "add") {
-              method = "carts.lines.add";
-              params = {
-                ...base,
-                line: {
-                  variant_id: id.parse(args.variant_id),
-                  quantity: z
-                    .number()
-                    .int()
-                    .min(1)
-                    .max(100)
-                    .parse(args.quantity),
-                },
-              };
-            } else if (args.action === "update") {
-              method = "carts.lines.update";
-              params = {
-                ...base,
-                line_id: id.parse(args.line_id),
+          },
+          signal,
+        );
+        f.variants = data;
+        f.variantProductId = args.product_id;
+      } else fail("INVALID_ACTION");
+    } else if (name === "frontvia_cart") {
+      if (args.action === "get") {
+        data = f.cart
+          ? await this.read(f, "carts.get", { cart_id: f.cart.id }, signal)
+          : { cart: null };
+        if (data.id) f.cart = data;
+      } else if (args.action === "delivery_options") {
+        if (!f.cart) fail("CART_REQUIRED");
+        data = await this.read(
+          f,
+          "carts.delivery_options.list",
+          { cart_id: f.cart.id },
+          signal,
+        );
+        f.delivery = data;
+      } else {
+        let method: string;
+        let params: any;
+        if (args.action === "add" && !f.cart) {
+          method = "carts.create";
+          params = {
+            context: pricing(f),
+            lines: [
+              {
+                variant_id: id.parse(args.variant_id),
                 quantity: z.number().int().min(1).max(100).parse(args.quantity),
-              };
-            } else if (args.action === "remove") {
-              method = "carts.lines.remove";
-              params = { ...base, line_id: id.parse(args.line_id) };
-            } else if (args.action === "delivery_select") {
-              method = "carts.delivery_option.select";
-              params = {
-                ...base,
-                group_id: id.parse(args.group_id),
-                option_id: id.parse(args.option_id),
-              };
-            } else fail("INVALID_ACTION");
-          }
+              },
+            ],
+          };
+        } else {
+          const base = this.change(f, args.expected_version);
+          if (args.action === "add") {
+            method = "carts.lines.add";
+            params = {
+              ...base,
+              line: {
+                variant_id: id.parse(args.variant_id),
+                quantity: z.number().int().min(1).max(100).parse(args.quantity),
+              },
+            };
+          } else if (args.action === "update") {
+            method = "carts.lines.update";
+            params = {
+              ...base,
+              line_id: id.parse(args.line_id),
+              quantity: z.number().int().min(1).max(100).parse(args.quantity),
+            };
+          } else if (args.action === "remove") {
+            method = "carts.lines.remove";
+            params = { ...base, line_id: id.parse(args.line_id) };
+          } else if (args.action === "delivery_select") {
+            method = "carts.delivery_option.select";
+            params = {
+              ...base,
+              group_id: id.parse(args.group_id),
+              option_id: id.parse(args.option_id),
+            };
+          } else fail("INVALID_ACTION");
+        }
+        data = await this.write(
+          f,
+          `commerce.${method}`,
+          params,
+          callId,
+          signal,
+        );
+      }
+    } else if (name === "frontvia_checkout") {
+      card = "quote";
+      if (args.action === "quote")
+        data = await this.write(
+          f,
+          "commerce.quotes.create",
+          this.change(f, args.expected_version),
+          callId,
+          signal,
+        );
+      else if (args.action === "revise") {
+        if (f.pending || f.intent?.token) fail("RESOLVE_PENDING_OPERATION");
+        if (!f.checkout) {
+          delete f.quote;
+          delete f.intent;
+          data = { readyToRequote: true };
+        } else {
+          f.checkout = await this.read(
+            f,
+            "checkouts.get",
+            { checkout_id: f.checkout.id },
+            signal,
+          );
+          const payment = f.checkout.payment_summary;
+          if (
+            f.checkout.status !== "requires_action" ||
+            f.checkout.order_ids?.length ||
+            payment?.authorized_amount?.amount_minor !== "0" ||
+            payment?.captured_amount?.amount_minor !== "0"
+          )
+            fail("CHECKOUT_IN_PROGRESS");
+          delete f.intent;
+          this.save(f);
           data = await this.write(
             f,
-            `commerce.${method}`,
-            params,
+            "commerce.checkouts.cancel",
+            { checkout_id: f.checkout.id },
             callId,
             signal,
           );
         }
-      } else if (name === "frontvia_checkout") {
-        card = "quote";
-        if (args.action === "quote")
+      } else if (args.action === "prepare") {
+        if (f.pending) fail("RESOLVE_PENDING_OPERATION");
+        const q = f.quote;
+        if (
+          !q?.checkout_allowed ||
+          !f.cart ||
+          q.cart_version !== f.cart.version ||
+          !(Date.parse(q.expires_at) > Date.now())
+        )
+          fail("QUOTE_CHANGED");
+        if (f.checkout && !f.checkout.can_start_new_attempt)
+          data = await this.read(
+            f,
+            "checkouts.get",
+            { checkout_id: f.checkout.id },
+            signal,
+          );
+        else
           data = await this.write(
             f,
-            "commerce.quotes.create",
-            this.change(f, args.expected_version),
+            "commerce.checkouts.create",
+            {
+              quote_id: q.id,
+              expected_cart_version: q.cart_version,
+              amount_limit: { mode: "exact", value: q.totals.grand_total },
+            },
             callId,
             signal,
           );
-        else if (args.action === "revise") {
-          if (f.pending || f.intent?.token) fail("RESOLVE_PENDING_OPERATION");
-          if (!f.checkout) {
-            delete f.quote;
-            delete f.intent;
-            data = { readyToRequote: true };
-          } else {
-            f.checkout = await this.read(
-              f,
-              "checkouts.get",
-              { checkout_id: f.checkout.id },
-              signal,
-            );
-            const payment = f.checkout.payment_summary;
-            if (
-              f.checkout.status !== "requires_action" ||
-              f.checkout.order_ids?.length ||
-              payment?.authorized_amount?.amount_minor !== "0" ||
-              payment?.captured_amount?.amount_minor !== "0"
-            )
-              fail("CHECKOUT_IN_PROGRESS");
-            delete f.intent;
-            this.save(f);
-            data = await this.write(
-              f,
-              "commerce.checkouts.cancel",
-              { checkout_id: f.checkout.id },
-              callId,
-              signal,
-            );
+      } else if (args.action === "status") data = await this.refresh(f);
+      else fail("INVALID_ACTION");
+    } else if (name === "frontvia_orders") {
+      card = "order";
+      if (args.action === "recover") data = await this.recover(f);
+      else if (args.action === "list") {
+        f.ordersCursor = args.cursor;
+        data = await this.ordersPage(f, signal);
+        f.orders = data;
+      } else if (args.action === "get") {
+        data = await this.read(
+          f,
+          "orders.get",
+          { order_id: id.parse(args.order_id) },
+          signal,
+        );
+        f.order = data;
+      } else fail("INVALID_ACTION");
+    } else fail("TOOL_NOT_ALLOWED");
+    this.save(f);
+    return this.result(f, card, {
+      data,
+      ...(name === "frontvia_products" &&
+      (args.action === "browse" || args.action === "search")
+        ? {
+            catalog: {
+              mode:
+                args.action === "browse" || !args.query?.trim()
+                  ? "browse"
+                  : "search",
+              returnedCount: Array.isArray(data.items) ? data.items.length : 0,
+              hasMore: data.page?.has_more === true,
+            },
+            nextStep:
+              data.page?.has_more === true
+                ? "先展示本页商品名称和价格；用户要求更多时才用 page.next_cursor 翻页，不要猜关键词搜索或自动读取规格。"
+                : "本次查询没有下一页。现在向用户展示返回的商品名称和价格；没有结果则说明未找到。不要猜关键词搜索或自动读取规格。",
           }
-        } else if (args.action === "prepare") {
-          if (f.pending) fail("RESOLVE_PENDING_OPERATION");
-          const q = f.quote;
-          if (
-            !q?.checkout_allowed ||
-            !f.cart ||
-            q.cart_version !== f.cart.version ||
-            !(Date.parse(q.expires_at) > Date.now())
-          )
-            fail("QUOTE_CHANGED");
-          if (f.checkout && !f.checkout.can_start_new_attempt)
-            data = await this.read(
-              f,
-              "checkouts.get",
-              { checkout_id: f.checkout.id },
-              signal,
-            );
-          else
-            data = await this.write(
-              f,
-              "commerce.checkouts.create",
-              {
-                quote_id: q.id,
-                expected_cart_version: q.cart_version,
-                amount_limit: { mode: "exact", value: q.totals.grand_total },
-              },
-              callId,
-              signal,
-            );
-        } else if (args.action === "status") data = await this.refresh(f);
-        else fail("INVALID_ACTION");
-      } else if (name === "frontvia_orders") {
-        card = "order";
-        if (args.action === "recover") data = await this.recover(f);
-        else if (args.action === "list") {
-          f.ordersCursor = args.cursor;
-          data = await this.ordersPage(f, signal);
-          f.orders = data;
-        } else if (args.action === "get") {
-          data = await this.read(
-            f,
-            "orders.get",
-            { order_id: id.parse(args.order_id) },
-            signal,
+        : {}),
+      cartVersion: f.cart?.version,
+      contactReady: contactSchema.safeParse({
+        ...(f.cart?.email ? { email: f.cart.email } : {}),
+        shipping_address: f.cart?.shipping_address,
+      }).success,
+      pending: !!f.pending,
+    });
+  }
+  /** Owner UI uses the same commerce rules and durable commands as chat tools.
+   * The action never confirms a purchase or initiates a payment. */
+  async shopping(
+    sessionId: string,
+    flowId: string,
+    input: ShoppingAction,
+    signal?: AbortSignal,
+  ) {
+    const { intent, expected_version, actionId } =
+      shoppingActionSchema.parse(input);
+    this.views.clear();
+    return this.serial.run(flowId, async () => {
+      this.flow(sessionId, flowId);
+      const run = async (name: string, args: any, step: string) => {
+        signal?.throwIfAborted();
+        const result: any = await this.shoppingTool(
+          sessionId,
+          flowId,
+          name,
+          { flowId, ...args },
+          `ui:${actionId}:${step}`,
+          signal,
+        );
+        if (
+          result.operation?.status === "failed" ||
+          result.data?.operation?.status === "failed" ||
+          result.data?.error ||
+          result.error
+        )
+          fail("OPERATION_NOT_COMPLETED");
+        const current = this.flow(sessionId, flowId);
+        if (current.pending) fail("RESOLVE_PENDING_OPERATION");
+        return current;
+      };
+      const quote = async () => {
+        const current = this.flow(sessionId, flowId);
+        await run(
+          "frontvia_checkout",
+          {
+            action: "quote",
+            expected_version: current.cart?.version,
+          },
+          "quote",
+        );
+        await run("frontvia_checkout", { action: "prepare" }, "prepare");
+      };
+      switch (intent.action) {
+        case "browse":
+          await run(
+            "frontvia_products",
+            { action: "browse", cursor: intent.cursor },
+            "browse",
           );
-          f.order = data;
-        } else fail("INVALID_ACTION");
-      } else fail("TOOL_NOT_ALLOWED");
-      this.save(f);
-      return this.result(f, card, {
-        data,
-        ...(name === "frontvia_products" &&
-        (args.action === "browse" || args.action === "search")
-          ? {
-              catalog: {
-                mode:
-                  args.action === "browse" || !args.query?.trim()
-                    ? "browse"
-                    : "search",
-                returnedCount: Array.isArray(data.items)
-                  ? data.items.length
-                  : 0,
-                hasMore: data.page?.has_more === true,
-              },
-              nextStep:
-                data.page?.has_more === true
-                  ? "先展示本页商品名称和价格；用户要求更多时才用 page.next_cursor 翻页，不要猜关键词搜索或自动读取规格。"
-                  : "本次查询没有下一页。现在向用户展示返回的商品名称和价格；没有结果则说明未找到。不要猜关键词搜索或自动读取规格。",
-            }
-          : {}),
-        cartVersion: f.cart?.version,
-        contactReady: contactSchema.safeParse({
-          ...(f.cart?.email ? { email: f.cart.email } : {}),
-          shipping_address: f.cart?.shipping_address,
-        }).success,
-        pending: !!f.pending,
-      });
+          break;
+        case "variants":
+          await run(
+            "frontvia_products",
+            { action: "variants", product_id: intent.productId },
+            "variants",
+          );
+          break;
+        case "add":
+          await run(
+            "frontvia_cart",
+            {
+              action: "add",
+              variant_id: intent.variantId,
+              quantity: intent.quantity,
+              expected_version,
+            },
+            "add",
+          );
+          break;
+        case "delivery-options":
+          await run(
+            "frontvia_cart",
+            { action: "delivery_options" },
+            "delivery-options",
+          );
+          break;
+        case "delivery":
+          await run(
+            "frontvia_cart",
+            {
+              action: "delivery_select",
+              group_id: intent.groupId,
+              option_id: intent.optionId,
+              expected_version,
+            },
+            "delivery",
+          );
+          await quote();
+          break;
+        case "requote": {
+          const current = this.flow(sessionId, flowId);
+          if (!expected_version || current.cart?.version !== expected_version)
+            fail("CART_VERSION_CHANGED");
+          await run("frontvia_checkout", { action: "revise" }, "revise");
+          await quote();
+          break;
+        }
+        case "prepare":
+          await run("frontvia_checkout", { action: "prepare" }, "prepare");
+          break;
+      }
+      return this.humanView(this.flow(sessionId, flowId));
     });
   }
   private async ordersPage(f: Flow, signal?: AbortSignal) {

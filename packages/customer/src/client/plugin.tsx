@@ -91,6 +91,8 @@ const money = (m: any) => {
     : "待核对";
 };
 const errorText: Record<string, string> = {
+  OPERATION_NOT_COMPLETED: "操作未完成，请刷新核对当前进度后再试。",
+  CHECKOUT_IN_PROGRESS: "当前已准备结算，请先核对报价；需要修改时请重新报价。",
   ORDER_CANCEL_UNAVAILABLE:
     "当前订单不能直接取消，请刷新核对；已付款订单需联系商家退款。",
   ORDER_CANCEL_FAILED: "取消未完成，订单仍保留。请核对原订单结果后再试。",
@@ -397,13 +399,17 @@ export function apply(ctx: any) {
     const accountRevision = useAccountRevision();
     const [liveRevision, setLiveRevision] = useState(accountRevision);
     const dirtyForm = useRef(false);
+    const acting = useRef(false);
+    const canShop = resume || !!sendToAgent;
     const [liveData, setData] = useState<any>(),
       [busy, setBusy] = useState(""),
-      [error, setError] = useState(""),
+      [actionError, setError] = useState(""),
+      [viewError, setViewError] = useState(""),
       [tab, setTab] = useState<string | undefined>(
         resume ? undefined : ui.card === "connection" ? "products" : ui.card,
       ),
       [tick, setTick] = useState(Date.now());
+    const error = actionError || viewError;
     const data = withHistoricalCatalog(
       liveRevision === accountRevision ? liveData : undefined,
       catalog,
@@ -440,13 +446,14 @@ export function apply(ctx: any) {
       setData(undefined);
       setForm(blankContact);
       setError("");
+      setViewError("");
       setTab(
         resume ? undefined : ui.card === "connection" ? "products" : ui.card,
       );
       return views.subscribe(ui, (state) => {
         setLiveRevision(accountRevision);
         setData(state.value);
-        setError(state.error?.message ?? "");
+        setViewError(state.error?.message ?? "");
         if (state.value && !dirtyForm.current) {
           setForm(contactFrom(state.value));
         }
@@ -457,6 +464,8 @@ export function apply(ctx: any) {
       return () => clearInterval(t);
     }, []);
     const action = async (op: string, payload: any = {}) => {
+      if (acting.current) return false;
+      acting.current = true;
       setBusy(op);
       setError("");
       if (op === "payment-start" || op === "order-cancel")
@@ -497,17 +506,34 @@ export function apply(ctx: any) {
           return false;
         }
       } catch (e: any) {
-        if (op === "order-cancel") views.invalidate(ui);
+        if (op === "order-cancel" || op === "shopping") views.invalidate(ui);
         setError(op === "confirm" ? "CONFIRMATION_RESULT_UNKNOWN" : e.message);
         if (op === "confirm" && e.message !== "PERSONAL_ACCOUNT_CHANGED")
           views.publish(ui, { ...liveData, pending: true });
         return false;
       } finally {
+        acting.current = false;
         setBusy("");
       }
       return true;
     };
     const ask = async (intent: CardIntent) => {
+      if (resume) {
+        const ok = await action("shopping", {
+          intent,
+          expected_version: data?.cart?.version,
+          actionId: crypto.randomUUID(),
+        });
+        if (ok)
+          setTab(
+            intent.action === "variants"
+              ? "products"
+              : ["add", "delivery-options"].includes(intent.action)
+                ? "cart"
+                : "quote",
+          );
+        return;
+      }
       if (!sendToAgent) {
         setError("请回到所属聊天，让 Agent 继续购物。");
         return;
@@ -682,10 +708,30 @@ export function apply(ctx: any) {
                     </Alert>
                   )}
                   <TabsContent value="products">
+                    {resume && (
+                      <div className="fv-between">
+                        <p className="fv-muted">
+                          直接选择商品和配送，购买前由你确认。
+                        </p>
+                        <Button
+                          variant="outline"
+                          size="sm"
+                          disabled={!!busy || data.pending}
+                          onClick={() =>
+                            action("shopping", {
+                              intent: { action: "browse" },
+                              actionId: crypto.randomUUID(),
+                            })
+                          }
+                        >
+                          浏览商品
+                        </Button>
+                      </div>
+                    )}
                     <ProductSelection
                       data={data}
                       busy={!!busy}
-                      canAsk={!!sendToAgent}
+                      canAsk={canShop && !data.pending && !locked}
                       ask={ask}
                       formatPrice={money}
                       onCart={() => setTab("cart")}
@@ -721,7 +767,7 @@ export function apply(ctx: any) {
                                 <Button
                                   variant="outline"
                                   size="sm"
-                                  disabled={!!busy || !sendToAgent}
+                                  disabled={!!busy || !canShop}
                                   onClick={() =>
                                     ask({
                                       action: "variants",
@@ -742,11 +788,32 @@ export function apply(ctx: any) {
                           <Search aria-hidden />
                           <EmptyTitle>想买点什么？</EmptyTitle>
                           <EmptyDescription>
-                            告诉 Agent 你想找的商品，搜索结果会出现在这里。
+                            {resume
+                              ? "点击浏览商品，查看商家当前商品。"
+                              : "告诉 Agent 你想找的商品，搜索结果会出现在这里。"}
                           </EmptyDescription>
                         </Empty>
                       )}
                     </ProductSelection>
+                    {resume &&
+                      data.products?.page?.has_more &&
+                      data.products.page.next_cursor && (
+                        <Button
+                          variant="outline"
+                          disabled={!!busy || data.pending}
+                          onClick={() =>
+                            action("shopping", {
+                              intent: {
+                                action: "browse",
+                                cursor: data.products.page.next_cursor,
+                              },
+                              actionId: crypto.randomUUID(),
+                            })
+                          }
+                        >
+                          下一页商品
+                        </Button>
+                      )}
                   </TabsContent>
                   <TabsContent value="cart">
                     {data.cart ? (
@@ -895,7 +962,7 @@ export function apply(ctx: any) {
                                               size="sm"
                                               disabled={
                                                 !!busy ||
-                                                !sendToAgent ||
+                                                !canShop ||
                                                 data.pending
                                               }
                                               onClick={() =>
@@ -920,7 +987,7 @@ export function apply(ctx: any) {
                                   <Button
                                     variant="outline"
                                     disabled={
-                                      !!busy || !sendToAgent || data.pending
+                                      !!busy || !canShop || data.pending
                                     }
                                     onClick={() =>
                                       ask({ action: "delivery-options" })
@@ -1010,7 +1077,7 @@ export function apply(ctx: any) {
                                   size="sm"
                                   disabled={
                                     !!busy ||
-                                    !sendToAgent ||
+                                    !canShop ||
                                     data.intent?.submitted ||
                                     data.pending
                                   }
@@ -1133,10 +1200,7 @@ export function apply(ctx: any) {
                         ) : (
                           <Button
                             disabled={
-                              !!busy ||
-                              !sendToAgent ||
-                              quoteExpired ||
-                              data.pending
+                              !!busy || !canShop || quoteExpired || data.pending
                             }
                             onClick={() => ask({ action: "prepare" })}
                           >
@@ -1150,7 +1214,9 @@ export function apply(ctx: any) {
                         <CreditCard aria-hidden />
                         <EmptyTitle>还没有订单报价</EmptyTitle>
                         <EmptyDescription>
-                          保存收货资料并选择配送后，Agent 会为你生成完整报价。
+                          {resume
+                            ? "保存收货资料并选择配送后，即可核对完整报价。"
+                            : "保存收货资料并选择配送后，Agent 会为你生成完整报价。"}
                         </EmptyDescription>
                         <Button
                           variant="outline"

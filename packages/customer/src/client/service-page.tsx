@@ -196,7 +196,9 @@ function AccountServicePage({
           <div>
             <p className="fv-eyebrow">你的商家服务</p>
             <h2>Frontvia 服务</h2>
-            <p className="fv-page-description">接着上次的咨询与购物。</p>
+            <p className="fv-page-description">
+              查看咨询答复，直接继续选购与下单。
+            </p>
           </div>
           <div className="fv-page-actions">
             <Button
@@ -227,7 +229,7 @@ function AccountServicePage({
             <div>
               <h3>最近服务记录</h3>
               <p className="fv-description">
-                选择一条记录，查看购物进度或咨询答复。
+                选择一条购物记录，即可选规格、加购、填写收货资料和确认购买。
               </p>
             </div>
             {data && <Badge>{rows.length} 条记录</Badge>}
@@ -343,7 +345,11 @@ function AccountServicePage({
                                   : "购物记录"}
                             </Badge>
                             <span className="fv-record-action">
-                              {flow.pending ? "查看并恢复" : "查看进度"}
+                              {flow.pending
+                                ? "查看并恢复"
+                                : consultation
+                                  ? "查看答复"
+                                  : "继续购物"}
                               <ArrowRight aria-hidden />
                             </span>
                           </span>
@@ -428,7 +434,7 @@ function AccountServicePage({
           <Separator />
           <div className="fv-guide-heading">
             <h3>在这里，你可以</h3>
-            <span>从连接到服务，接着聊就好</span>
+            <span>咨询在聊天中进行，购物也可在这里操作</span>
           </div>
           <div className="fv-guide-grid">
             {[
@@ -445,7 +451,7 @@ function AccountServicePage({
               {
                 Icon: ShoppingBag,
                 title: "选购与下单",
-                text: "挑选商品、查看购物进度，购买前由你确认。",
+                text: "打开购物记录直接选购、选择配送和核对报价，购买前由你确认。",
               },
             ].map(({ Icon, title, text }) => (
               <Card key={title} className="fv-guide-card">
