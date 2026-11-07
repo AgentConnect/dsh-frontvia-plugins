@@ -1338,3 +1338,57 @@
   color: var(--fv-error);
   background: color-mix(in srgb, var(--fv-error) 8%, transparent);
 }
+
+/* Merchant selection stays above the active card; history is secondary. */
+.fv .fv-merchants {
+  margin-bottom: 24px;
+  min-width: 0;
+}
+.fv .fv-merchant-list {
+  display: flex;
+  gap: 10px;
+  overflow-x: auto;
+  padding: 3px 3px 10px;
+}
+.fv .fv-merchant {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex: 0 0 280px;
+  max-width: 100%;
+  padding: 16px;
+  border: 1px solid var(--fv-border);
+  border-radius: 12px;
+  background: var(--fv-bg);
+  color: var(--fv-text);
+  text-align: left;
+  font: inherit;
+  font-weight: 400;
+  cursor: pointer;
+}
+.fv .fv-merchant > svg {
+  width: 20px;
+  height: 20px;
+  flex-shrink: 0;
+}
+.fv .fv-merchant[aria-pressed="true"] {
+  border-color: var(--fv-primary);
+  background: var(--fv-surface);
+}
+.fv .fv-merchant-state {
+  font-size: 11px;
+  color: var(--fv-muted);
+  flex-shrink: 0;
+}
+.fv .fv-selected-flow {
+  margin: 0 0 32px;
+}
+.fv .fv-selected-flow > .fv-empty {
+  border: 1px solid var(--fv-border);
+  border-radius: 12px;
+}
+@media (max-width: 600px) {
+  .fv .fv-merchant {
+    flex-basis: 260px;
+  }
+}

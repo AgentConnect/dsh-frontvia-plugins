@@ -2,7 +2,6 @@ import React, { useEffect, useId, useRef, useState } from "react";
 import {
   ArrowRight,
   BookOpen,
-  ChevronUp,
   CircleAlert,
   Clock3,
   Link2,
@@ -14,6 +13,16 @@ import {
 import { useAccountRevision } from "./account.js";
 import { AccountSummary, type AccountStatus } from "./account-summary.js";
 import { shoppingReference } from "./history.js";
+import {
+  serviceMerchants,
+  resolveServiceSelection,
+  readServiceSelection,
+  saveServiceSelection,
+  flowKind as kindOf,
+  type ServiceFlow as Flow,
+  type ServiceSite as Site,
+  type ServiceSelection,
+} from "./service-merchants.js";
 
 import {
   Alert,
@@ -37,20 +46,6 @@ import {
   TabsTrigger,
 } from "./ui.js";
 
-type Flow = {
-  flowId: string;
-  sessionId: string;
-  siteId: string;
-  kind?: string;
-  updatedAt: string;
-  pending?: boolean;
-};
-type Site = {
-  id: string;
-  label?: string;
-  domain?: string;
-  service?: { store_id?: string };
-};
 type Reference = ReturnType<typeof shoppingReference>;
 type Props = {
   call: (op: string, payload?: any) => Promise<any>;
@@ -58,24 +53,11 @@ type Props = {
   openAccount: () => void;
   renderFlow: (reference: Reference) => React.ReactNode;
 };
-const kindOf = (flow: Flow) =>
-  flow.kind === "consultation" ? "consultation" : "shopping";
 const kinds = [
   { value: "all", label: "全部记录" },
   { value: "shopping", label: "购物" },
   { value: "consultation", label: "咨询与知识" },
 ] as const;
-function serviceName(site: Site | undefined, flow: Flow) {
-  // Discovery titles can be protocol descriptions rather than merchant names.
-  const label = site?.label?.trim();
-  return label &&
-    !/JSON-RPC|transport|Frontvia merchant consultation/i.test(label) &&
-    label !== site?.id
-    ? label
-    : kindOf(flow) === "shopping"
-      ? "商家购物服务"
-      : "商家咨询服务";
-}
 function updatedTime(value: string) {
   const date = new Date(value);
   return Number.isFinite(date.getTime())
@@ -91,7 +73,7 @@ function updatedTime(value: string) {
 
 export function ServicePage(props: Props) {
   const revision = useAccountRevision();
-  return <AccountServicePage revision={revision} {...props} />;
+  return <AccountServicePage key={revision} revision={revision} {...props} />;
 }
 function AccountServicePage({
   call,
@@ -107,8 +89,13 @@ function AccountServicePage({
   }>();
   // Hide previous-account records in the same render that observes the change.
   const data = snapshot?.revision === revision ? snapshot : undefined;
-  const [selection, setSelected] = useState<Flow>();
-  const selected = data ? selection : undefined;
+  const [selection, setSelection] = useState<ServiceSelection>(() => {
+    try {
+      return revision ? {} : readServiceSelection(window.sessionStorage);
+    } catch {
+      return {};
+    }
+  });
   const [filter, setFilter] = useState("all");
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(true);
@@ -138,11 +125,13 @@ function AccountServicePage({
     };
   }, [call, revision, refresh]);
   const detail = useRef<HTMLDivElement>(null);
-  const selectedButton = useRef<HTMLButtonElement>(null);
   const id = useId();
   useEffect(() => {
-    setSelected(undefined);
-    setFilter("all");
+    if (revision) {
+      try {
+        saveServiceSelection(window.sessionStorage);
+      } catch {}
+    }
   }, [revision]);
   useEffect(() => {
     let live = true;
@@ -154,9 +143,6 @@ function AccountServicePage({
           throw new Error("Invalid service list");
         if (live) {
           setData({ flows: value.flows, sites: value.sites ?? [], revision });
-          setSelected((previous) =>
-            value.flows.find((flow: Flow) => flow.flowId === previous?.flowId),
-          );
         }
       })
       .catch(() => {
@@ -168,22 +154,35 @@ function AccountServicePage({
     return () => {
       live = false;
     };
-  }, [refresh, revision]);
-  useEffect(() => {
-    if (selected) {
-      detail.current?.scrollIntoView({ block: "start", behavior: "instant" });
-      detail.current?.focus({ preventScroll: true });
-    }
-  }, [selected?.flowId]);
-  const rows = [...(data?.flows ?? [])].sort((a, b) =>
-    b.updatedAt.localeCompare(a.updatedAt),
+  }, [call, refresh, revision]);
+  const merchants = serviceMerchants(data?.sites ?? [], data?.flows ?? []);
+  const { merchant, flow: selected } = resolveServiceSelection(
+    merchants,
+    selection,
   );
+  const rows = merchant?.flows ?? [];
   const pending = rows.filter((flow) => flow.pending).length;
   const visible = rows.filter(
     (flow) => filter === "all" || kindOf(flow) === filter,
   );
-  const siteFor = (flow: Flow) =>
-    data?.sites.find((site) => site.id === flow.siteId);
+  const focusDetail = useRef(false);
+  useEffect(() => {
+    if (merchant) {
+      // Pin the resolved default too, so refreshed timestamps cannot switch shops.
+      setSelection({ merchantKey: merchant.key, flowId: selected?.flowId });
+      try {
+        saveServiceSelection(window.sessionStorage, {
+          merchantKey: merchant.key,
+          flowId: selected?.flowId,
+        });
+      } catch {}
+    }
+    if (focusDetail.current) {
+      detail.current?.scrollIntoView({ block: "start", behavior: "instant" });
+      detail.current?.focus({ preventScroll: true });
+      focusDetail.current = false;
+    }
+  }, [merchant?.key, selected?.flowId]);
   return (
     <div
       className="fv-viewport"
@@ -197,7 +196,7 @@ function AccountServicePage({
             <p className="fv-eyebrow">你的商家服务</p>
             <h2>Frontvia 服务</h2>
             <p className="fv-page-description">
-              查看咨询答复，直接继续选购与下单。
+              选择商家，直接继续选购或查看咨询答复。
             </p>
           </div>
           <div className="fv-page-actions">
@@ -224,210 +223,306 @@ function AccountServicePage({
           openAccount={openAccount}
         />
 
-        <section className="fv-history-section" aria-label="最近服务记录">
+        {error && (
+          <Alert variant="destructive">
+            <CircleAlert aria-hidden />
+            <AlertDescription>{error}</AlertDescription>
+            <Button
+              variant="outline"
+              size="sm"
+              disabled={loading}
+              onClick={() => setRefresh((n) => n + 1)}
+            >
+              重试
+            </Button>
+          </Alert>
+        )}
+        <section className="fv-merchants" aria-label="商家选择">
           <div className="fv-section-heading">
             <div>
-              <h3>最近服务记录</h3>
+              <h3>我的商家</h3>
               <p className="fv-description">
-                选择一条购物记录，即可选规格、加购、填写收货资料和确认购买。
+                切换商家，购物进度与历史记录一起切换。
               </p>
             </div>
-            {data && <Badge>{rows.length} 条记录</Badge>}
+            {data && <Badge>{merchants.length} 家商家</Badge>}
           </div>
-          <Tabs
-            value={filter}
-            onValueChange={(value) => {
-              setFilter(value);
-              setSelected(undefined);
-            }}
-            className="fv-history-tabs"
-          >
-            <TabsList aria-label="服务记录分类">
-              {kinds.map((kind) => (
-                <TabsTrigger key={kind.value} value={kind.value}>
-                  {kind.label}
-                  <span className="fv-tab-count">
-                    {data
-                      ? rows.filter(
-                          (flow) =>
-                            kind.value === "all" || kindOf(flow) === kind.value,
-                        ).length
-                      : "—"}
-                  </span>
-                </TabsTrigger>
-              ))}
-            </TabsList>
-            {error && (
-              <Alert variant="destructive">
-                <CircleAlert aria-hidden />
-                <AlertDescription>{error}</AlertDescription>
-                <Button
-                  variant="outline"
-                  size="sm"
-                  disabled={loading}
-                  onClick={() => setRefresh((n) => n + 1)}
+          {!data && loading ? (
+            <div
+              className="fv-history-loading"
+              role="status"
+              aria-label="正在读取商家"
+            >
+              <Skeleton />
+              <span className="fv-sr-only">正在读取商家…</span>
+            </div>
+          ) : merchants.length ? (
+            <div
+              className="fv-merchant-list"
+              role="group"
+              aria-label="选择商家"
+            >
+              {merchants.map((item) => (
+                <button
+                  type="button"
+                  className="fv-merchant"
+                  key={item.key}
+                  aria-pressed={merchant?.key === item.key}
+                  aria-controls={`${id}-detail`}
+                  onClick={() => {
+                    setSelection({ merchantKey: item.key });
+                    setFilter("all");
+                  }}
                 >
-                  重试
+                  <Store aria-hidden />
+                  <span className="fv-record-copy">
+                    <span className="fv-record-title">{item.title}</span>
+                    <span className="fv-record-description">
+                      {item.domain ??
+                        (item.sites.length
+                          ? "已配置商家服务"
+                          : "连接已移除 · 保留历史记录")}
+                      {item.storeId &&
+                      merchants.some(
+                        (other) =>
+                          other.key !== item.key &&
+                          other.domain === item.domain,
+                      )
+                        ? ` · 店铺 ${item.storeId}${merchants.some((other) => other.key !== item.key && other.domain === item.domain && other.storeId === item.storeId) ? ` · ${item.sites[0]?.issuer ?? item.sites[0]?.id}` : ""}`
+                        : ""}
+                    </span>
+                    <span className="fv-record-time">
+                      {item.flows.length} 条记录
+                    </span>
+                  </span>
+                  <span className="fv-merchant-state">
+                    {merchant?.key === item.key ? "当前商家" : "选择商家"}
+                  </span>
+                </button>
+              ))}
+            </div>
+          ) : (
+            !error && (
+              <Empty>
+                <Store aria-hidden />
+                <EmptyTitle>还没有商家</EmptyTitle>
+                <EmptyDescription>
+                  在 PAP 中添加商家服务后，商家会显示在这里。
+                </EmptyDescription>
+                <Button variant="outline" onClick={openConnections}>
+                  管理商家连接
                 </Button>
-              </Alert>
-            )}
-            {kinds.map((kind) => (
-              <TabsContent key={kind.value} value={kind.value}>
-                {loading ? (
-                  <div
-                    className="fv-history-loading"
-                    role="status"
-                    aria-label="正在读取服务记录"
-                  >
-                    <Skeleton />
-                    <Skeleton />
-                    <span className="fv-sr-only">正在读取服务记录…</span>
-                  </div>
-                ) : visible.length ? (
-                  <div className="fv-record-list">
-                    {visible.map((flow) => {
-                      const site = siteFor(flow),
-                        consultation = kindOf(flow) === "consultation";
-                      const Icon = consultation ? MessageCircle : ShoppingBag;
-                      return (
-                        <button
-                          type="button"
-                          key={flow.flowId}
-                          className="fv-record"
-                          ref={
-                            selected?.flowId === flow.flowId
-                              ? selectedButton
-                              : undefined
-                          }
-                          aria-expanded={selected?.flowId === flow.flowId}
-                          aria-controls={
-                            selected?.flowId === flow.flowId
-                              ? `${id}-detail`
-                              : undefined
-                          }
-                          onClick={() => setSelected(flow)}
-                        >
-                          <span className="fv-service-icon">
-                            <Icon aria-hidden />
-                          </span>
-                          <span className="fv-record-copy">
-                            <span className="fv-record-title">
-                              {serviceName(site, flow)}
-                            </span>
-                            <span className="fv-record-description">
-                              {site?.domain ?? "商家配置已移除"}
-                              {site?.service?.store_id
-                                ? ` · 店铺 ${site.service.store_id}`
-                                : ""}
-                            </span>
-                            <span className="fv-record-time">
-                              <Clock3 aria-hidden />
-                              <time
-                                dateTime={
-                                  Number.isFinite(Date.parse(flow.updatedAt))
-                                    ? flow.updatedAt
-                                    : undefined
-                                }
-                              >
-                                {updatedTime(flow.updatedAt)}
-                              </time>
-                              更新
-                            </span>
-                          </span>
-                          <span className="fv-record-meta">
-                            <Badge
-                              variant={flow.pending ? "warning" : "secondary"}
-                            >
-                              {flow.pending
-                                ? "待核对结果"
-                                : consultation
-                                  ? "咨询与知识"
-                                  : "购物记录"}
-                            </Badge>
-                            <span className="fv-record-action">
-                              {flow.pending
-                                ? "查看并恢复"
-                                : consultation
-                                  ? "查看答复"
-                                  : "继续购物"}
-                              <ArrowRight aria-hidden />
-                            </span>
-                          </span>
-                        </button>
-                      );
-                    })}
-                  </div>
-                ) : (
-                  !error && (
-                    <Empty>
-                      <Store aria-hidden />
-                      <EmptyTitle>
-                        {rows.length
-                          ? `暂无${kind.label}记录`
-                          : "从连接一家商店开始"}
-                      </EmptyTitle>
-                      <EmptyDescription>
-                        {rows.length
-                          ? "在聊天中使用这类商家服务后，记录会出现在这里。"
-                          : "在 PAP 中添加并连接商家，然后新建聊天。咨询答复与购物进度会保留在这里。"}
-                      </EmptyDescription>
-                      {rows.length ? (
-                        <Button
-                          variant="outline"
-                          size="sm"
-                          onClick={() => setFilter("all")}
-                        >
-                          查看全部记录
-                        </Button>
-                      ) : (
-                        <Button variant="outline" onClick={openConnections}>
-                          <Link2 data-icon="inline-start" />
-                          前往 PAP 连接
-                        </Button>
-                      )}
-                    </Empty>
-                  )
-                )}
-              </TabsContent>
-            ))}
-          </Tabs>
-          {data && !loading && rows.length > 0 && (
-            <p className="fv-history-caption">
-              按最近更新排序 · 同一商家的不同聊天分别保留
-              {pending > 0 ? ` · ${pending} 条待核对结果` : ""}
-            </p>
+              </Empty>
+            )
           )}
         </section>
 
-        {selected && (
-          <div
+        {merchant && (
+          <section
             className="fv-selected-flow"
             ref={detail}
             id={`${id}-detail`}
             tabIndex={-1}
-            aria-label="已选服务记录"
+            aria-label="商家操作面板"
           >
             <div className="fv-section-heading">
               <div>
-                <h3>{serviceName(siteFor(selected), selected)}</h3>
+                <h3>{merchant.title}</h3>
                 <p className="fv-description">
-                  {updatedTime(selected.updatedAt)}的记录
+                  {selected
+                    ? `${kindOf(selected) === "shopping" ? "购物进度" : "咨询答复"} · ${updatedTime(selected.updatedAt)}更新`
+                    : "商家已显示在这里，服务记录会保留在下方。"}
                 </p>
               </div>
-              <Button
-                variant="ghost"
-                size="sm"
-                onClick={() => {
-                  selectedButton.current?.focus();
-                  setSelected(undefined);
-                }}
-              >
-                <ChevronUp data-icon="inline-start" />
-                收起详情
-              </Button>
+              <Badge>
+                {selected
+                  ? kindOf(selected) === "shopping"
+                    ? "手动购物"
+                    : "咨询与知识"
+                  : "暂无服务记录"}
+              </Badge>
             </div>
-            {renderFlow(shoppingReference(selected))}
-          </div>
+            {selected ? (
+              renderFlow(shoppingReference(selected))
+            ) : (
+              <Empty>
+                <ShoppingBag aria-hidden />
+                <EmptyTitle>还没有这家商家的服务记录</EmptyTitle>
+                <EmptyDescription>
+                  先在聊天中连接这家商家并开始购物或咨询，之后即可在这里继续操作。
+                </EmptyDescription>
+                <Button variant="outline" onClick={openConnections}>
+                  查看商家连接
+                </Button>
+              </Empty>
+            )}
+          </section>
+        )}
+
+        {merchant && (
+          <section className="fv-history-section" aria-label="当前商家历史记录">
+            <div className="fv-section-heading">
+              <div>
+                <h3>这家商家的历史记录</h3>
+                <p className="fv-description">
+                  选择历史记录，在上方查看对应的购物进度或咨询答复。
+                </p>
+              </div>
+              {data && <Badge>{rows.length} 条记录</Badge>}
+            </div>
+            <Tabs
+              value={filter}
+              onValueChange={setFilter}
+              className="fv-history-tabs"
+            >
+              <TabsList aria-label="服务记录分类">
+                {kinds.map((kind) => (
+                  <TabsTrigger key={kind.value} value={kind.value}>
+                    {kind.label}
+                    <span className="fv-tab-count">
+                      {data
+                        ? rows.filter(
+                            (flow) =>
+                              kind.value === "all" ||
+                              kindOf(flow) === kind.value,
+                          ).length
+                        : "—"}
+                    </span>
+                  </TabsTrigger>
+                ))}
+              </TabsList>
+              {kinds.map((kind) => (
+                <TabsContent key={kind.value} value={kind.value}>
+                  {loading ? (
+                    <div
+                      className="fv-history-loading"
+                      role="status"
+                      aria-label="正在读取服务记录"
+                    >
+                      <Skeleton />
+                      <Skeleton />
+                      <span className="fv-sr-only">正在读取服务记录…</span>
+                    </div>
+                  ) : visible.length ? (
+                    <div className="fv-record-list">
+                      {visible.map((flow) => {
+                        const consultation = kindOf(flow) === "consultation";
+                        const Icon = consultation ? MessageCircle : ShoppingBag;
+                        return (
+                          <button
+                            type="button"
+                            key={flow.flowId}
+                            className="fv-record"
+                            aria-expanded={selected?.flowId === flow.flowId}
+                            aria-controls={
+                              selected?.flowId === flow.flowId
+                                ? `${id}-detail`
+                                : undefined
+                            }
+                            onClick={() => {
+                              focusDetail.current = true;
+                              setSelection({
+                                merchantKey: merchant.key,
+                                flowId: flow.flowId,
+                              });
+                              if (selected?.flowId === flow.flowId) {
+                                detail.current?.scrollIntoView({
+                                  block: "start",
+                                  behavior: "instant",
+                                });
+                                detail.current?.focus({ preventScroll: true });
+                                focusDetail.current = false;
+                              }
+                            }}
+                          >
+                            <span className="fv-service-icon">
+                              <Icon aria-hidden />
+                            </span>
+                            <span className="fv-record-copy">
+                              <span className="fv-record-title">
+                                {consultation ? "咨询与知识" : "购物记录"}
+                              </span>
+                              <span className="fv-record-description">
+                                {merchant.title}
+                              </span>
+                              <span className="fv-record-time">
+                                <Clock3 aria-hidden />
+                                <time
+                                  dateTime={
+                                    Number.isFinite(Date.parse(flow.updatedAt))
+                                      ? flow.updatedAt
+                                      : undefined
+                                  }
+                                >
+                                  {updatedTime(flow.updatedAt)}
+                                </time>
+                                更新
+                              </span>
+                            </span>
+                            <span className="fv-record-meta">
+                              <Badge
+                                variant={flow.pending ? "warning" : "secondary"}
+                              >
+                                {flow.pending
+                                  ? "待核对结果"
+                                  : consultation
+                                    ? "咨询与知识"
+                                    : "购物记录"}
+                              </Badge>
+                              <span className="fv-record-action">
+                                {flow.pending
+                                  ? "查看并恢复"
+                                  : consultation
+                                    ? "查看答复"
+                                    : "继续购物"}
+                                <ArrowRight aria-hidden />
+                              </span>
+                            </span>
+                          </button>
+                        );
+                      })}
+                    </div>
+                  ) : (
+                    !error && (
+                      <Empty>
+                        <Store aria-hidden />
+                        <EmptyTitle>
+                          {rows.length
+                            ? `暂无${kind.label}记录`
+                            : "暂无服务记录"}
+                        </EmptyTitle>
+                        <EmptyDescription>
+                          {rows.length
+                            ? "在聊天中使用这类商家服务后，记录会出现在这里。"
+                            : "在聊天中连接这家商家并开始购物或咨询后，记录会出现在这里。"}
+                        </EmptyDescription>
+                        {rows.length ? (
+                          <Button
+                            variant="outline"
+                            size="sm"
+                            onClick={() => setFilter("all")}
+                          >
+                            查看全部记录
+                          </Button>
+                        ) : (
+                          <Button variant="outline" onClick={openConnections}>
+                            <Link2 data-icon="inline-start" />
+                            前往 PAP 连接
+                          </Button>
+                        )}
+                      </Empty>
+                    )
+                  )}
+                </TabsContent>
+              ))}
+            </Tabs>
+            {data && !loading && rows.length > 0 && (
+              <p className="fv-history-caption">
+                按最近更新排序 · 同一商家的不同聊天分别保留
+                {pending > 0 ? ` · ${pending} 条待核对结果` : ""}
+              </p>
+            )}
+          </section>
         )}
 
         <aside className="fv-start-guide" aria-label="使用指南">
@@ -451,7 +546,7 @@ function AccountServicePage({
               {
                 Icon: ShoppingBag,
                 title: "选购与下单",
-                text: "打开购物记录直接选购、选择配送和核对报价，购买前由你确认。",
+                text: "选择商家后直接查看购物面板，购买前由你确认。",
               },
             ].map(({ Icon, title, text }) => (
               <Card key={title} className="fv-guide-card">
