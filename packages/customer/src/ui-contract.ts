@@ -1,5 +1,6 @@
 import { z } from "zod";
 import { shoppingActionSchema } from "./shopping-action.js";
+import { viewScopes } from "./view-scope.js";
 import { contactSchema } from "./core.js";
 const ref = z.string().min(1).max(200);
 const common = {
@@ -21,7 +22,12 @@ export const uiSchemas = {
   "personal-logout": z.object({}).strict(),
   list: z.object({}).strict(),
   "open-store": z.object({ siteId: ref, actionId: z.uuid() }).strict(),
-  view: z.object(common).strict(),
+  view: z
+    .object({
+      ...common,
+      scopes: z.array(z.enum(viewScopes)).min(1).max(6).optional(),
+    })
+    .strict(),
   shopping: shoppingActionSchema.extend(common).strict(),
   review: z.object(common).strict(),
   "order-cancel": z.object(common).strict(),

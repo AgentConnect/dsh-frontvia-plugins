@@ -97,7 +97,7 @@ export async function apply(
             if (operation === "view")
               value = service.consultation.owns(a.flowId)
                 ? await service.consultation.view(a.sessionId, a.flowId)
-                : await service.view(a.sessionId, a.flowId);
+                : await service.view(a.sessionId, a.flowId, a.scopes);
             if (operation === "shopping")
               value = await service.shopping(
                 a.sessionId,
@@ -147,7 +147,7 @@ export async function apply(
               );
               value = service.consultation.owns(a.flowId)
                 ? await service.consultation.view(a.sessionId, a.flowId)
-                : await service.view(a.sessionId, a.flowId);
+                : await service.view(a.sessionId, a.flowId, a.scopes);
             }
             result = { ok: true, value };
           } catch (e) {

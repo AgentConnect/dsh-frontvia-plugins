@@ -1,3 +1,4 @@
+import type { ViewScope } from "../view-scope.js";
 import React, { useEffect, useId, useRef, useState } from "react";
 import {
   ArrowLeft,
@@ -54,6 +55,7 @@ type Props = {
   action: Action;
   now: number;
   startShopping?: () => void;
+  onViewChange?: (scope: ViewScope, refresh?: boolean) => void;
 };
 const steps = [
   "填写收货地址",
@@ -212,6 +214,7 @@ export function Storefront({
   action,
   now,
   startShopping,
+  onViewChange,
 }: Props) {
   const [tab, setTab] = useState("products");
   const [step, setStep] = useState<number>();
@@ -220,6 +223,20 @@ export function Storefront({
   const [notice, setNotice] = useState("");
   const [orderDetail, setOrderDetail] = useState(false);
   const [paymentSelected, setPaymentSelected] = useState(false);
+  useEffect(() => {
+    onViewChange?.(
+      tab === "products"
+        ? "catalog"
+        : tab === "orders"
+          ? orderDetail
+            ? "order-detail"
+            : "order"
+          : tab === "cart"
+            ? "cart"
+            : "checkout",
+      !orderDetail,
+    );
+  }, [tab, orderDetail, onViewChange]);
   const initialized = useRef(false);
   const shop = (intent: ShoppingAction["intent"]) =>
     action("shopping", {
@@ -233,7 +250,8 @@ export function Storefront({
     if (data.variantProductId && data.variants) setDetail(true);
     if (data.intent?.submitted || data.order) setTab("orders");
     else if (data.quote) setTab("checkout");
-    if (!data.products) void shop({ action: "browse" });
+    if (!data.products && !data.intent?.submitted && !data.order && !data.quote)
+      void shop({ action: "browse" });
   }, [data]);
   const locked = !!data?.intent?.submitted || !!data?.order;
   const blocked = busy || !!data?.pending;
@@ -330,6 +348,7 @@ export function Storefront({
             value={tab}
             onValueChange={(value) => {
               setTab(value);
+              if (value === "products" && !data.products) void browse();
               if (value === "orders") {
                 setOrderDetail(false);
                 void shop({ action: "orders" });
@@ -1156,7 +1175,10 @@ export function Storefront({
                           订单{" "}
                           {order.display_number ??
                             order.id ??
-                            order.order_id} · {money(order.totals?.grand_total)}
+                            order.order_id}{" "}
+                          {order.totals?.grand_total
+                            ? ` · ${money(order.totals.grand_total)}`
+                            : " · 查看详情"}
                           <ArrowRight data-icon="inline-end" />
                         </Button>
                       ))}

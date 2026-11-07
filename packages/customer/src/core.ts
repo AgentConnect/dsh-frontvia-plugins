@@ -1,3 +1,4 @@
+import { viewScopes, type ViewScope } from "./view-scope.js";
 import { createHash, createHmac, randomUUID } from "node:crypto";
 import {
   Vault,
@@ -838,7 +839,7 @@ export class CustomerService {
       if (args.action === "recover") data = await this.recover(f);
       else if (args.action === "list") {
         f.ordersCursor = args.cursor;
-        data = await this.ordersPage(f, signal);
+        data = await this.ordersPage(f, signal, !args.referencesOnly);
         f.orders = data;
       } else if (args.action === "get") {
         data = await this.read(
@@ -1023,7 +1024,7 @@ export class CustomerService {
         case "orders":
           await run(
             "frontvia_orders",
-            { action: "list", cursor: intent.cursor },
+            { action: "list", cursor: intent.cursor, referencesOnly: true },
             "orders",
           );
           break;
@@ -1095,7 +1096,7 @@ export class CustomerService {
       return this.humanView(this.flow(sessionId, flowId));
     });
   }
-  private async ordersPage(f: Flow, signal?: AbortSignal) {
+  private async ordersPage(f: Flow, signal?: AbortSignal, hydrate = true) {
     const page = await this.read(
       f,
       "orders.list",
@@ -1108,6 +1109,7 @@ export class CustomerService {
       },
       signal,
     );
+    if (!hydrate) return page;
     const orders = [];
     for (const order of (page.items ?? []).slice(0, 10)) {
       // Current Commerce returns references; also accept full Order pages.
@@ -1126,28 +1128,51 @@ export class CustomerService {
     }
     return { ...page, items: orders };
   }
-  private async refresh(f: Flow, fresh = false) {
+  private async refresh(
+    f: Flow,
+    fresh = false,
+    scopes: readonly ViewScope[] = ["all"],
+  ) {
     await this.currentCapabilities(f, fresh);
-    if (f.cart)
+    const includes = (scope: ViewScope) =>
+      scopes.includes("all") || scopes.includes(scope);
+    const submitted = !!f.intent?.token || !!f.order;
+    // Completed cart/quote snapshots do not change with payment or fulfillment.
+    const cart =
+      scopes.includes("all") ||
+      (!submitted && (includes("cart") || includes("checkout")));
+    const quote =
+      scopes.includes("all") || (!submitted && includes("checkout"));
+    const checkout = includes("checkout") || includes("order");
+    if (cart && f.cart)
       f.cart = await this.read(f, "carts.get", { cart_id: f.cart.id });
-    if (f.quote)
+    if (quote && f.quote)
       f.quote = await this.read(f, "quotes.get", { quote_id: f.quote.id });
-    if (f.checkout) {
+    const fetchedOrders = new Map<string, any>();
+    const order = async (orderId: string) => {
+      if (!fetchedOrders.has(orderId))
+        fetchedOrders.set(
+          orderId,
+          await this.read(f, "orders.get", { order_id: orderId }),
+        );
+      return fetchedOrders.get(orderId);
+    };
+    if (checkout && f.checkout) {
       f.checkout = await this.read(f, "checkouts.get", {
         checkout_id: f.checkout.id,
       });
       if (f.checkout.order_ids?.[0])
-        f.order = await this.read(f, "orders.get", {
-          order_id: f.checkout.order_ids[0],
-        });
+        f.order = await order(f.checkout.order_ids[0]);
     }
-    if (f.order && !f.checkout?.order_ids?.includes(f.order.id))
-      f.order = await this.read(f, "orders.get", { order_id: f.order.id });
-    if (f.orders) f.orders = await this.ordersPage(f);
-    if (f.viewedOrder)
-      f.viewedOrder = await this.read(f, "orders.get", {
-        order_id: f.viewedOrder.id,
-      });
+    if (checkout && f.order && !fetchedOrders.has(f.order.id))
+      f.order = await order(f.order.id);
+    if (includes("order-detail") && f.viewedOrder)
+      f.viewedOrder = await order(f.viewedOrder.id);
+    // Listing is explicit. Never turn a background refresh into N+1 history reads.
+    if (Array.isArray(f.orders?.items))
+      f.orders.items = f.orders.items.map(
+        (item: any) => fetchedOrders.get(item.id ?? item.order_id) ?? item,
+      );
     this.save(f);
     return {
       cart: f.cart,
@@ -1197,16 +1222,27 @@ export class CustomerService {
     }
     return this.refresh(f);
   }
-  async view(sessionId: string, flowId: string) {
+  async view(
+    sessionId: string,
+    flowId: string,
+    requestedScopes: readonly ViewScope[] = ["all"],
+  ) {
+    const scopes = [
+      ...new Set(
+        z.array(z.enum(viewScopes)).min(1).max(6).parse(requestedScopes),
+      ),
+    ].sort();
     const f = this.flow(sessionId, flowId);
     const generation =
       this.pap.capabilityCacheKey?.(f.connectionRef) ?? "uncached";
-    return this.views.run(`${sessionId}:${flowId}:${generation}`, () =>
-      this.serial.run(flowId, async () => {
-        const current = this.flow(sessionId, flowId);
-        await this.refresh(current);
-        return this.humanView(current);
-      }),
+    return this.views.run(
+      `${sessionId}:${flowId}:${generation}:${scopes.join(",")}`,
+      () =>
+        this.serial.run(flowId, async () => {
+          const current = this.flow(sessionId, flowId);
+          await this.refresh(current, false, scopes);
+          return this.humanView(current);
+        }),
     );
   }
   private retireFailedConfirmation(f: Flow, command: Command, operation: any) {

@@ -2752,3 +2752,127 @@ test("cart removal cannot change submitted orders or continue after uncertain dr
     g.close();
   }
 });
+
+test("storefront scopes avoid whole-flow reads and load ten order references in one request", async (t) => {
+  const f = fixture(true, true);
+  try {
+    const flow = await prepare(f);
+    const review = await f.service.review("session-a", flow);
+    await f.service.confirm("session-a", flow, review.intent!.id);
+    const original = f.service.pap.request;
+    f.service.pap.request = async (
+      ref,
+      method,
+      params: any,
+      signal,
+      options,
+    ) => {
+      if (method === "commerce.orders.list") {
+        f.remote.calls.push(method);
+        return {
+          result: {
+            data: {
+              items: Array.from({ length: 10 }, (_, i) => ({
+                order_id: `history-${i}`,
+              })),
+              page: { has_more: false },
+            },
+          },
+        } as any;
+      }
+      if (
+        method === "commerce.orders.get" &&
+        params.order_id.startsWith("history-")
+      ) {
+        f.remote.calls.push(method);
+        return {
+          result: {
+            data: { ...structuredClone(f.remote.order), id: params.order_id },
+          },
+        } as any;
+      }
+      return original(ref, method, params, signal, options);
+    };
+    await f.service.view("session-a", flow, ["catalog"]); // warm display capabilities
+    const measure = async (fn: () => Promise<any>) => {
+      f.remote.calls.length = 0;
+      const view = await fn();
+      return { view, calls: [...f.remote.calls] };
+    };
+    const listed = await measure(() =>
+      f.service.shopping("session-a", flow, {
+        intent: { action: "orders" },
+        actionId: randomUUID(),
+      }),
+    );
+    assert.deepEqual(listed.calls, ["commerce.orders.list"]);
+    assert.equal(listed.view.orders.items.length, 10);
+    const catalog = await measure(() =>
+      f.service.view("session-a", flow, ["catalog"]),
+    );
+    assert.deepEqual(catalog.calls, []);
+    const order = await measure(() =>
+      f.service.view("session-a", flow, ["order"]),
+    );
+    assert.deepEqual(order.calls, [
+      "commerce.checkouts.get",
+      "commerce.orders.get",
+    ]);
+    const detail = await measure(() =>
+      f.service.shopping("session-a", flow, {
+        intent: { action: "order-detail", orderId: "history-0" },
+        actionId: randomUUID(),
+      }),
+    );
+    assert.deepEqual(detail.calls, ["commerce.orders.get"]);
+    const detailRefresh = await measure(() =>
+      f.service.view("session-a", flow, ["order-detail"]),
+    );
+    assert.deepEqual(detailRefresh.calls, ["commerce.orders.get"]);
+    assert.equal(detailRefresh.view.viewedOrder.id, "history-0");
+    assert.equal(detailRefresh.view.order.id, "order");
+    await f.service.shopping("session-a", flow, {
+      intent: { action: "order-detail", orderId: "order" },
+      actionId: randomUUID(),
+    });
+    const shared = await measure(() =>
+      f.service.view("session-a", flow, ["order", "order-detail"]),
+    );
+    assert.deepEqual(shared.calls, [
+      "commerce.checkouts.get",
+      "commerce.orders.get",
+    ]);
+    t.diagnostic(
+      "warm reads: catalog=0; active payment=2; 10-order list=1; selected history detail=1",
+    );
+    assert.equal(f.remote.confirms, 1);
+    assert.equal(f.remote.paymentCalls, 0);
+  } finally {
+    f.close();
+  }
+});
+
+test("scoped reads stay isolated and never bypass fresh checkout or ownership validation", async () => {
+  const f = fixture(true, true);
+  try {
+    const flow = await prepare(f);
+    const saved = await f.service.view("session-a", flow, ["catalog"]);
+    f.remote.cart.version = "changed-on-merchant";
+    const [catalog, cart] = await Promise.all([
+      f.service.view("session-a", flow, ["catalog"]),
+      f.service.view("session-a", flow, ["cart"]),
+    ]);
+    assert.equal(catalog.cart.version, saved.cart.version);
+    assert.equal(cart.cart.version, "changed-on-merchant");
+    await assert.rejects(f.service.review("session-a", flow), /QUOTE_CHANGED/);
+    const before = f.remote.calls.length;
+    await assert.rejects(
+      f.service.view("other-session", flow, ["catalog"]),
+      /FLOW_NOT_OWNED/,
+    );
+    assert.equal(f.remote.calls.length, before);
+    assert.equal(f.remote.confirms, 0);
+  } finally {
+    f.close();
+  }
+});

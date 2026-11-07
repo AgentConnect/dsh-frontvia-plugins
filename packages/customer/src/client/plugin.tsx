@@ -1,3 +1,4 @@
+import type { ViewScope } from "../view-scope.js";
 import { Storefront } from "./storefront.js";
 import {
   items,
@@ -25,7 +26,7 @@ import { FlowViews } from "./flow-views.js";
 import { PaymentCard } from "./payment-card.js";
 import { shoppingStep } from "./shopping-progress.js";
 import { isRequiredContact as contactFieldRequired } from "../contact-fields.js";
-import React, { useEffect, useId, useRef, useState } from "react";
+import React, { useCallback, useEffect, useId, useRef, useState } from "react";
 import {
   ArrowRight,
   Check,
@@ -250,6 +251,23 @@ export function apply(ctx: any) {
   }) {
     const accountRevision = useAccountRevision();
     const [liveRevision, setLiveRevision] = useState(accountRevision);
+    const container = useRef<HTMLElement | null>(null);
+    const visible = useRef(typeof IntersectionObserver === "undefined");
+    const scope = useRef<ViewScope>(
+      resume || ["products", "connection"].includes(ui.card)
+        ? "catalog"
+        : ui.card === "order"
+          ? "order"
+          : "checkout",
+    );
+    const onViewChange = useCallback(
+      (next: ViewScope, refresh = true) => {
+        if (scope.current === next) return;
+        scope.current = next;
+        if (visible.current && refresh) views.invalidate(ui);
+      },
+      [ui.flowId, ui.sessionId],
+    );
     const dirtyForm = useRef(false);
     const acting = useRef(false);
     const canShop = resume || !!sendToAgent;
@@ -261,6 +279,19 @@ export function apply(ctx: any) {
         resume ? undefined : ui.card === "connection" ? "products" : ui.card,
       ),
       [tick, setTick] = useState(Date.now());
+    useEffect(() => {
+      if (resume) return;
+      const selected = tab ?? (liveData ? shoppingStep(liveData) : ui.card);
+      onViewChange(
+        selected === "products" || selected === "connection"
+          ? "catalog"
+          : selected === "order"
+            ? "order"
+            : selected === "cart"
+              ? "cart"
+              : "checkout",
+      );
+    }, [tab, liveData, resume, onViewChange]);
     const error = actionError || viewError;
     const data = withHistoricalCatalog(
       liveRevision === accountRevision ? liveData : undefined,
@@ -302,14 +333,29 @@ export function apply(ctx: any) {
       setTab(
         resume ? undefined : ui.card === "connection" ? "products" : ui.card,
       );
-      return views.subscribe(ui, (state) => {
-        setLiveRevision(accountRevision);
-        setData(state.value);
-        setViewError(state.error?.message ?? "");
-        if (state.value && !dirtyForm.current) {
-          setForm(contactFrom(state.value));
-        }
+      return views.subscribe(
+        ui,
+        (state) => {
+          setLiveRevision(accountRevision);
+          setData(state.value);
+          setViewError(state.error?.message ?? "");
+          if (state.value && !dirtyForm.current) {
+            setForm(contactFrom(state.value));
+          }
+        },
+        { scope: () => scope.current, visible: () => visible.current },
+      );
+    }, [ui.flowId, ui.sessionId, accountRevision]);
+    useEffect(() => {
+      if (typeof IntersectionObserver === "undefined" || !container.current)
+        return;
+      const observer = new IntersectionObserver(([entry]) => {
+        const entered = entry.isIntersecting && !visible.current;
+        visible.current = entry.isIntersecting;
+        if (entered) views.invalidate(ui);
       });
+      observer.observe(container.current);
+      return () => observer.disconnect();
     }, [ui.flowId, ui.sessionId, accountRevision]);
     useEffect(() => {
       const t = setInterval(() => setTick(Date.now()), 1000);
@@ -318,6 +364,7 @@ export function apply(ctx: any) {
     const action = async (op: string, payload: any = {}) => {
       if (acting.current) return false;
       acting.current = true;
+      const release = views.hold(ui);
       setBusy(op);
       setError("");
       if (op === "payment-start" || op === "order-cancel")
@@ -358,13 +405,15 @@ export function apply(ctx: any) {
           return false;
         }
       } catch (e: any) {
-        if (op === "order-cancel" || op === "shopping") views.invalidate(ui);
+        if (op === "order-cancel" || op === "shopping")
+          views.invalidate(ui, ["checkout"]);
         setError(op === "confirm" ? "CONFIRMATION_RESULT_UNKNOWN" : e.message);
         if (op === "confirm" && e.message !== "PERSONAL_ACCOUNT_CHANGED")
           views.publish(ui, { ...liveData, pending: true });
         return false;
       } finally {
         acting.current = false;
+        release();
         setBusy("");
       }
       return true;
@@ -442,17 +491,27 @@ export function apply(ctx: any) {
     };
     if (resume)
       return (
-        <Storefront
-          data={data}
-          busy={!!busy}
-          error={errorText[error] ?? error}
-          action={action}
-          now={tick}
-          startShopping={startShopping}
-        />
+        <div
+          ref={(node) => {
+            container.current = node;
+          }}
+        >
+          <Storefront
+            data={data}
+            busy={!!busy}
+            error={errorText[error] ?? error}
+            action={action}
+            now={tick}
+            startShopping={startShopping}
+            onViewChange={onViewChange}
+          />
+        </div>
       );
     return (
       <section
+        ref={(node) => {
+          container.current = node;
+        }}
         className={`fv${resume ? "" : " fv-inline"}`}
         aria-label="Frontvia 购物卡片"
         aria-busy={!!busy}
