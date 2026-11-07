@@ -2876,3 +2876,103 @@ test("scoped reads stay isolated and never bypass fresh checkout or ownership va
     f.close();
   }
 });
+
+test("catalog cache is scoped, explicit refresh reloads, and writes always revalidate capabilities", async (t) => {
+  let now = Date.now();
+  t.mock.method(Date, "now", () => now);
+  const f = fixture(true, true);
+  try {
+    const flow = await f.flow();
+    const act = (intent: any) =>
+      f.service.shopping("session-a", flow, { intent, actionId: randomUUID() });
+    f.remote.calls.length = 0;
+    await act({ action: "browse", query: "mug" });
+    await act({ action: "browse", query: "mug" });
+    assert.equal(
+      f.remote.calls.filter((m) => m === "commerce.products.search").length,
+      1,
+    );
+    await act({ action: "browse", query: "other" });
+    assert.equal(
+      f.remote.calls.filter((m) => m === "commerce.products.search").length,
+      2,
+    );
+    await act({ action: "browse", query: "mug", refresh: true });
+    assert.equal(
+      f.remote.calls.filter((m) => m === "commerce.products.search").length,
+      3,
+    );
+    now += 61000;
+    f.remote.calls.length = 0;
+    await act({ action: "browse", query: "mug" });
+    assert.deepEqual(
+      f.remote.calls,
+      ["commerce.products.search"],
+      "catalog expires at 60s but capabilities remain warm at 61s",
+    );
+    f.remote.generation = "new-authorization";
+    f.remote.calls.length = 0;
+    await act({ action: "browse", query: "mug" });
+    assert.deepEqual(f.remote.calls, [
+      "commerce.capabilities.get",
+      "commerce.products.search",
+    ]);
+    f.remote.methodAvailability["commerce.carts.create"] = "unsupported";
+    await assert.rejects(
+      act({
+        action: "add",
+        variantId: "variant",
+        productName: "Mug",
+        variantName: "Blue",
+        quantity: 1,
+      }),
+      /METHOD_UNAVAILABLE|CART_PROFILE_UNAVAILABLE/,
+    );
+    assert.equal(
+      f.remote.writes,
+      0,
+      "cached display capability must not authorize a revoked write",
+    );
+  } finally {
+    f.close();
+  }
+});
+
+test("product selection publishes only a complete detail and variants pair", async () => {
+  const f = fixture(true, true);
+  try {
+    const flow = await f.flow();
+    const original = f.service.pap.request;
+    const started: string[] = [],
+      release: (() => void)[] = [];
+    f.service.pap.request = async (ref, method, params, signal, options) => {
+      if (
+        ["commerce.products.get", "commerce.variants.list"].includes(method)
+      ) {
+        started.push(method);
+        await new Promise<void>((r) => release.push(r));
+      }
+      return original(ref, method, params, signal, options);
+    };
+    const result = f.service.shopping("session-a", flow, {
+      intent: { action: "product", productId: "prod" },
+      actionId: randomUUID(),
+    });
+    await new Promise((r) => setImmediate(r));
+    assert.deepEqual(started, ["commerce.products.get"]);
+    release.shift()!();
+    await new Promise((r) => setImmediate(r));
+    assert.deepEqual(started, [
+      "commerce.products.get",
+      "commerce.variants.list",
+    ]);
+    assert.equal(f.vault.get<any>(`flow:${flow}`).variantProductId, undefined);
+    release.splice(0).forEach((r) => r());
+    const view = await result;
+    assert.equal(view.products.items[0].description, "Ceramic mug");
+    assert.equal(view.variantProductId, "prod");
+    assert.equal(view.variants.items[0].product_id, "prod");
+  } finally {
+    f.close();
+  }
+});

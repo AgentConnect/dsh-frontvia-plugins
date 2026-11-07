@@ -5,7 +5,11 @@ import https from "node:https";
 import { EventEmitter } from "node:events";
 import { syncBuiltinESMExports } from "node:module";
 import type { ClientRequest, IncomingMessage } from "node:http";
-import { PinnedAgents, publicTransport } from "../src/network.js";
+import {
+  PinnedAgents,
+  PublicHostResolver,
+  publicTransport,
+} from "../src/network.js";
 
 function fixture(t: TestContext) {
   const record = {
@@ -21,6 +25,8 @@ function fixture(t: TestContext) {
     status: 0,
     answerName: undefined as string | undefined,
     failDns: false,
+    ttl: undefined as number | undefined,
+    now: 0,
   };
   t.mock.method(dns, "lookup", async (hostname: string) => {
     record.lookups.push(hostname);
@@ -70,6 +76,7 @@ function fixture(t: TestContext) {
                       Answer: [record.answer, ...record.extraAddresses].map(
                         (data) => ({
                           type: 1,
+                          TTL: record.ttl,
                           name:
                             record.answerName ??
                             url.searchParams.get("name") + ".",
@@ -89,6 +96,7 @@ function fixture(t: TestContext) {
     },
   );
   const agents = new PinnedAgents();
+  const resolver = new PublicHostResolver(agents, () => record.now);
   t.after(() => {
     agents.close();
     t.mock.restoreAll();
@@ -96,7 +104,8 @@ function fixture(t: TestContext) {
   });
   return {
     record,
-    wire: (origin: string) => publicTransport([origin], undefined, agents),
+    wire: (origin: string) =>
+      publicTransport([origin], (h, o) => resolver.resolve(h, o), agents),
   };
 }
 
@@ -228,4 +237,67 @@ test("unapproved origins cannot trigger system or public DNS lookup", async (t) 
   );
   assert.deepEqual(f.record.lookups, []);
   assert.deepEqual(f.record.requests, []);
+});
+
+test("Fake-IP fallback coalesces, honors bounded TTL, reuses DNS TLS and revalidates system DNS", async (t) => {
+  const f = fixture(t),
+    origin = "https://store.test";
+  f.record.ttl = 120;
+  const read = () => f.wire(origin)({ url: origin + "/rpc", method: "GET" });
+  await Promise.all([read(), read()]);
+  assert.equal(
+    f.record.requests.filter((r) => r.url.hostname === "dns.google").length,
+    1,
+  );
+  f.record.now = 59999;
+  await read();
+  assert.equal(
+    f.record.requests.filter((r) => r.url.hostname === "dns.google").length,
+    1,
+  );
+  f.record.now = 60000;
+  f.record.answer = "8.8.8.8";
+  await read();
+  const dnsRequests = f.record.requests.filter(
+    (r) => r.url.hostname === "dns.google",
+  );
+  assert.equal(dnsRequests.length, 2);
+  assert.equal(dnsRequests[0].options.agent, dnsRequests[1].options.agent);
+  assert.equal(f.record.requests.at(-1)!.address, "8.8.8.8");
+  f.record.addresses = [{ address: "127.0.0.1", family: 4 }];
+  const before = f.record.requests.length;
+  await assert.rejects(read(), /PUBLIC_HTTPS_REQUIRED/);
+  assert.equal(
+    f.record.requests.length,
+    before,
+    "cached public address cannot mask a private system answer",
+  );
+  f.record.addresses = [{ address: "198.18.1.1", family: 4 }];
+  f.record.ttl = 2;
+  await read();
+  f.record.now += 2000;
+  f.record.failDns = true;
+  await assert.rejects(read(), /NETWORK_FAILURE/);
+  assert.equal(
+    f.record.requests.at(-1)!.url.hostname,
+    "dns.google",
+    "no stale merchant request after expired DNS fails",
+  );
+});
+
+test("zero and missing TTL never cache DNS answers", async (t) => {
+  const f = fixture(t),
+    origin = "https://store.test";
+  for (const ttl of [undefined, 0, -1]) {
+    f.record.ttl = ttl;
+    const before = f.record.requests.length;
+    for (let i = 0; i < 2; i++)
+      await f.wire(origin)({ url: origin, method: "GET" });
+    assert.equal(
+      f.record.requests
+        .slice(before)
+        .filter((r) => r.url.hostname === "dns.google").length,
+      2,
+    );
+  }
 });

@@ -41,7 +41,13 @@ export const shoppingActionSchema = z
   .object({
     intent: z.union([
       cardIntentSchema,
-      z.object({ action: z.literal("product"), productId: id }).strict(),
+      z
+        .object({
+          action: z.literal("product"),
+          productId: id,
+          refresh: z.boolean().optional(),
+        })
+        .strict(),
       z
         .object({
           action: z.literal("variant-page"),
@@ -76,6 +82,7 @@ export const shoppingActionSchema = z
       z
         .object({
           action: z.literal("browse"),
+          refresh: z.boolean().optional(),
           query: z.string().trim().max(300).optional(),
           cursor: z.string().min(1).max(4096).optional(),
         })

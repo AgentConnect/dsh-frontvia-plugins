@@ -377,8 +377,12 @@ export class PapService {
           this.config.targets.some(
             (t) => t.origin === new URL(request.url).origin,
           )
-            ? httpsTransport(this.config.targets, this.config.caFile)(request)
-            : publicTransport(origins)(request)),
+            ? httpsTransport(
+                this.config.targets,
+                this.config.caFile,
+                this.agents,
+              )(request)
+            : publicTransport(origins, undefined, this.agents)(request)),
     );
     // Importing a link for a previously configured binding must retain its
     // local ID, sessions and account association rather than create a duplicate.

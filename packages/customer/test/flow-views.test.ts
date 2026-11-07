@@ -233,3 +233,56 @@ test("owner actions suppress background queueing and a failed edit refreshes car
   off();
   views.clear();
 });
+
+test("returning to a flow shows a bounded snapshot immediately and revalidates; account reset clears it", async () => {
+  let now = 0;
+  const reads: ReturnType<typeof deferred>[] = [];
+  const views = new FlowViews(
+    async () => {
+      const next = deferred();
+      reads.push(next);
+      return next.promise;
+    },
+    0,
+    () => true,
+    () => now,
+  );
+  let states: any[] = [];
+  let off = views.subscribe(ref, (s) => states.push(s));
+  await flush();
+  reads[0].resolve({
+    cart: { version: "v1" },
+    products: { items: [{ id: "p" }] },
+  });
+  await flush();
+  off();
+  states = [];
+  off = views.subscribe(ref, (s) => states.push(s));
+  assert.equal(states[0].value.cart.version, "v1");
+  await flush();
+  assert.equal(reads.length, 2);
+  reads[1].reject(Error("PERSONAL_ACCOUNT_CHANGED"));
+  await flush();
+  assert.equal(states.at(-1).value, undefined);
+  off();
+  off = views.subscribe(ref, (s) => states.push(s));
+  await flush();
+  reads[2].resolve({ cart: { version: "v2" } });
+  await flush();
+  off();
+  views.clear();
+  states = [];
+  off = views.subscribe(ref, (s) => states.push(s));
+  assert.equal(states[0].value, undefined);
+  await flush();
+  reads[3].resolve({ cart: { version: "v3" } });
+  await flush();
+  off();
+  now = 60000;
+  states = [];
+  off = views.subscribe(ref, (s) => states.push(s));
+  assert.equal(states[0].value, undefined);
+  off();
+  views.clear();
+  reads[4]?.resolve({});
+});

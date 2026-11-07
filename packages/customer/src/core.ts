@@ -191,7 +191,8 @@ export function modelData(value: any): any {
   return typeof value === "string" ? value.slice(0, 2000) : value;
 }
 export class CustomerService {
-  private capabilitiesCache = new ReadCache();
+  private capabilitiesCache = new ReadCache(120000);
+  private catalogCache = new ReadCache(60000, Date.now, 32);
   private views = new SharedReads();
   readonly consultation: ConsultationService;
   private serial = new Serial();
@@ -254,25 +255,56 @@ export class CustomerService {
     params = {},
     signal?: AbortSignal,
   ) {
+    signal?.throwIfAborted();
     if (method !== "capabilities.get")
       this.requireMethod(f, `commerce.${method}`);
-    const r = await this.pap
-      .request(f.connectionRef, `commerce.${method}`, params, signal)
-      .catch((error) => {
+    const fetch = async () => {
+      try {
+        const r = await this.pap.request(
+          f.connectionRef,
+          `commerce.${method}`,
+          params,
+          signal,
+        );
+        if (r.error)
+          fail(
+            typeof r.error.data?.type === "string" &&
+              /^[A-Z_]{1,70}$/.test(r.error.data.type)
+              ? r.error.data.type
+              : `COMMERCE_${r.error.code}`,
+          );
+        if (!r.result || !("data" in r.result))
+          fail("INVALID_COMMERCE_RESPONSE");
+        return r.result.data;
+      } catch (error) {
         this.capabilitiesCache.clear();
+        this.catalogCache.clear();
         throw error;
-      });
-    if (r.error) {
-      this.capabilitiesCache.clear();
-      fail(
-        typeof r.error.data?.type === "string" &&
-          /^[A-Z_]{1,70}$/.test(r.error.data.type)
-          ? r.error.data.type
-          : `COMMERCE_${r.error.code}`,
-      );
-    }
-    if (!r.result || !("data" in r.result)) fail("INVALID_COMMERCE_RESPONSE");
-    return r.result.data;
+      }
+    };
+    const catalog = [
+      "products.search",
+      "products.get",
+      "variants.list",
+    ].includes(method);
+    const generation =
+      catalog && this.pap.capabilityCacheKey?.(f.connectionRef);
+    // Display metadata only. Transaction state is never served from this cache.
+    return catalog
+      ? this.catalogCache.get(
+          generation
+            ? canonical([
+                f.sessionId,
+                f.siteId,
+                f.storeId,
+                generation,
+                method,
+                params,
+              ])
+            : undefined,
+          fetch,
+        )
+      : fetch();
   }
   private requireMethod(f: Flow, method: string) {
     const advertised = this.pap.sites().find((s) => s.id === f.siteId)
@@ -288,6 +320,7 @@ export class CustomerService {
       fail("METHOD_UNAVAILABLE");
   }
   private async currentCapabilities(f: Flow, fresh = false) {
+    if (fresh) this.catalogCache.clear();
     const key = this.pap.capabilityCacheKey?.(f.connectionRef);
     const cap = await this.capabilitiesCache.get(
       key ? `${f.siteId}:${key}` : undefined,
@@ -668,16 +701,36 @@ export class CustomerService {
         f.products = data;
         delete f.variants;
         delete f.variantProductId;
-      } else if (args.action === "get") {
-        data = await this.read(
-          f,
-          "products.get",
-          { product_id: id.parse(args.product_id), context: pricing(f) },
-          signal,
-        );
+      } else if (args.action === "get" || args.action === "detail") {
+        const product_id = id.parse(args.product_id),
+          context = pricing(f);
+        if (args.action === "detail") {
+          // Publish the pair atomically under the existing flow lease. Real
+          // merchant measurements did not justify concurrent connection reads.
+          data = await this.read(
+            f,
+            "products.get",
+            { product_id, context },
+            signal,
+          );
+          f.variants = await this.read(
+            f,
+            "variants.list",
+            { product_id, context, page: { limit: 20 } },
+            signal,
+          );
+          f.variantProductId = product_id;
+        } else {
+          data = await this.read(
+            f,
+            "products.get",
+            { product_id, context },
+            signal,
+          );
+          delete f.variants;
+          delete f.variantProductId;
+        }
         f.products = { items: [data] };
-        delete f.variants;
-        delete f.variantProductId;
       } else if (args.action === "variants") {
         data = await this.read(
           f,
@@ -927,6 +980,7 @@ export class CustomerService {
       };
       switch (intent.action) {
         case "browse":
+          if (intent.refresh) this.catalogCache.clear();
           await run(
             "frontvia_products",
             {
@@ -938,15 +992,11 @@ export class CustomerService {
           );
           break;
         case "product":
+          if (intent.refresh) this.catalogCache.clear();
           await run(
             "frontvia_products",
-            { action: "get", product_id: intent.productId },
+            { action: "detail", product_id: intent.productId },
             "product",
-          );
-          await run(
-            "frontvia_products",
-            { action: "variants", product_id: intent.productId },
-            "variants",
           );
           break;
         case "variant-page":

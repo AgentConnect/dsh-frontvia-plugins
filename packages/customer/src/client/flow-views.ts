@@ -56,10 +56,12 @@ export function pollCadence(data: any, scopes: ViewScope[]): number {
 /** Same-flow cards share results; only visible interests drive reads and polling. */
 export class FlowViews {
   private entries = new Map<string, Entry>();
+  private snapshots = new Map<string, { expires: number; state: State }>();
   constructor(
     private read: (ref: Ref & { scopes: ViewScope[] }) => Promise<any>,
     private interval = 15000,
     private active = () => true,
+    private clock = Date.now,
   ) {}
   private key(ref: Ref) {
     return JSON.stringify([ref.sessionId, ref.flowId]);
@@ -83,10 +85,16 @@ export class FlowViews {
   ) {
     const key = this.key(ref);
     let entry = this.entries.get(key);
+    let restored = false;
     if (!entry) {
+      const snapshot = this.snapshots.get(key);
+      this.snapshots.delete(key);
+      const state =
+        snapshot && snapshot.expires > this.clock() ? snapshot.state : {};
+      restored = !!state.value;
       entry = {
         ref: { sessionId: ref.sessionId, flowId: ref.flowId },
-        state: {},
+        state,
         listeners: new Map(),
         version: 0,
         holds: 0,
@@ -111,13 +119,29 @@ export class FlowViews {
     const own = entry;
     own.listeners.set(listener, interest);
     listener(own.state);
-    if (!own.state.value && interest.visible?.() !== false)
+    if ((!own.state.value || restored) && interest.visible?.() !== false)
       void this.refresh(ref).catch(() => {});
     return () => {
       own.listeners.delete(listener);
       if (!own.listeners.size) {
         clearInterval(own.timer);
-        if (this.entries.get(key) === own) this.entries.delete(key);
+        if (this.entries.get(key) === own) {
+          this.entries.delete(key);
+          // Short-lived display only; remount always revalidates. Account changes
+          // clear both maps. Bound retained snapshots to roughly four MiB.
+          if (
+            own.state.value &&
+            !own.state.error &&
+            JSON.stringify(own.state.value).length <= 256 * 1024
+          ) {
+            if (this.snapshots.size >= 8)
+              this.snapshots.delete(this.snapshots.keys().next().value!);
+            this.snapshots.set(key, {
+              expires: this.clock() + 60000,
+              state: own.state,
+            });
+          }
+        }
       }
     };
   }
@@ -144,6 +168,7 @@ export class FlowViews {
           return value;
         },
         (error) => {
+          this.snapshots.delete(key);
           // Never retain private data after an ownership/login rejection.
           if (current()) {
             entry.state = { error };
@@ -186,6 +211,7 @@ export class FlowViews {
     };
   }
   publish(ref: Ref, value: any) {
+    this.snapshots.delete(this.key(ref));
     const entry = this.entries.get(this.key(ref));
     if (!entry) return;
     ++entry.version;
@@ -194,6 +220,7 @@ export class FlowViews {
     this.emit(entry);
   }
   invalidate(ref: Ref, scopes?: ViewScope[]) {
+    this.snapshots.delete(this.key(ref));
     const entry = this.entries.get(this.key(ref));
     if (!entry) return;
     if (entry.pending || entry.holds) {
@@ -210,6 +237,7 @@ export class FlowViews {
       if (this.scopes(entry).length) this.invalidate(entry.ref);
   }
   clear() {
+    this.snapshots.clear();
     const entries = [...this.entries.values()];
     this.entries.clear();
     for (const entry of entries) {

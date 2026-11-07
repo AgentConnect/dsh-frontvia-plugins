@@ -250,8 +250,18 @@ export function Storefront({
     if (data.variantProductId && data.variants) setDetail(true);
     if (data.intent?.submitted || data.order) setTab("orders");
     else if (data.quote) setTab("checkout");
-    if (!data.products && !data.intent?.submitted && !data.order && !data.quote)
-      void shop({ action: "browse" });
+    // A restored view is display-only. Keep it visible while revalidating the
+    // current catalog, even when the persisted flow already contains products.
+    if (!data.intent?.submitted && !data.order && !data.quote)
+      void shop(
+        data.variantProductId
+          ? {
+              action: "product",
+              productId: data.variantProductId,
+              refresh: true,
+            }
+          : { action: "browse", refresh: true },
+      );
   }, [data]);
   const locked = !!data?.intent?.submitted || !!data?.order;
   const blocked = busy || !!data?.pending;
@@ -382,7 +392,17 @@ export function Storefront({
                 size="icon"
                 aria-label="刷新店铺数据"
                 disabled={busy}
-                onClick={() => action("view")}
+                onClick={() =>
+                  tab === "products"
+                    ? detail && data.variantProductId
+                      ? shop({
+                          action: "product",
+                          productId: data.variantProductId,
+                          refresh: true,
+                        })
+                      : shop({ action: "browse", query, refresh: true })
+                    : action("view")
+                }
               >
                 {busy ? <Spinner /> : <RefreshCw />}
               </Button>
