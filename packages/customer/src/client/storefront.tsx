@@ -1,3 +1,4 @@
+import type { StartShopping } from "./storefront-cart.js";
 import type { ViewScope } from "../view-scope.js";
 import React, { useEffect, useId, useRef, useState } from "react";
 import {
@@ -43,18 +44,22 @@ import {
   TabsContent,
 } from "./ui.js";
 import { items, money, Lines, Totals, Order } from "./commerce-display.js";
+import { OrderList } from "./order-list.js";
+import { storefrontOrders } from "./order-summary.js";
 import { productImage } from "./product-image.js";
-import { PaymentCard } from "./payment-card.js";
-import { isRequiredContact } from "../contact-fields.js";
+import { PaymentCard, paymentState } from "./payment-card.js";
+import { isRequiredContact, cartContactReady } from "../contact-fields.js";
 import type { ShoppingAction } from "../shopping-action.js";
 type Action = (operation: string, payload?: any) => Promise<boolean>;
 type Props = {
   data: any;
   busy: boolean;
   error: string;
+  errorCode?: string;
   action: Action;
   now: number;
-  startShopping?: () => void;
+  startShopping?: StartShopping;
+  addedQuantity?: number;
   onViewChange?: (scope: ViewScope, refresh?: boolean) => void;
 };
 const steps = [
@@ -211,48 +216,97 @@ export function Storefront({
   data,
   busy,
   error,
+  errorCode,
   action,
   now,
   startShopping,
+  addedQuantity,
   onViewChange,
 }: Props) {
   const [tab, setTab] = useState("products");
   const [step, setStep] = useState<number>();
   const [query, setQuery] = useState("");
   const [detail, setDetail] = useState(false);
-  const [notice, setNotice] = useState("");
+  const [notice, setNotice] = useState(
+    addedQuantity ? `已加入 ${addedQuantity} 件商品` : "",
+  );
+  const [quantities, setQuantities] = useState<Record<string, string>>({});
+  const [addedVariant, setAddedVariant] = useState<string>();
+  const [startingCart, setStartingCart] = useState(false);
+  useEffect(() => {
+    if (!notice || !data) return;
+    const timer = setTimeout(() => setNotice(""), 5000);
+    return () => clearTimeout(timer);
+  }, [notice, !!data]);
   const [orderDetail, setOrderDetail] = useState(false);
+  const [showOrderDetails, setShowOrderDetails] = useState(false);
+  const ordersRequested = useRef(false);
+  const [ordersAfterFirstPage, setOrdersAfterFirstPage] = useState(false);
   const [paymentSelected, setPaymentSelected] = useState(false);
   useEffect(() => {
     onViewChange?.(
       tab === "products"
         ? "catalog"
         : tab === "orders"
-          ? orderDetail
+          ? showOrderDetails && orderDetail
             ? "order-detail"
             : "order"
           : tab === "cart"
             ? "cart"
             : "checkout",
-      !orderDetail,
+      !(showOrderDetails && orderDetail),
     );
-  }, [tab, orderDetail, onViewChange]);
+  }, [tab, orderDetail, showOrderDetails, onViewChange]);
   const initialized = useRef(false);
-  const shop = (intent: ShoppingAction["intent"]) =>
-    action("shopping", {
+  const checkedPending = useRef(false);
+  useEffect(() => {
+    if (!data?.pending) {
+      checkedPending.current = false;
+      return;
+    }
+    if (busy || checkedPending.current) return;
+    const timer = setTimeout(
+      () => {
+        checkedPending.current = true;
+        void action(
+          data.canDiscardCartAddition ? "discard-cart-add" : "recover",
+        );
+      },
+      data.canDiscardCartAddition ? 0 : 1500,
+    );
+    return () => clearTimeout(timer);
+  }, [data?.pending, data?.canDiscardCartAddition, busy]);
+  const shop = async (intent: ShoppingAction["intent"]) => {
+    if (intent.action === "add" && (data?.intent?.submitted || data?.order)) {
+      if (!startShopping) return false;
+      setStartingCart(true);
+      try {
+        return await startShopping(intent);
+      } finally {
+        setStartingCart(false);
+      }
+    }
+    return action("shopping", {
       intent,
       expected_version: data?.cart?.version,
       actionId: crypto.randomUUID(),
     });
+  };
   useEffect(() => {
     if (!data || initialized.current) return;
     initialized.current = true;
-    if (data.variantProductId && data.variants) setDetail(true);
+    if (!addedQuantity && data.variantProductId && data.variants)
+      setDetail(true);
     if (data.intent?.submitted || data.order) setTab("orders");
-    else if (data.quote) setTab("checkout");
+    else if (data.quote || data.cart?.lines?.length) setTab("cart");
     // A restored view is display-only. Keep it visible while revalidating the
     // current catalog, even when the persisted flow already contains products.
-    if (!data.intent?.submitted && !data.order && !data.quote)
+    if (
+      !data.intent?.submitted &&
+      !data.order &&
+      !data.quote &&
+      !data.cart?.lines?.length
+    )
       void shop(
         data.variantProductId
           ? {
@@ -263,18 +317,71 @@ export function Storefront({
           : { action: "browse", refresh: true },
       );
   }, [data]);
+  useEffect(() => {
+    if (
+      tab !== "orders" ||
+      !data ||
+      busy ||
+      data.orders ||
+      ordersRequested.current
+    )
+      return;
+    ordersRequested.current = true;
+    void shop({ action: "orders" });
+  }, [tab, data, busy]);
   const locked = !!data?.intent?.submitted || !!data?.order;
-  const blocked = busy || !!data?.pending;
+  const blocked = busy || startingCart || !!data?.pending;
+  useEffect(() => {
+    if (tab !== "checkout" || !data?.order) return;
+    if (
+      ["paid", "closed", "refunded", "partially_refunded"].includes(
+        paymentState(data, now),
+      )
+    ) {
+      setOrderDetail(false);
+      setShowOrderDetails(true);
+      setTab("orders");
+    }
+  }, [tab, data, now]);
+  const contactReady = cartContactReady(data?.cart, data?.pricing?.country);
   const checkoutStep = locked
     ? 4
-    : (step ??
-      (data?.intent
-        ? 3
-        : data?.quote
-          ? 2
-          : data?.cart?.shipping_address
-            ? 1
-            : 0));
+    : !contactReady
+      ? 0
+      : (step ?? (data?.intent ? 3 : data?.quote ? 2 : 1));
+  const deliveryRequested = useRef(false);
+  const [preparingDelivery, setPreparingDelivery] = useState(false);
+  const prepareDelivery = async () => {
+    setPreparingDelivery(true);
+    try {
+      await shop({ action: "prepare-delivery" });
+    } finally {
+      setPreparingDelivery(false);
+    }
+  };
+  useEffect(() => {
+    if (tab !== "checkout" || checkoutStep !== 1) {
+      deliveryRequested.current = false;
+      return;
+    }
+    if (blocked || deliveryRequested.current || !data?.cart) return;
+    deliveryRequested.current = true;
+    void prepareDelivery();
+  }, [tab, checkoutStep, blocked, data?.cart]);
+  const deliveryCurrent =
+    !!data?.delivery &&
+    !!data?.cart &&
+    data.delivery.cart_id === data?.cart?.id &&
+    data?.delivery?.cart_version === data?.cart?.version;
+  const deliveryGroups = deliveryCurrent
+    ? (data.delivery.delivery_groups ?? [])
+    : [];
+  const deliveryReady =
+    deliveryGroups.length > 0 &&
+    !data.delivery.requirements?.some((r: any) => r.blocking) &&
+    deliveryGroups.every((g: any) =>
+      g.options.some((o: any) => o.id === g.selected_option_id),
+    );
   const quoteExpired = !data?.quote || Date.parse(data.quote.expires_at) <= now;
   const intentExpired = !data?.intent || data.intent.expiresAt <= now;
   const cartLines = locked ? [] : (data?.cart?.lines ?? []);
@@ -302,6 +409,32 @@ export function Storefront({
     (p: any) => p.id === data?.variantProductId,
   );
   const image = productImage(product);
+  const pendingLabel =
+    (
+      {
+        "cart-add": "加购",
+        "cart-update": "修改数量",
+        "cart-remove": "移除商品",
+        contact: "保存收货信息",
+        delivery: "选择配送方式",
+        quote: "获取报价",
+        checkout: "准备结账",
+        order: "提交订单",
+        cancel: "取消订单",
+      } as Record<string, string>
+    )[data?.pendingAction] ?? "请求";
+  const pendingError =
+    error &&
+    ![
+      "ORIGINAL_RESULT_UNKNOWN",
+      "RESOLVE_PENDING_OPERATION",
+      "NETWORK_UNCERTAIN",
+      "NETWORK_TIMEOUT",
+      "NETWORK_FAILURE",
+      "CONFIRMATION_RESULT_UNKNOWN",
+    ].includes(errorCode ?? "")
+      ? error
+      : undefined;
   const selectedOrder = orderDetail ? data?.viewedOrder : data?.order;
   return (
     <section
@@ -309,7 +442,7 @@ export function Storefront({
       aria-label="店铺商城"
       aria-busy={busy}
     >
-      {error && (
+      {error && !data?.pending && (
         <Alert variant="destructive">
           <AlertDescription>{error}</AlertDescription>
           <Button
@@ -331,10 +464,36 @@ export function Storefront({
           {data.pending && (
             <Alert variant="warning">
               <AlertDescription>
-                上次操作结果尚未明确，请先核对结果。
+                {busy
+                  ? `正在处理${pendingLabel}…`
+                  : pendingError ||
+                    (data.canDiscardCartAddition
+                      ? "正在更新购物车…"
+                      : data.canRetryCart
+                        ? `${pendingLabel}暂未完成，请重试。`
+                        : "状态暂未更新，请稍后刷新。")}
               </AlertDescription>
-              <Button disabled={busy} onClick={() => action("recover")}>
-                核对原操作
+              <Button
+                disabled={busy}
+                onClick={() =>
+                  action(
+                    data.canDiscardCartAddition
+                      ? "discard-cart-add"
+                      : data.canRetryCart
+                        ? "retry-cart"
+                        : "recover",
+                  )
+                }
+              >
+                {busy ? (
+                  <Spinner />
+                ) : data.canDiscardCartAddition ? (
+                  "取消等待"
+                ) : data.canRetryCart ? (
+                  "重试"
+                ) : (
+                  "刷新状态"
+                )}
               </Button>
             </Alert>
           )}
@@ -345,14 +504,14 @@ export function Storefront({
               </AlertDescription>
             </Alert>
           )}
-          {notice && (
-            <p role="status" className="fv-store-notice">
+          {notice && !detail && tab === "products" && (
+            <div role="status" className="fv-store-notice">
               <Check />
               {notice}
               <Button variant="ghost" size="sm" onClick={() => setTab("cart")}>
                 查看购物车
               </Button>
-            </p>
+            </div>
           )}
           <Tabs
             value={tab}
@@ -361,58 +520,54 @@ export function Storefront({
               if (value === "products" && !data.products) void browse();
               if (value === "orders") {
                 setOrderDetail(false);
-                void shop({ action: "orders" });
+                setShowOrderDetails(false);
               }
             }}
           >
-            <div className="fv-shop-navigation">
-              <TabsList aria-label="店铺导航">
-                <TabsTrigger value="products">
-                  <ShoppingBag />
-                  商品
-                </TabsTrigger>
-                <TabsTrigger value="cart">
-                  <ShoppingCart />
-                  购物车 {count > 0 ? `(${count})` : ""}
-                </TabsTrigger>
-                <TabsTrigger
-                  value="checkout"
-                  disabled={!cartLines.length && !locked}
+            {tab !== "checkout" && (
+              <div className="fv-shop-navigation">
+                <TabsList aria-label="店铺导航">
+                  <TabsTrigger value="products">
+                    <ShoppingBag />
+                    商品
+                  </TabsTrigger>
+                  <TabsTrigger value="cart">
+                    <ShoppingCart />
+                    购物车 {count > 0 ? `(${count})` : ""}
+                  </TabsTrigger>
+                  <TabsTrigger value="orders">
+                    <Package />
+                    我的订单
+                  </TabsTrigger>
+                </TabsList>
+                <Button
+                  variant="ghost"
+                  size="icon"
+                  aria-label="刷新店铺数据"
+                  disabled={busy}
+                  onClick={() =>
+                    tab === "products"
+                      ? detail && data.variantProductId
+                        ? shop({
+                            action: "product",
+                            productId: data.variantProductId,
+                            refresh: true,
+                          })
+                        : shop({ action: "browse", query, refresh: true })
+                      : action("view")
+                  }
                 >
-                  <CreditCard />
-                  结账
-                </TabsTrigger>
-                <TabsTrigger value="orders">
-                  <Package />
-                  我的订单
-                </TabsTrigger>
-              </TabsList>
-              <Button
-                variant="ghost"
-                size="icon"
-                aria-label="刷新店铺数据"
-                disabled={busy}
-                onClick={() =>
-                  tab === "products"
-                    ? detail && data.variantProductId
-                      ? shop({
-                          action: "product",
-                          productId: data.variantProductId,
-                          refresh: true,
-                        })
-                      : shop({ action: "browse", query, refresh: true })
-                    : action("view")
-                }
-              >
-                {busy ? <Spinner /> : <RefreshCw />}
-              </Button>
-            </div>
+                  {busy ? <Spinner /> : <RefreshCw />}
+                </Button>
+              </div>
+            )}
             <TabsContent value="products">
               <div className="fv-stack">
                 {detail ? (
                   <>
                     <Button
                       variant="ghost"
+                      className="fv-back-link"
                       onClick={() => browse()}
                       disabled={busy}
                     >
@@ -445,6 +600,19 @@ export function Storefront({
                               ["out_of_stock", "unavailable"].includes(
                                 v.availability?.status,
                               ) || v.availability?.quantity_available === 0;
+                            const quantityText = quantities[v.id] ?? "1";
+                            const quantity = Number(quantityText);
+                            const stock = v.availability?.quantity_available;
+                            const maximum =
+                              typeof stock === "number" &&
+                              Number.isFinite(stock)
+                                ? Math.max(0, Math.min(100, Math.floor(stock)))
+                                : 100;
+                            const validQuantity =
+                              quantityText.trim() !== "" &&
+                              Number.isInteger(quantity) &&
+                              quantity >= 1 &&
+                              quantity <= maximum;
                             return (
                               <Card key={v.id}>
                                 <CardHeader>
@@ -455,8 +623,15 @@ export function Storefront({
                                   </CardTitle>
                                   <CardDescription>
                                     {v.selected_options
-                                      ?.map((o: any) => `${o.name}：${o.value}`)
-                                      .join(" · ") || v.sku}
+                                      ?.filter(
+                                        (o: any) =>
+                                          !(
+                                            o.name === "Default" &&
+                                            o.value === "Default"
+                                          ),
+                                      )
+                                      .map((o: any) => `${o.name}：${o.value}`)
+                                      .join(" · ")}
                                   </CardDescription>
                                 </CardHeader>
                                 <CardContent>
@@ -472,32 +647,97 @@ export function Storefront({
                                         : "库存以下单时核对为准"}
                                   </p>
                                 </CardContent>
-                                <CardFooter>
+                                <CardFooter className="fv-add-to-cart">
+                                  <Field
+                                    data-invalid={
+                                      !validQuantity && !unavailable
+                                    }
+                                  >
+                                    <FieldLabel>
+                                      购买数量
+                                      <Input
+                                        type="number"
+                                        inputMode="numeric"
+                                        min={1}
+                                        max={maximum}
+                                        step={1}
+                                        aria-label={`${v.title === "Default" ? "默认规格" : v.title}购买数量`}
+                                        aria-invalid={
+                                          !validQuantity && !unavailable
+                                        }
+                                        value={quantityText}
+                                        disabled={blocked || unavailable}
+                                        onChange={(e) => {
+                                          setQuantities((previous) => ({
+                                            ...previous,
+                                            [v.id]: e.target.value,
+                                          }));
+                                          setNotice("");
+                                        }}
+                                      />
+                                    </FieldLabel>
+                                  </Field>
                                   <Button
                                     disabled={
                                       blocked ||
                                       unavailable ||
+                                      !validQuantity ||
                                       !data.cartReady ||
-                                      locked ||
-                                      !!data.checkout
+                                      (locked
+                                        ? !startShopping
+                                        : !!data.checkout)
                                     }
                                     onClick={async () => {
+                                      if (!validQuantity) return;
+                                      setNotice("");
                                       if (
                                         await shop({
                                           action: "add",
                                           variantId: v.id,
                                           productName: product?.title ?? "商品",
                                           variantName: v.title ?? "默认规格",
-                                          quantity: 1,
+                                          quantity,
                                         })
-                                      )
-                                        setNotice("已加入购物车");
+                                      ) {
+                                        setAddedVariant(v.id);
+                                        setNotice(`已加入 ${quantity} 件商品`);
+                                      }
                                     }}
                                   >
-                                    <ShoppingCart data-icon="inline-start" />
-                                    加入购物车
+                                    {startingCart ? (
+                                      <Spinner />
+                                    ) : (
+                                      <ShoppingCart data-icon="inline-start" />
+                                    )}
+                                    {startingCart
+                                      ? "正在加入购物车"
+                                      : "加入购物车"}
                                   </Button>
                                 </CardFooter>
+                                {!validQuantity && !unavailable && (
+                                  <p
+                                    className="fv-field-error fv-add-error"
+                                    role="status"
+                                  >
+                                    请输入 1–{maximum} 之间的整数
+                                  </p>
+                                )}
+                                {notice && addedVariant === v.id && (
+                                  <div
+                                    role="status"
+                                    className="fv-store-notice"
+                                  >
+                                    <Check />
+                                    <span>{notice}</span>
+                                    <Button
+                                      variant="outline"
+                                      size="sm"
+                                      onClick={() => setTab("cart")}
+                                    >
+                                      查看购物车
+                                    </Button>
+                                  </div>
+                                )}
                               </Card>
                             );
                           })
@@ -522,11 +762,9 @@ export function Storefront({
                               下一页规格
                             </Button>
                           )}
-                        {(locked || data.checkout) && (
+                        {!locked && data.checkout && (
                           <p className="fv-muted">
-                            {locked
-                              ? "这次购物已提交订单，可在店铺顶部开始新的购物。"
-                              : "已准备结账，如需加购请先返回购物车修改。"}
+                            已准备结账，如需加购请先返回购物车修改。
                           </p>
                         )}
                       </div>
@@ -660,94 +898,113 @@ export function Storefront({
             <TabsContent value="cart">
               <div className="fv-stack">
                 <div className="fv-section-heading">
-                  <h3>购物车</h3>
+                  <div className="fv-row">
+                    <h3>购物车</h3>
+                    {notice && (
+                      <span role="status" className="fv-cart-notice">
+                        <Check aria-hidden />
+                        {notice}
+                      </span>
+                    )}
+                  </div>
                   <Badge>{count} 件商品</Badge>
                 </div>
                 {cartLines.length ? (
-                  <div className="fv-checkout-layout">
-                    <div className="fv-stack">
-                      {cartLines.map((line: any) => (
-                        <div className="fv-cart-item" key={line.id}>
-                          <div className="fv-line-image">
-                            <Package />
-                          </div>
-                          <div className="fv-stack">
-                            <h4>
-                              {line.title ??
-                                line.product_title ??
-                                line.variant_title}
-                            </h4>
-                            <p className="fv-muted">{line.variant_title}</p>
-                            <div className="fv-row">
-                              <Button
-                                variant="outline"
-                                size="sm"
-                                aria-label={`减少 ${line.title ?? "商品"} 数量`}
-                                disabled={
-                                  blocked || locked || line.quantity <= 1
-                                }
-                                onClick={() =>
-                                  shop({
-                                    action: "update-line",
-                                    lineId: line.id,
-                                    quantity: line.quantity - 1,
-                                  })
-                                }
-                              >
-                                −
-                              </Button>
-                              <span aria-label="商品数量">{line.quantity}</span>
-                              <Button
-                                variant="outline"
-                                size="sm"
-                                aria-label={`增加 ${line.title ?? "商品"} 数量`}
-                                disabled={
-                                  blocked || locked || line.quantity >= 100
-                                }
-                                onClick={() =>
-                                  shop({
-                                    action: "update-line",
-                                    lineId: line.id,
-                                    quantity: line.quantity + 1,
-                                  })
-                                }
-                              >
-                                +
-                              </Button>
-                              <Button
-                                variant="ghost"
-                                size="sm"
-                                aria-label={`移除 ${line.title ?? "商品"}`}
-                                disabled={blocked || locked}
-                                onClick={() =>
-                                  shop({
-                                    action: "remove-line",
-                                    lineId: line.id,
-                                  })
-                                }
-                              >
-                                <Trash2 data-icon="inline-start" />
-                                移除
-                              </Button>
+                  <div className="fv-checkout-layout fv-cart-layout">
+                    <Card className="fv-cart-panel">
+                      <CardContent className="fv-cart-lines">
+                        {cartLines.map((line: any) => (
+                          <div className="fv-cart-item" key={line.id}>
+                            <div className="fv-line-image">
+                              <Package />
                             </div>
+                            <div className="fv-stack">
+                              <h4>
+                                {line.title ??
+                                  line.product_title ??
+                                  line.variant_title}
+                              </h4>
+                              <p className="fv-muted">
+                                {line.variant_title === "Default"
+                                  ? "默认规格"
+                                  : line.variant_title}
+                              </p>
+                              <div className="fv-row">
+                                <Button
+                                  variant="outline"
+                                  size="sm"
+                                  aria-label={`减少 ${line.title ?? "商品"} 数量`}
+                                  disabled={
+                                    blocked || locked || line.quantity <= 1
+                                  }
+                                  onClick={() =>
+                                    shop({
+                                      action: "update-line",
+                                      lineId: line.id,
+                                      quantity: line.quantity - 1,
+                                    })
+                                  }
+                                >
+                                  −
+                                </Button>
+                                <span aria-label="商品数量">
+                                  {line.quantity}
+                                </span>
+                                <Button
+                                  variant="outline"
+                                  size="sm"
+                                  aria-label={`增加 ${line.title ?? "商品"} 数量`}
+                                  disabled={
+                                    blocked || locked || line.quantity >= 100
+                                  }
+                                  onClick={() =>
+                                    shop({
+                                      action: "update-line",
+                                      lineId: line.id,
+                                      quantity: line.quantity + 1,
+                                    })
+                                  }
+                                >
+                                  +
+                                </Button>
+                                <Button
+                                  variant="ghost"
+                                  size="sm"
+                                  aria-label={`移除 ${line.title ?? "商品"}`}
+                                  disabled={blocked || locked}
+                                  onClick={() =>
+                                    shop({
+                                      action: "remove-line",
+                                      lineId: line.id,
+                                    })
+                                  }
+                                >
+                                  <Trash2 data-icon="inline-start" />
+                                  移除
+                                </Button>
+                              </div>
+                            </div>
+                            <span className="fv-price">
+                              {money(
+                                line.totals?.grand_total ??
+                                  line.total ??
+                                  line.unit_price,
+                              )}
+                            </span>
                           </div>
-                          <span className="fv-price">
-                            {money(
-                              line.totals?.grand_total ??
-                                line.total ??
-                                line.unit_price,
-                            )}
-                          </span>
-                        </div>
-                      ))}
-                      <Button
-                        variant="ghost"
-                        onClick={() => setTab("products")}
-                      >
-                        <ArrowLeft data-icon="inline-start" />
-                        继续选购
-                      </Button>
-                    </div>
+                        ))}
+                      </CardContent>
+                      <CardFooter>
+                        <Button
+                          variant="ghost"
+                          className="fv-back-link"
+                          onClick={() => setTab("products")}
+                        >
+                          <ArrowLeft data-icon="inline-start" />
+                          继续选购
+                        </Button>
+                      </CardFooter>
+                    </Card>
                     <Card className="fv-checkout-summary">
                       <CardHeader>
                         <CardTitle>订单摘要</CardTitle>
@@ -778,10 +1035,16 @@ export function Storefront({
                               disabled={blocked || !data.purchaseReady}
                               onClick={() => {
                                 setTab("checkout");
-                                setStep(undefined);
+                                // New checkout always starts with reviewing the
+                                // address, even if the merchant prefilled it.
+                                setStep(
+                                  data.quote || data.checkout ? undefined : 0,
+                                );
                               }}
                             >
-                              去结账
+                              {data.quote || data.checkout
+                                ? "继续结账"
+                                : "去结账"}
                               <ArrowRight data-icon="inline-end" />
                             </Button>
                             {!data.purchaseReady && (
@@ -803,84 +1066,118 @@ export function Storefront({
                         ? "已提交的商品保留在订单中，不再占用购物车。"
                         : "去逛逛，选一件喜欢的商品。"}
                     </EmptyDescription>
-                    <Button
-                      disabled={busy}
-                      onClick={
-                        locked ? startShopping : () => setTab("products")
-                      }
-                    >
-                      {locked ? "开始新的购物" : "浏览商品"}
+                    <Button disabled={busy} onClick={() => setTab("products")}>
+                      浏览商品
                     </Button>
                     {locked && (
                       <Button variant="ghost" onClick={() => setTab("orders")}>
-                        查看原订单
+                        查看订单
                       </Button>
                     )}
                   </Empty>
                 )}
               </div>
             </TabsContent>
-            <TabsContent value="checkout">
-              <div className="fv-stack">
-                <h3>结账</h3>
-                <ol className="fv-checkout-steps" aria-label="结账进度">
-                  {steps.map((label, index) => (
-                    <li
-                      key={label}
-                      aria-current={checkoutStep === index ? "step" : undefined}
-                      data-complete={index < checkoutStep}
+            {tab === "checkout" && (
+              <section aria-label="结账流程" className="fv-checkout-process">
+                <div className="fv-stack">
+                  <div className="fv-section-heading">
+                    <div>
+                      <h3>结账</h3>
+                      <p className="fv-description">
+                        核对本次购物信息，完成下单与支付。
+                      </p>
+                    </div>
+                    <Button
+                      variant="ghost"
+                      disabled={busy}
+                      onClick={() => {
+                        setTab(locked ? "orders" : "cart");
+                        if (locked) {
+                          setOrderDetail(false);
+                          setShowOrderDetails(true);
+                        }
+                      }}
                     >
-                      <span>
-                        {index < checkoutStep ? <Check /> : index + 1}
-                      </span>
-                      {label}
-                    </li>
-                  ))}
-                </ol>
-                {cartLines.length || locked ? (
-                  <div className="fv-checkout-layout">
-                    <div className="fv-stack">
-                      {checkoutStep < 4 && (
-                        <div className="fv-section-heading">
-                          <h4>{steps[checkoutStep]}</h4>
-                          {checkoutStep > 0 && (
-                            <Button
-                              variant="ghost"
-                              disabled={blocked}
-                              onClick={() => {
-                                if (data.checkout) void edit();
-                                else setStep(checkoutStep - 1);
-                              }}
-                            >
-                              返回修改
-                            </Button>
-                          )}
-                        </div>
-                      )}
-                      {checkoutStep === 0 && (
-                        <AddressForm
-                          key={data.cart.id}
-                          data={data}
-                          busy={blocked}
-                          action={action}
-                          next={async () => {
-                            if (await shop({ action: "delivery-options" }))
+                      <ArrowLeft data-icon="inline-start" />
+                      {locked ? "返回订单" : "返回购物车"}
+                    </Button>
+                  </div>
+                  <ol className="fv-checkout-steps" aria-label="结账进度">
+                    {steps.map((label, index) => (
+                      <li
+                        key={label}
+                        aria-current={
+                          checkoutStep === index ? "step" : undefined
+                        }
+                        data-complete={index < checkoutStep}
+                      >
+                        <span>
+                          {index < checkoutStep ? <Check /> : index + 1}
+                        </span>
+                        {label}
+                      </li>
+                    ))}
+                  </ol>
+                  {cartLines.length || locked ? (
+                    <div className="fv-checkout-layout">
+                      <div className="fv-stack">
+                        {checkoutStep < 4 && (
+                          <div className="fv-section-heading">
+                            <h4>{steps[checkoutStep]}</h4>
+                            {checkoutStep > 0 && (
+                              <Button
+                                variant="ghost"
+                                disabled={blocked}
+                                onClick={() => {
+                                  if (data.checkout) void edit();
+                                  else setStep(checkoutStep - 1);
+                                }}
+                              >
+                                返回修改
+                              </Button>
+                            )}
+                          </div>
+                        )}
+                        {checkoutStep === 0 && (
+                          <AddressForm
+                            key={data.cart.id}
+                            data={data}
+                            busy={blocked}
+                            action={action}
+                            next={async () => {
                               setStep(1);
-                          }}
-                        />
-                      )}
-                      {checkoutStep === 1 && (
-                        <>
-                          <Button
-                            variant="outline"
-                            disabled={blocked}
-                            onClick={() => shop({ action: "delivery-options" })}
-                          >
-                            <RefreshCw data-icon="inline-start" />
-                            查询配送方式
-                          </Button>
-                          {(data.delivery?.delivery_groups ?? []).map(
-                            (group: any) => (
+                            }}
+                          />
+                        )}
+                        {checkoutStep === 1 && (
+                          <>
+                            {preparingDelivery ? (
+                              <p className="fv-muted" role="status">
+                                <Spinner /> 正在获取配送方式…
+                              </p>
+                            ) : (
+                              <div className="fv-section-heading">
+                                <p className="fv-muted">
+                                  {deliveryReady
+                                    ? "已选好配送方式，可按需更换。"
+                                    : deliveryGroups.some(
+                                          (g: any) => g.options.length,
+                                        )
+                                      ? "请选择配送方式。"
+                                      : "暂无可用配送方式，请检查收货地址或重试。"}
+                                </p>
+                                <Button
+                                  variant="ghost"
+                                  disabled={blocked}
+                                  onClick={prepareDelivery}
+                                >
+                                  <RefreshCw data-icon="inline-start" />
+                                  {deliveryReady ? "刷新" : "重试"}
+                                </Button>
+                              </div>
+                            )}
+                            {deliveryGroups.map((group: any) => (
                               <Card key={group.id}>
                                 <CardHeader>
                                   <CardTitle>
@@ -889,6 +1186,11 @@ export function Storefront({
                                 </CardHeader>
                                 <CardContent>
                                   <div className="fv-stack">
+                                    {!group.options.length && (
+                                      <p className="fv-muted">
+                                        此组商品暂无配送方式，请修改收货地址。
+                                      </p>
+                                    )}
                                     {group.options.map((option: any) => (
                                       <div
                                         className="fv-delivery"
@@ -901,7 +1203,16 @@ export function Storefront({
                                         </div>
                                         <Button
                                           variant="outline"
-                                          disabled={blocked}
+                                          disabled={
+                                            blocked ||
+                                            preparingDelivery ||
+                                            group.selected_option_id ===
+                                              option.id
+                                          }
+                                          aria-pressed={
+                                            group.selected_option_id ===
+                                            option.id
+                                          }
                                           onClick={async () => {
                                             if (
                                               await shop({
@@ -923,240 +1234,330 @@ export function Storefront({
                                   </div>
                                 </CardContent>
                               </Card>
-                            ),
-                          )}
-                          <p className="fv-muted">
-                            请为每组商品选择配送方式，下一步将核对最终费用。
-                          </p>
-                          <Button
-                            disabled={
-                              blocked ||
-                              !data.delivery?.delivery_groups?.length ||
-                              !data.delivery.delivery_groups.every(
-                                (group: any) => group.selected_option_id,
-                              )
-                            }
-                            onClick={async () => {
-                              if (await shop({ action: "quote" })) setStep(2);
-                            }}
-                          >
-                            核对订单信息
-                            <ArrowRight data-icon="inline-end" />
-                          </Button>
-                        </>
-                      )}
-                      {checkoutStep === 2 && (
-                        <>
-                          <Lines lines={data.quote?.lines ?? cartLines} />
-                          <Separator />
-                          <div className="fv-stack">
-                            <h4>送至</h4>
-                            <p>
-                              {data.cart.shipping_address?.recipient} ·{" "}
-                              {data.cart.shipping_address?.phone}
+                            ))}
+                            <p className="fv-muted">
+                              下一步核对商品、收货地址与最终费用。
                             </p>
-                            <p>
-                              {[
-                                data.cart.shipping_address?.region,
-                                data.cart.shipping_address?.city,
-                                data.cart.shipping_address?.line1,
-                                data.cart.shipping_address?.postal_code,
-                              ]
-                                .filter(Boolean)
-                                .join(" ")}
-                            </p>
-                          </div>
-                          {quoteExpired && (
-                            <Alert variant="warning">
-                              <AlertDescription>
-                                报价已过期，请重新核对当前价格。
-                              </AlertDescription>
-                            </Alert>
-                          )}
-                          <Button
-                            disabled={blocked || !data.purchaseReady}
-                            onClick={async () => {
-                              if (quoteExpired) {
-                                if (!(await shop({ action: "requote" })))
-                                  return;
-                              } else if (
-                                !data.checkout &&
-                                !(await shop({ action: "prepare" }))
-                              )
-                                return;
-                              if (await action("review")) {
-                                setStep(3);
-                                setPaymentSelected(false);
-                              }
-                            }}
-                          >
-                            {busy && <Spinner />}核对并继续
-                            <ArrowRight data-icon="inline-end" />
-                          </Button>
-                        </>
-                      )}
-                      {checkoutStep === 3 && (
-                        <>
-                          <Card>
-                            <CardHeader>
-                              <CardTitle>商家收银台</CardTitle>
-                              <CardDescription>
-                                选择后确认购买，进入原订单的付款流程。
-                              </CardDescription>
-                            </CardHeader>
-                            <CardContent>
-                              <FieldSet className="fv-payment-method">
-                                <FieldLegend>支付方式</FieldLegend>
-                                <label>
-                                  <input
-                                    type="radio"
-                                    name="payment-method"
-                                    checked={paymentSelected}
-                                    onChange={() => setPaymentSelected(true)}
-                                    disabled={blocked}
-                                  />
-                                  <CreditCard />
-                                  商家提供的支付方式
-                                </label>
-                                <p className="fv-muted">
-                                  {data.pricing.currency === "CNY"
-                                    ? "商家提供支付宝扫码时，将在下一步显示二维码。"
-                                    : "可用的支付渠道在商家付款页中选择。"}
-                                </p>
-                              </FieldSet>
-                            </CardContent>
-                          </Card>
-                          <p>
-                            确认以上商品、收货信息及应付金额后，点击下方按钮提交订单。
-                          </p>
-                          {intentExpired || quoteExpired ? (
-                            <Button
-                              disabled={blocked}
-                              onClick={() => setStep(2)}
-                            >
-                              报价已失效，重新核对
-                            </Button>
-                          ) : (
                             <Button
                               disabled={
-                                blocked ||
-                                !paymentSelected ||
-                                !data.purchaseReady
+                                blocked || preparingDelivery || !deliveryReady
                               }
                               onClick={async () => {
-                                if (
-                                  await action("confirm", {
-                                    intentId: data.intent.id,
-                                  })
-                                )
-                                  setStep(4);
+                                if (await shop({ action: "quote" })) setStep(2);
                               }}
                             >
-                              确认购买 ·{" "}
-                              {money(data.quote?.totals?.grand_total)}
+                              核对订单信息
+                              <ArrowRight data-icon="inline-end" />
                             </Button>
-                          )}
-                        </>
-                      )}
-                      {checkoutStep === 4 && (
-                        <>
-                          <PaymentCard
-                            data={data}
-                            now={now}
-                            busy={busy}
-                            formatPrice={money}
-                            refresh={() => action("view")}
-                            start={() => action("payment-start")}
-                            cancel={() => action("order-cancel")}
+                          </>
+                        )}
+                        {checkoutStep === 2 && (
+                          <>
+                            <Lines lines={data.quote?.lines ?? cartLines} />
+                            <Separator />
+                            <div className="fv-stack">
+                              <h4>送至</h4>
+                              <p>
+                                {data.cart.shipping_address?.recipient} ·{" "}
+                                {data.cart.shipping_address?.phone}
+                              </p>
+                              <p>
+                                {[
+                                  data.cart.shipping_address?.region,
+                                  data.cart.shipping_address?.city,
+                                  data.cart.shipping_address?.line1,
+                                  data.cart.shipping_address?.postal_code,
+                                ]
+                                  .filter(Boolean)
+                                  .join(" ")}
+                              </p>
+                            </div>
+                            {quoteExpired && (
+                              <Alert variant="warning">
+                                <AlertDescription>
+                                  报价已过期，请重新核对当前价格。
+                                </AlertDescription>
+                              </Alert>
+                            )}
+                            <Button
+                              disabled={blocked || !data.purchaseReady}
+                              onClick={async () => {
+                                if (quoteExpired) {
+                                  if (!(await shop({ action: "requote" })))
+                                    return;
+                                } else if (
+                                  !data.checkout &&
+                                  !(await shop({ action: "prepare" }))
+                                )
+                                  return;
+                                if (await action("review")) {
+                                  setStep(3);
+                                  setPaymentSelected(false);
+                                }
+                              }}
+                            >
+                              {busy && <Spinner />}核对并继续
+                              <ArrowRight data-icon="inline-end" />
+                            </Button>
+                          </>
+                        )}
+                        {checkoutStep === 3 && (
+                          <>
+                            <Card>
+                              <CardHeader>
+                                <CardTitle>商家收银台</CardTitle>
+                                <CardDescription>
+                                  确认订单后选择支付方式。
+                                </CardDescription>
+                              </CardHeader>
+                              <CardContent>
+                                <FieldSet className="fv-payment-method">
+                                  <FieldLegend>支付方式</FieldLegend>
+                                  <label>
+                                    <input
+                                      type="radio"
+                                      name="payment-method"
+                                      checked={paymentSelected}
+                                      onChange={() => setPaymentSelected(true)}
+                                      disabled={blocked}
+                                    />
+                                    <CreditCard />
+                                    商家提供的支付方式
+                                  </label>
+                                  <p className="fv-muted">
+                                    {data.pricing.currency === "CNY"
+                                      ? "商家提供支付宝扫码时，将在下一步显示二维码。"
+                                      : "可用的支付渠道在商家付款页中选择。"}
+                                  </p>
+                                </FieldSet>
+                              </CardContent>
+                            </Card>
+                            <p>
+                              确认以上商品、收货信息及应付金额后，点击下方按钮提交订单。
+                            </p>
+                            {intentExpired || quoteExpired ? (
+                              <Button
+                                disabled={blocked}
+                                onClick={() => setStep(2)}
+                              >
+                                报价已失效，重新核对
+                              </Button>
+                            ) : (
+                              <Button
+                                disabled={
+                                  blocked ||
+                                  !paymentSelected ||
+                                  !data.purchaseReady
+                                }
+                                onClick={async () => {
+                                  if (
+                                    await action("confirm", {
+                                      intentId: data.intent.id,
+                                    })
+                                  )
+                                    setStep(4);
+                                }}
+                              >
+                                确认购买 ·{" "}
+                                {money(data.quote?.totals?.grand_total)}
+                              </Button>
+                            )}
+                          </>
+                        )}
+                        {checkoutStep === 4 && (
+                          <>
+                            <PaymentCard
+                              data={data}
+                              now={now}
+                              busy={busy}
+                              formatPrice={money}
+                              refresh={() => action("view")}
+                              start={() => action("payment-start")}
+                              cancel={() => action("order-cancel")}
+                            />
+                            <Button
+                              variant="outline"
+                              onClick={() => {
+                                setTab("orders");
+                                setOrderDetail(false);
+                                setShowOrderDetails(true);
+                              }}
+                            >
+                              查看订单与物流
+                              <ArrowRight data-icon="inline-end" />
+                            </Button>
+                          </>
+                        )}
+                      </div>
+                      <Card className="fv-checkout-summary">
+                        <CardHeader>
+                          <CardTitle>本次订单</CardTitle>
+                          <CardDescription>
+                            {locked ? orderCount : count} 件商品
+                          </CardDescription>
+                        </CardHeader>
+                        <CardContent>
+                          <Totals
+                            totals={data.quote?.totals ?? data.cart?.totals}
                           />
-                          <Button
-                            variant="outline"
-                            onClick={() => {
-                              setTab("orders");
-                              setOrderDetail(false);
-                              void shop({ action: "orders" });
-                            }}
-                          >
-                            查看订单与物流
-                            <ArrowRight data-icon="inline-end" />
-                          </Button>
-                        </>
-                      )}
+                        </CardContent>
+                        <CardFooter>
+                          <p className="fv-muted">
+                            {data.mockPayment
+                              ? "测试商店 · Mock 支付"
+                              : "金额与状态由商家实时核对"}
+                          </p>
+                        </CardFooter>
+                      </Card>
                     </div>
-                    <Card className="fv-checkout-summary">
-                      <CardHeader>
-                        <CardTitle>本次订单</CardTitle>
-                        <CardDescription>
-                          {locked ? orderCount : count} 件商品
-                        </CardDescription>
-                      </CardHeader>
-                      <CardContent>
-                        <Totals
-                          totals={data.quote?.totals ?? data.cart?.totals}
-                        />
-                      </CardContent>
-                      <CardFooter>
-                        <p className="fv-muted">
-                          {data.mockPayment
-                            ? "测试商店 · Mock 支付"
-                            : "金额与状态由商家实时核对"}
-                        </p>
-                      </CardFooter>
-                    </Card>
-                  </div>
-                ) : (
-                  <Empty>
-                    <EmptyTitle>先挑选商品，再开始结账</EmptyTitle>
-                    <Button onClick={() => setTab("products")}>去选购</Button>
-                  </Empty>
-                )}
-              </div>
-            </TabsContent>
+                  ) : (
+                    <Empty>
+                      <EmptyTitle>先挑选商品，再开始结账</EmptyTitle>
+                      <Button onClick={() => setTab("products")}>去选购</Button>
+                    </Empty>
+                  )}
+                </div>
+              </section>
+            )}
             <TabsContent value="orders">
               <div className="fv-stack">
                 <div className="fv-section-heading">
                   <div>
-                    <h3>我的订单</h3>
+                    <h3>{showOrderDetails ? "订单详情" : "我的订单"}</h3>
                     <p className="fv-description">
-                      查看支付结果、订单详情与配送进度。
+                      {showOrderDetails
+                        ? "查看这笔订单的商品、支付与配送信息。"
+                        : "选择一笔订单，查看商品、支付结果和配送进度。"}
                     </p>
                   </div>
                   <Button
                     variant="outline"
                     disabled={busy}
-                    onClick={() => shop({ action: "orders" })}
+                    onClick={() => {
+                      if (showOrderDetails) void action("view");
+                      else {
+                        ordersRequested.current = true;
+                        void shop({ action: "orders" }).then((ok) => {
+                          if (ok) setOrdersAfterFirstPage(false);
+                        });
+                      }
+                    }}
                   >
-                    <RefreshCw data-icon="inline-start" />
-                    刷新订单
+                    {busy ? (
+                      <Spinner />
+                    ) : (
+                      <RefreshCw data-icon="inline-start" />
+                    )}
+                    {showOrderDetails ? "刷新详情" : "刷新订单"}
                   </Button>
                 </div>
-                {selectedOrder && (
-                  <div className="fv-stack">
-                    {orderDetail && (
+                {showOrderDetails ? (
+                  <>
+                    <div>
                       <Button
                         variant="ghost"
-                        onClick={() => setOrderDetail(false)}
+                        size="sm"
+                        disabled={busy}
+                        onClick={() => {
+                          setShowOrderDetails(false);
+                          setOrderDetail(false);
+                        }}
                       >
                         <ArrowLeft data-icon="inline-start" />
-                        返回当前购物
+                        返回订单列表
                       </Button>
+                    </div>
+                    {selectedOrder && (
+                      <div className="fv-order-detail-layout">
+                        <Card>
+                          <CardHeader>
+                            <CardTitle>商品与金额</CardTitle>
+                          </CardHeader>
+                          <CardContent>
+                            <Order order={selectedOrder} />
+                          </CardContent>
+                        </Card>
+                        <div className="fv-stack">
+                          {!orderDetail && (
+                            <PaymentCard
+                              data={data}
+                              now={now}
+                              busy={busy}
+                              formatPrice={money}
+                              refresh={() => action("view")}
+                              start={() => action("payment-start")}
+                              cancel={() => action("order-cancel")}
+                            />
+                          )}
+                          {selectedOrder.status !== "canceled" && (
+                            <Logistics order={selectedOrder} />
+                          )}
+                        </div>
+                      </div>
                     )}
-                    <Order order={selectedOrder} />
-                    {!orderDetail && (
-                      <PaymentCard
-                        data={data}
-                        now={now}
-                        busy={busy}
-                        formatPrice={money}
-                        refresh={() => action("view")}
-                        start={() => action("payment-start")}
-                        cancel={() => action("order-cancel")}
-                      />
-                    )}
-                    <Logistics order={selectedOrder} />
+                  </>
+                ) : storefrontOrders(data).length ? (
+                  <>
+                    <OrderList
+                      data={data}
+                      busy={busy}
+                      open={async (orderId) => {
+                        if (orderId === data.order?.id) {
+                          setOrderDetail(false);
+                          setShowOrderDetails(true);
+                        } else if (
+                          await shop({ action: "order-detail", orderId })
+                        ) {
+                          setOrderDetail(true);
+                          setShowOrderDetails(true);
+                        }
+                      }}
+                    />
+                    <div className="fv-order-list-footer">
+                      <p className="fv-muted">
+                        本页显示 {storefrontOrders(data).length} 笔订单
+                      </p>
+                      <div className="fv-row">
+                        {ordersAfterFirstPage && (
+                          <Button
+                            variant="outline"
+                            disabled={busy}
+                            onClick={async () => {
+                              if (await shop({ action: "orders" }))
+                                setOrdersAfterFirstPage(false);
+                            }}
+                          >
+                            返回首页
+                          </Button>
+                        )}
+                        {data.orders?.page?.has_more &&
+                          data.orders.page.next_cursor && (
+                            <Button
+                              variant="outline"
+                              disabled={busy}
+                              onClick={async () => {
+                                if (
+                                  await shop({
+                                    action: "orders",
+                                    cursor: data.orders.page.next_cursor,
+                                  })
+                                )
+                                  setOrdersAfterFirstPage(true);
+                              }}
+                            >
+                              下一页
+                              <ArrowRight data-icon="inline-end" />
+                            </Button>
+                          )}
+                      </div>
+                    </div>
+                  </>
+                ) : busy ? (
+                  <div role="status">
+                    <Skeleton className="fv-skeleton-block" />
+                    <p>正在读取订单…</p>
                   </div>
-                )}
-                {!selectedOrder && !items(data.orders).length && (
+                ) : (
                   <Empty>
                     <Package />
                     <EmptyTitle>还没有订单</EmptyTitle>
@@ -1170,55 +1571,6 @@ export function Storefront({
                       继续逛店
                     </Button>
                   </Empty>
-                )}
-                {items(data.orders).length > 0 && (
-                  <>
-                    <Separator />
-                    <h4>店铺订单记录</h4>
-                    <div className="fv-record-list">
-                      {items(data.orders).map((order: any) => (
-                        <Button
-                          variant="ghost"
-                          key={order.id ?? order.order_id}
-                          disabled={busy}
-                          onClick={async () => {
-                            if (
-                              await shop({
-                                action: "order-detail",
-                                orderId: order.id ?? order.order_id,
-                              })
-                            )
-                              setOrderDetail(true);
-                          }}
-                        >
-                          <Package data-icon="inline-start" />
-                          订单{" "}
-                          {order.display_number ??
-                            order.id ??
-                            order.order_id}{" "}
-                          {order.totals?.grand_total
-                            ? ` · ${money(order.totals.grand_total)}`
-                            : " · 查看详情"}
-                          <ArrowRight data-icon="inline-end" />
-                        </Button>
-                      ))}
-                    </div>
-                    {data.orders.page?.has_more &&
-                      data.orders.page.next_cursor && (
-                        <Button
-                          variant="outline"
-                          disabled={busy}
-                          onClick={() =>
-                            shop({
-                              action: "orders",
-                              cursor: data.orders.page.next_cursor,
-                            })
-                          }
-                        >
-                          下一页订单
-                        </Button>
-                      )}
-                  </>
                 )}
               </div>
             </TabsContent>

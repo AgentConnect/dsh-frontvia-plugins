@@ -14,7 +14,7 @@ import {
   shoppingActionSchema,
   type ShoppingAction,
 } from "./shopping-action.js";
-import { isRequiredContact } from "./contact-fields.js";
+import { contactSchema, cartContactReady } from "./contact-fields.js";
 import { ConsultationService, consultationSite } from "./consultation.js";
 export type CustomerConfig = {
   dataDir: string;
@@ -43,7 +43,7 @@ type Command = {
   key: string;
   method: string;
   params: any;
-  status: "pending" | "done";
+  status: "pending" | "done" | "discarded";
   result?: any;
 };
 type Intent = {
@@ -117,41 +117,7 @@ const id = z
   .max(128)
   .regex(/^[A-Za-z0-9][A-Za-z0-9._:-]*$/);
 const version = z.string().min(1).max(128);
-const address = z
-  .object({
-    country: z.enum(["US", "CN"]),
-    recipient: z.string().min(1).max(200),
-    line1: z.string().min(1).max(300),
-    line2: z.string().max(300).optional(),
-    city: z.string().trim().max(100).optional(),
-    region: z.string().trim().max(100).optional(),
-    postal_code: z.string().trim().max(40).optional(),
-    phone: z.string().trim().max(40).optional(),
-  })
-  .strict();
-export const contactSchema = z
-  .object({ email: z.email().optional(), shipping_address: address })
-  .strict()
-  .superRefine((v, ctx) => {
-    const a = v.shipping_address;
-    if (a.country === "CN" && (!a.phone || !/^\+?[0-9 -]{6,40}$/.test(a.phone)))
-      ctx.addIssue({
-        code: "custom",
-        path: ["shipping_address", "phone"],
-        message: "有效收货电话必填",
-      });
-    for (const field of ["city", "region", "postal_code", "email"] as const) {
-      if (
-        isRequiredContact(a.country, field) &&
-        !(field === "email" ? v.email : a[field])
-      )
-        ctx.addIssue({
-          code: "custom",
-          path: field === "email" ? [field] : ["shipping_address", field],
-          message: "美国地址需要城市、州、邮箱和邮编",
-        });
-    }
-  });
+export { contactSchema } from "./contact-fields.js";
 const privateKeys = new Set([
   "email",
   "phone",
@@ -547,6 +513,7 @@ export class CustomerService {
         digest({ ...params, meta: { idempotency_key: key } })
     )
       fail("IDEMPOTENCY_CONFLICT");
+    if (old?.status === "discarded") fail("OPERATION_DISCARDED");
     if (old?.status === "done") return old.result;
     if (f.pending) fail("RESOLVE_PENDING_OPERATION");
     // Cancellation before admission must not create an unknown remote operation.
@@ -566,6 +533,10 @@ export class CustomerService {
       command.params,
       signal,
     );
+    return this.finishWrite(f, command, response);
+  }
+  private finishWrite(f: Flow, command: Command, response: any) {
+    const method = command.method;
     if (response.error) {
       if (
         [-32602, -32601, 1101, 1102, 1103, 1201, 1203, 1301].includes(
@@ -675,6 +646,7 @@ export class CustomerService {
       (c) => c.key === digest([f.id, callId, c.method]),
     );
     if (original) {
+      if (original.status === "discarded") fail("OPERATION_DISCARDED");
       if (original.status === "done")
         return this.result(f, "cart", original.result);
       return this.result(f, "order", await this.recover(f));
@@ -1040,6 +1012,72 @@ export class CustomerService {
           );
           break;
         }
+        case "prepare-delivery": {
+          const initial = this.flow(sessionId, flowId);
+          this.change(initial, expected_version);
+          if (!cartContactReady(initial.cart, pricing(initial).country))
+            fail("CONTACT_REQUIRED");
+          // Query current merchant options before choosing. Keep each write tied
+          // to the latest cart revision, and never quote/submit as a side effect.
+          let current = await run(
+            "frontvia_cart",
+            { action: "delivery_options" },
+            "delivery-options",
+          );
+          const groups = current.delivery?.delivery_groups ?? [];
+          for (const { id: groupId } of groups) {
+            const delivery = current.delivery;
+            if (
+              delivery?.cart_id !== current.cart?.id ||
+              delivery?.cart_version !== current.cart?.version
+            )
+              fail("CART_VERSION_CHANGED");
+            if (delivery.requirements?.some((r: any) => r.blocking)) break;
+            const group = delivery.delivery_groups.find(
+              (g: any) => g.id === groupId,
+            );
+            if (
+              !group ||
+              group.options.some((o: any) => o.id === group.selected_option_id)
+            )
+              continue;
+            // Unknown/estimated fees need a customer's choice; don't treat them
+            // as free. BigInt preserves the API's integer minor-unit amounts.
+            const options = group.options.filter(
+              (o: any) =>
+                o.price_status === "known" &&
+                o.amount?.currency === pricing(current).currency &&
+                typeof o.amount?.amount_minor === "string" &&
+                /^\d+$/.test(o.amount.amount_minor),
+            );
+            const cheapest = options.reduce(
+              (best: any, option: any) =>
+                !best ||
+                BigInt(option.amount.amount_minor) <
+                  BigInt(best.amount.amount_minor)
+                  ? option
+                  : best,
+              undefined,
+            );
+            if (!cheapest) continue;
+            await run(
+              "frontvia_cart",
+              {
+                action: "delivery_select",
+                group_id: groupId,
+                option_id: cheapest.id,
+                expected_version: current.cart.version,
+              },
+              `delivery:${groupId}`,
+            );
+            current = await run(
+              "frontvia_cart",
+              { action: "delivery_options" },
+              `delivery-options:${groupId}`,
+            );
+          }
+          break;
+        }
         case "select-delivery":
           await run(
             "frontvia_cart",
@@ -1233,7 +1271,77 @@ export class CustomerService {
       operation: f.operation,
     };
   }
-  private async recover(f: Flow) {
+  private discardableAddition(f: Flow) {
+    return (
+      !!f.pending &&
+      !f.order &&
+      !f.intent?.token &&
+      ["commerce.carts.create", "commerce.carts.lines.add"].includes(
+        f.commands[f.pending]?.method,
+      )
+    );
+  }
+  /** Stop waiting locally. This never replays or reverses a merchant mutation. */
+  async discardCartAddition(sessionId: string, flowId: string) {
+    this.views.clear();
+    return this.serial.run(flowId, async () => {
+      const f = this.flow(sessionId, flowId);
+      this.policy(f);
+      if (f.pending) {
+        if (!this.discardableAddition(f)) fail("CART_DISCARD_UNAVAILABLE");
+        const command = f.commands[f.pending];
+        command.status = "discarded";
+        delete f.pending;
+        this.save(f);
+      }
+      // The merchant cart remains authoritative, including a late successful add.
+      // A read failure must not resurrect the discarded command.
+      await this.refresh(f, false, ["cart"]);
+      return this.humanView(f);
+    });
+  }
+  /** Explicit owner-UI retry: only reversible cart edits, never checkout/payment. */
+  async retryCart(sessionId: string, flowId: string) {
+    this.views.clear();
+    return this.serial.run(flowId, async () => {
+      const f = this.flow(sessionId, flowId);
+      this.policy(f);
+      if (!f.pending) {
+        await this.refresh(f);
+        return this.humanView(f);
+      }
+      const command = f.commands[f.pending];
+      if (!command || !this.retryableCart(f)) fail("CART_RETRY_UNAVAILABLE");
+      await this.currentCapabilities(f, true);
+      this.requireMethod(f, command.method);
+      if (
+        !f.capabilities?.business_profiles?.some(
+          (p: any) =>
+            p.id === this.purchaseProfile(f) && p.availability === "supported",
+        )
+      )
+        fail("PURCHASE_PROFILE_UNAVAILABLE");
+      await this.recover(f, true);
+      return this.humanView(f);
+    });
+  }
+  private retryableCart(f: Flow) {
+    return (
+      !!f.pending &&
+      !f.order &&
+      !f.intent?.token &&
+      !f.checkout &&
+      [
+        "commerce.carts.create",
+        "commerce.carts.lines.add",
+        "commerce.carts.lines.update",
+        "commerce.carts.lines.remove",
+        "commerce.carts.update",
+        "commerce.carts.delivery_option.select",
+      ].includes(f.commands[f.pending]?.method)
+    );
+  }
+  private async recover(f: Flow, retryCart = false) {
     if (f.pending) {
       const c = f.commands[f.pending];
       if (!c) fail("RECOVERY_STATE_INVALID");
@@ -1242,7 +1350,24 @@ export class CustomerService {
         "commerce.operations.lookup",
         { method: c.method, idempotency_key: c.key },
       );
-      if (r.error) fail("ORIGINAL_RESULT_UNKNOWN");
+      if (r.error) {
+        if (
+          retryCart &&
+          r.error.code === 1003 &&
+          !r.error.data?.operation_id &&
+          this.retryableCart(f)
+        ) {
+          // Reuse the stored payload and key exactly; do not create a second operation.
+          const response = await this.pap.request(
+            f.connectionRef,
+            c.method,
+            c.params,
+          );
+          this.finishWrite(f, c, response);
+          return this.refresh(f);
+        }
+        fail("ORIGINAL_RESULT_UNKNOWN");
+      }
       const op = r.result?.data;
       if (!op?.id) fail("ORIGINAL_RESULT_UNKNOWN");
       f.operation = op;
@@ -1331,6 +1456,24 @@ export class CustomerService {
       viewedOrder: f.viewedOrder,
       operation: f.operation,
       pending: !!f.pending,
+      canRetryCart: this.retryableCart(f),
+      canDiscardCartAddition: this.discardableAddition(f),
+      pendingAction: f.pending
+        ? (
+            {
+              "commerce.carts.create": "cart-add",
+              "commerce.carts.lines.add": "cart-add",
+              "commerce.carts.lines.update": "cart-update",
+              "commerce.carts.lines.remove": "cart-remove",
+              "commerce.carts.update": "contact",
+              "commerce.carts.delivery_option.select": "delivery",
+              "commerce.quotes.create": "quote",
+              "commerce.checkouts.create": "checkout",
+              "commerce.checkouts.confirm": "order",
+              "commerce.checkouts.cancel": "cancel",
+            } as Record<string, string>
+          )[f.commands[f.pending]?.method]
+        : undefined,
       cancelPending:
         !!f.pending &&
         f.commands[f.pending]?.method === "commerce.checkouts.cancel",

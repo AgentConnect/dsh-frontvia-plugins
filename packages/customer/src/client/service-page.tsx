@@ -1,10 +1,18 @@
 import React, { useEffect, useRef, useState } from "react";
-import { ArrowRight, Link2, RefreshCw, Store } from "lucide-react";
+import { ArrowLeft, Link2, RefreshCw, Store } from "lucide-react";
 import { useAccountRevision } from "./account.js";
 import { AccountSummary, type AccountStatus } from "./account-summary.js";
+import {
+  openStorefrontCart,
+  type AddToNewCart,
+  type StartShopping,
+} from "./storefront-cart.js";
+import { MerchantPicker } from "./merchant-picker.js";
 import { shoppingReference } from "./history.js";
 import {
   serviceMerchants,
+  merchantCommerceSite,
+  type Merchant,
   resolveServiceSelection,
   readServiceSelection,
   saveServiceSelection,
@@ -16,14 +24,7 @@ import {
 import {
   Alert,
   AlertDescription,
-  Badge,
   Button,
-  Card,
-  CardHeader,
-  CardTitle,
-  CardDescription,
-  CardContent,
-  CardFooter,
   Empty,
   EmptyTitle,
   EmptyDescription,
@@ -37,7 +38,9 @@ type Props = {
   openAccount: () => void;
   renderFlow: (
     reference: ReturnType<typeof shoppingReference>,
-    startShopping: () => void,
+    startShopping: StartShopping,
+    addedQuantity?: number,
+    initialError?: string,
   ) => React.ReactNode;
 };
 export function ServicePage(props: Props) {
@@ -70,6 +73,11 @@ function AccountServicePage({
     }
   });
   const [opening, setOpening] = useState(false);
+  const [addition, setAddition] = useState<{
+    flowId: string;
+    quantity: number;
+    error?: string;
+  }>();
   const openingRef = useRef(false);
   const live = useRef(true);
   const entryId = useRef<string>();
@@ -119,6 +127,7 @@ function AccountServicePage({
   const merchants = serviceMerchants(data?.sites ?? [], data?.flows ?? []);
   const { merchant, flow } = resolveServiceSelection(merchants, selection);
   useEffect(() => {
+    if (!data || choosing) return;
     const resolved = merchant
       ? { merchantKey: merchant.key, flowId: flow?.flowId }
       : {};
@@ -126,47 +135,75 @@ function AccountServicePage({
     try {
       saveServiceSelection(window.sessionStorage, resolved);
     } catch {}
-  }, [merchant?.key, flow?.flowId]);
-  const site =
-    merchant?.sites.find((s) =>
-      s.description?.methods?.includes("commerce.capabilities.get"),
-    ) ??
-    merchant?.sites.find((s) =>
-      merchant.flows.some(
-        (f) => f.siteId === s.id && flowKind(f) === "shopping",
-      ),
-    );
-  const openStore = async () => {
-    if (!merchant || !site || openingRef.current) return;
+  }, [!!data, choosing, merchant?.key, flow?.flowId]);
+  const site = merchant && merchantCommerceSite(merchant);
+  const openMerchantStore = async (
+    target: Merchant | undefined,
+    intent?: AddToNewCart,
+  ): Promise<boolean> => {
+    const targetSite = target && merchantCommerceSite(target);
+    if (!target || !targetSite || openingRef.current) return false;
     openingRef.current = true;
     setOpening(true);
     setError("");
     entryId.current ??= crypto.randomUUID();
     try {
-      const ui = await call("open-store", {
-        siteId: site.id,
-        actionId: entryId.current,
+      const result = await openStorefrontCart(
+        call,
+        targetSite.id,
+        entryId.current,
+        intent,
+        () => live.current,
+      );
+      if (!live.current || !result) return false;
+      const { ui } = result;
+      setAddition({
+        flowId: ui.flowId,
+        quantity: result.added && intent ? intent.quantity : 0,
+        error: result.error ? "ADD_NOT_COMPLETED" : undefined,
       });
-      if (!live.current) return;
       setData(
         (previous) =>
           previous && {
             ...previous,
             flows: [
-              { ...ui, siteId: site.id, updatedAt: new Date().toISOString() },
+              {
+                ...ui,
+                siteId: targetSite.id,
+                updatedAt: new Date().toISOString(),
+              },
               ...previous.flows.filter((f) => f.flowId !== ui.flowId),
             ],
           },
       );
-      setSelection({ merchantKey: merchant.key, flowId: ui.flowId });
+      setSelection({ merchantKey: target.key, flowId: ui.flowId });
       entryId.current = undefined;
+      // The selected cart owns its error and retry state; avoid a second page-level warning.
+      return !result.error;
     } catch {
       if (live.current)
-        setError("暂时无法开始购物，请核对商家连接与个人登录后重试。");
+        setError("暂时无法准备购物车，请核对商家连接与个人登录后重试。");
+      return false;
     } finally {
       openingRef.current = false;
       if (live.current) setOpening(false);
     }
+  };
+  const openStore: StartShopping = (intent) =>
+    openMerchantStore(merchant, intent);
+  const selectMerchant = (target: Merchant) => {
+    if (openingRef.current) return;
+    const next = resolveServiceSelection(merchants, {
+      merchantKey: target.key,
+      flowId:
+        selection.merchantKey === target.key ? selection.flowId : undefined,
+    });
+    setSelection({ merchantKey: target.key, flowId: next.flow?.flowId });
+    setChoosing(false);
+    setError("");
+    entryId.current = undefined;
+    if (!next.flow && merchantCommerceSite(target))
+      void openMerchantStore(target);
   };
   return (
     <div
@@ -178,9 +215,8 @@ function AccountServicePage({
       <div className="fv fv-home fv-market">
         <header className="fv-page-header">
           <div>
-            <p className="fv-eyebrow">你的商家服务</p>
             <h2>Frontvia 服务</h2>
-            <p className="fv-page-description">从心仪好物，到安心收货。</p>
+            <p className="fv-page-description">选购商品，查看购物车和订单。</p>
           </div>
           <div className="fv-page-actions">
             <Button
@@ -225,47 +261,31 @@ function AccountServicePage({
         ) : (
           <>
             {choosing || !merchant ? (
-              <section aria-label="选择店铺" className="fv-stack">
-                <div className="fv-section-heading">
-                  <h3>选择店铺</h3>
-                  <Badge>{merchants.length} 家店铺</Badge>
-                </div>
-                <div className="fv-store-grid">
-                  {merchants.map((m) => (
-                    <Card key={m.key}>
-                      <CardHeader>
-                        <Store />
-                        <CardTitle>{m.title}</CardTitle>
-                        <CardDescription>{m.domain}</CardDescription>
-                      </CardHeader>
-                      <CardContent>
-                        <p className="fv-muted">
-                          {m.storeId ? `店铺 ${m.storeId}` : "已连接的商家服务"}
-                        </p>
-                      </CardContent>
-                      <CardFooter>
-                        <Button
-                          variant="outline"
-                          disabled={opening}
-                          onClick={() => {
-                            setSelection({ merchantKey: m.key });
-                            setChoosing(false);
-                            entryId.current = undefined;
-                          }}
-                        >
-                          进入店铺
-                          <ArrowRight data-icon="inline-end" />
-                        </Button>
-                      </CardFooter>
-                    </Card>
-                  ))}
-                </div>
-              </section>
+              <MerchantPicker
+                merchants={merchants}
+                selectedKey={selection.merchantKey}
+                disabled={opening}
+                onSelect={selectMerchant}
+              />
             ) : (
               <>
+                <nav aria-label="店铺导航" className="fv-store-breadcrumb">
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    disabled={opening}
+                    onClick={() => setChoosing(true)}
+                  >
+                    <ArrowLeft data-icon="inline-start" />
+                    全部店铺（{merchants.length}）
+                  </Button>
+                  <span aria-current="page">{merchant.title}</span>
+                </nav>
                 <div className="fv-shop-heading">
-                  <div className="fv-row">
-                    <Store />
+                  <div className="fv-shop-identity">
+                    <div className="fv-store-symbol" aria-hidden>
+                      <Store />
+                    </div>
                     <div>
                       <h3>{merchant.title}</h3>
                       <p className="fv-description">
@@ -273,34 +293,31 @@ function AccountServicePage({
                         {merchants.some(
                           (m) =>
                             m.key !== merchant.key &&
-                            m.domain === merchant.domain,
+                            m.domain === merchant.domain &&
+                            m.title === merchant.title,
                         )
                           ? ` · ${merchant.storeId ?? ""}`
                           : ""}
                       </p>
                     </div>
                   </div>
-                  <div className="fv-row">
-                    <Button
-                      variant="ghost"
-                      disabled={opening}
-                      onClick={() => setChoosing(true)}
-                    >
-                      切换店铺
-                    </Button>
-                    {site && flow && (
-                      <Button
-                        variant="outline"
-                        disabled={opening}
-                        onClick={openStore}
-                      >
-                        {opening && <Spinner />}开始新的购物
-                      </Button>
-                    )}
-                  </div>
                 </div>
                 {flow ? (
-                  renderFlow(shoppingReference(flow), openStore)
+                  <div
+                    key={`${merchant.key}:${flow.flowId}`}
+                    className="fv-shop-content"
+                  >
+                    {renderFlow(
+                      shoppingReference(flow),
+                      openStore,
+                      addition?.flowId === flow.flowId
+                        ? addition.quantity
+                        : undefined,
+                      addition?.flowId === flow.flowId
+                        ? addition.error
+                        : undefined,
+                    )}
+                  </div>
                 ) : (
                   <Empty>
                     <Store />
@@ -311,40 +328,46 @@ function AccountServicePage({
                         : "这家商家提供咨询服务，可在聊天中发起咨询。"}
                     </EmptyDescription>
                     {site && (
-                      <Button disabled={opening} onClick={openStore}>
+                      <Button
+                        disabled={opening}
+                        onClick={() => void openStore()}
+                      >
                         {opening && <Spinner />}开始逛店
                       </Button>
                     )}
                   </Empty>
                 )}
                 {flow && flowKind(flow) === "consultation" && site && (
-                  <Button disabled={opening} onClick={openStore}>
+                  <Button disabled={opening} onClick={() => void openStore()}>
                     进入商品商城
                   </Button>
                 )}
                 {merchant.flows.length > 1 && (
                   <details className="fv-service-history">
                     <summary>
-                      其他购物与咨询记录 · {merchant.flows.length}
+                      历史购物与咨询 · {merchant.flows.length - 1}
                     </summary>
                     <div className="fv-record-list">
-                      {merchant.flows.map((f) => (
-                        <Button
-                          variant="ghost"
-                          key={f.flowId}
-                          disabled={opening}
-                          onClick={() =>
-                            setSelection({
-                              merchantKey: merchant.key,
-                              flowId: f.flowId,
-                            })
-                          }
-                        >
-                          {flowKind(f) === "shopping" ? "购物记录" : "咨询答复"}{" "}
-                          · {new Date(f.updatedAt).toLocaleString("zh-CN")}
-                          {f.flowId === flow.flowId ? " · 当前" : ""}
-                        </Button>
-                      ))}
+                      {merchant.flows
+                        .filter((f) => f.flowId !== flow?.flowId)
+                        .map((f) => (
+                          <Button
+                            variant="ghost"
+                            key={f.flowId}
+                            disabled={opening}
+                            onClick={() =>
+                              setSelection({
+                                merchantKey: merchant.key,
+                                flowId: f.flowId,
+                              })
+                            }
+                          >
+                            {flowKind(f) === "shopping"
+                              ? "购物记录"
+                              : "咨询答复"}{" "}
+                            · {new Date(f.updatedAt).toLocaleString("zh-CN")}
+                          </Button>
+                        ))}
                     </div>
                   </details>
                 )}

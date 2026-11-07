@@ -5,6 +5,8 @@ import {
   resolveServiceSelection,
   readServiceSelection,
   saveServiceSelection,
+  filterServiceMerchants,
+  merchantCommerceSite,
   type ServiceSite,
   type ServiceFlow,
 } from "../src/client/service-merchants.js";
@@ -30,6 +32,34 @@ const flow = (
   kind,
   updatedAt,
   sessionId: `session-${flowId}`,
+});
+
+test("merchant search retains distinct stores, matches aliases and never revives removed connections", () => {
+  const merchants = serviceMerchants(
+    [
+      {
+        ...site("a"),
+        label: "生活小店",
+        description: { methods: ["commerce.capabilities.get"] },
+      },
+      { ...site("a-support"), label: "杯垫咨询" },
+      { ...site("b", "store-b"), label: "生活小店" },
+    ],
+    [flow("removed", "deleted"), flow("b-cart", "b")],
+  );
+  assert.equal(
+    filterServiceMerchants(merchants, "生活小店 MALL.TEST").length,
+    2,
+  );
+  const alias = filterServiceMerchants(merchants, "杯垫");
+  assert.equal(alias.length, 1);
+  assert.equal(merchantCommerceSite(alias[0])?.id, "a");
+  const exact = filterServiceMerchants(merchants, "store-b");
+  assert.equal(exact.length, 1);
+  assert.equal(resolveServiceSelection(exact).flow?.flowId, "b-cart");
+  assert.equal(merchantCommerceSite(exact[0])?.id, "b");
+  assert.deepEqual(filterServiceMerchants(merchants, "deleted"), []);
+  assert.deepEqual(filterServiceMerchants(merchants, "  "), merchants);
 });
 
 test("one merchant groups consultation and commerce while same-domain stores and issuers stay separate", () => {

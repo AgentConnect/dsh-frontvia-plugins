@@ -6,6 +6,15 @@ const id = z
   .max(128)
   .regex(/^[A-Za-z0-9][A-Za-z0-9._:-]*$/);
 const label = z.string().max(500);
+const addToCartIntentSchema = z
+  .object({
+    action: z.literal("add"),
+    variantId: id,
+    productName: label,
+    variantName: label,
+    quantity: z.number().int().min(1).max(100),
+  })
+  .strict();
 export const cardIntentSchema = z.discriminatedUnion("action", [
   z
     .object({
@@ -14,15 +23,7 @@ export const cardIntentSchema = z.discriminatedUnion("action", [
       productName: label,
     })
     .strict(),
-  z
-    .object({
-      action: z.literal("add"),
-      variantId: id,
-      productName: label,
-      variantName: label,
-      quantity: z.literal(1),
-    })
-    .strict(),
+  addToCartIntentSchema.extend({ quantity: z.literal(1) }),
   z
     .object({
       action: z.literal("delivery"),
@@ -41,6 +42,7 @@ export const shoppingActionSchema = z
   .object({
     intent: z.union([
       cardIntentSchema,
+      addToCartIntentSchema,
       z
         .object({
           action: z.literal("product"),
@@ -70,6 +72,7 @@ export const shoppingActionSchema = z
           optionId: id,
         })
         .strict(),
+      z.object({ action: z.literal("prepare-delivery") }).strict(),
       z.object({ action: z.literal("quote") }).strict(),
       z.object({ action: z.literal("edit-cart") }).strict(),
       z

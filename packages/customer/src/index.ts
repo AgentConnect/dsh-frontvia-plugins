@@ -135,6 +135,10 @@ export async function apply(
             // purchase by submitting a confirmation message to an Agent.
             if (operation === "shopping-confirm")
               fail("DIRECT_COMMERCE_REQUIRED");
+            if (operation === "discard-cart-add")
+              value = await service.discardCartAddition(a.sessionId, a.flowId);
+            if (operation === "retry-cart")
+              value = await service.retryCart(a.sessionId, a.flowId);
             if (operation === "recover") {
               await service.tool(
                 a.sessionId,

@@ -52,6 +52,8 @@ function fixture(cache = false, cny = false, language?: string) {
     methodAvailability: {} as Record<string, string>,
     variantItems: undefined as any[] | undefined,
     selectedDelivery: undefined as string | undefined,
+    deliveryGroups: undefined as any[] | undefined,
+    deliveryRequirements: [] as any[],
     cancelPaymentRace: false,
     paymentCalls: 0,
     paymentOverride: undefined as any,
@@ -216,7 +218,8 @@ function fixture(cache = false, cny = false, language?: string) {
         return response({
           cart_id: "cart",
           cart_version: remote.cart.version,
-          delivery_groups: [
+          requirements: remote.deliveryRequirements,
+          delivery_groups: remote.deliveryGroups ?? [
             {
               id: "group",
               ...(remote.selectedDelivery
@@ -226,6 +229,7 @@ function fixture(cache = false, cny = false, language?: string) {
                 {
                   id: "standard",
                   label: "Standard",
+                  price_status: "known",
                   amount: { amount_minor: "500", currency },
                 },
               ],
@@ -275,8 +279,11 @@ function fixture(cache = false, cny = false, language?: string) {
             title: "Test Mug",
             unit_price: { currency, amount_minor: remote.price },
           });
-        if (m === "commerce.carts.delivery_option.select")
+        if (m === "commerce.carts.delivery_option.select") {
           remote.selectedDelivery = p.option_id;
+          const group = remote.deliveryGroups?.find((g) => g.id === p.group_id);
+          if (group) group.selected_option_id = p.option_id;
+        }
       }
       if (m.startsWith("commerce.carts.")) resource = remote.cart;
       if (m === "commerce.quotes.create") {
@@ -2972,6 +2979,827 @@ test("product selection publishes only a complete detail and variants pair", asy
     assert.equal(view.products.items[0].description, "Ceramic mug");
     assert.equal(view.variantProductId, "prod");
     assert.equal(view.variants.items[0].product_id, "prod");
+  } finally {
+    f.close();
+  }
+});
+
+test("adding after an order opens a separate cart, preserves the order and replays one addition", async () => {
+  const { openStorefrontCart } = await import(
+    "../src/client/storefront-cart.js"
+  );
+  const f = fixture();
+  try {
+    const oldFlow = await prepare(f);
+    const reviewed = await f.service.review("session-a", oldFlow);
+    await f.service.confirm("session-a", oldFlow, reviewed.intent!.id);
+    const oldOrder = copy((await f.service.view("session-a", oldFlow)).order);
+    const call = async (op: string, p: any) =>
+      op === "open-store"
+        ? f.service.openStore(p.siteId, p.actionId)
+        : f.service.shopping(p.sessionId, p.flowId, {
+            intent: p.intent,
+            actionId: p.actionId,
+          });
+    const intent = {
+      action: "add" as const,
+      variantId: "variant",
+      productName: "Mug",
+      variantName: "Blue",
+      quantity: 3,
+    };
+    const actionId = randomUUID();
+    const result = await openStorefrontCart(call, "a", actionId, intent);
+    assert.equal(result?.error, false);
+    assert.notEqual(result?.ui.flowId, oldFlow);
+    const writes = f.remote.writes;
+    f.restart();
+    const replay = await openStorefrontCart(call, "a", actionId, intent);
+    assert.equal(replay?.ui.flowId, result?.ui.flowId);
+    assert.equal(replay?.error, false);
+    assert.equal(f.remote.writes, writes);
+    const cart = await f.service.view(result!.ui.sessionId, result!.ui.flowId);
+    assert.equal(cart.cart.lines.length, 1);
+    assert.equal(cart.cart.lines[0].quantity, 3);
+    assert.equal(cart.order, undefined);
+    assert.deepEqual(
+      (await f.service.view("session-a", oldFlow)).order,
+      oldOrder,
+    );
+    assert.equal(f.remote.confirms, 1);
+    assert.equal(f.remote.paymentCalls, 0);
+  } finally {
+    f.close();
+  }
+});
+
+test("a lost new-cart receipt retains its reference for recovery and account changes stop before addition", async () => {
+  const { openStorefrontCart } = await import(
+    "../src/client/storefront-cart.js"
+  );
+  const f = fixture();
+  try {
+    const call = async (op: string, p: any) =>
+      op === "open-store"
+        ? f.service.openStore(p.siteId, p.actionId)
+        : f.service.shopping(p.sessionId, p.flowId, {
+            intent: p.intent,
+            actionId: p.actionId,
+          });
+    const intent = {
+      action: "add" as const,
+      variantId: "variant",
+      productName: "Mug",
+      variantName: "Blue",
+      quantity: 1 as const,
+    };
+    const writes = f.remote.writes;
+    assert.equal(
+      await openStorefrontCart(call, "a", randomUUID(), intent, () => false),
+      undefined,
+    );
+    assert.equal(f.remote.writes, writes);
+    f.remote.lose = "commerce.carts.create";
+    const result = await openStorefrontCart(call, "a", randomUUID(), intent);
+    assert.equal(result?.error, true);
+    assert.ok(result?.ui.flowId);
+    const pending = await f.service.view(
+      result!.ui.sessionId,
+      result!.ui.flowId,
+    );
+    assert.equal(pending.pending, true);
+    f.restart();
+    await f.service.tool(
+      result!.ui.sessionId,
+      "frontvia_orders",
+      { flowId: result!.ui.flowId, action: "recover" },
+      "recover-new-cart",
+    );
+    assert.equal(
+      (await f.service.view(result!.ui.sessionId, result!.ui.flowId)).pending,
+      false,
+    );
+    assert.equal(
+      f.remote.calls.filter((m) => m === "commerce.carts.create").length,
+      1,
+    );
+    assert.equal(f.remote.confirms, 0);
+    assert.equal(f.remote.paymentCalls, 0);
+  } finally {
+    f.close();
+  }
+});
+
+test("manual additions preserve requested quantities and reject invalid counts before any merchant write", async () => {
+  const f = fixture();
+  try {
+    const flow = await f.flow();
+    const intent = {
+      action: "add" as const,
+      variantId: "variant",
+      productName: "Mug",
+      variantName: "Blue",
+      quantity: 4,
+    };
+    for (const quantity of [0, -1, 1.5, 101, NaN]) {
+      const writes = f.remote.writes;
+      await assert.rejects(
+        f.service.shopping("session-a", flow, {
+          intent: { ...intent, quantity },
+          actionId: randomUUID(),
+        }),
+      );
+      assert.equal(f.remote.writes, writes);
+    }
+    const cart = await f.service.shopping("session-a", flow, {
+      intent,
+      actionId: randomUUID(),
+    });
+    assert.equal(cart.cart.lines[0].quantity, 4);
+    const next = await f.service.shopping("session-a", flow, {
+      intent: { ...intent, quantity: 2 },
+      expected_version: cart.cart.version,
+      actionId: randomUUID(),
+    });
+    assert.equal(next.cart.lines.at(-1).quantity, 2);
+    assert.equal(f.remote.confirms, 0);
+  } finally {
+    f.close();
+  }
+});
+
+test("missing addition receipt remains pending without replay and identifies the operation for the UI", async () => {
+  const f = fixture();
+  try {
+    const flow = await f.flow();
+    const intent = {
+      action: "add" as const,
+      variantId: "variant",
+      productName: "Mug",
+      variantName: "Blue",
+      quantity: 1,
+    };
+    const first = await f.service.shopping("session-a", flow, {
+      intent,
+      actionId: randomUUID(),
+    });
+    f.remote.lose = "commerce.carts.lines.add";
+    await assert.rejects(
+      f.service.shopping("session-a", flow, {
+        intent,
+        expected_version: first.cart.version,
+        actionId: randomUUID(),
+      }),
+    );
+    const saved = f.vault.get<any>(`flow:${flow}`);
+    const receipt = f.remote.ops.get(saved.pending);
+    f.remote.ops.delete(saved.pending);
+    const writes = f.remote.writes;
+    for (let n = 0; n < 2; n++) {
+      f.restart();
+      await assert.rejects(
+        f.service.tool(
+          "session-a",
+          "frontvia_orders",
+          { flowId: flow, action: "recover" },
+          `lookup-${n}`,
+        ),
+        /ORIGINAL_RESULT_UNKNOWN/,
+      );
+      const view = await f.service.view("session-a", flow);
+      assert.equal(view.pending, true);
+      assert.equal(view.pendingAction, "cart-add");
+      assert.equal(view.order, undefined);
+      assert.equal(f.remote.writes, writes);
+    }
+    f.remote.ops.set(saved.pending, receipt);
+    await f.service.tool(
+      "session-a",
+      "frontvia_orders",
+      { flowId: flow, action: "recover" },
+      "lookup-found",
+    );
+    const resolved = await f.service.view("session-a", flow);
+    assert.equal(resolved.pending, false);
+    assert.equal(resolved.pendingAction, undefined);
+    assert.equal(f.remote.writes, writes);
+  } finally {
+    f.close();
+  }
+});
+
+test("customer retry reuses a missing cart request exactly, survives restart and serializes double clicks", async () => {
+  const f = fixture();
+  try {
+    const flow = await f.flow();
+    const pap = (f.service as any).pap;
+    const request = pap.request.bind(pap);
+    const attempts: any[] = [];
+    let disconnect = true;
+    pap.request = async (
+      ref: string,
+      method: string,
+      params: any,
+      signal: any,
+    ) => {
+      if (method === "commerce.carts.create") {
+        attempts.push(copy(params));
+        if (disconnect) {
+          disconnect = false;
+          throw Error("NETWORK_UNCERTAIN");
+        }
+      }
+      return request(ref, method, params, signal);
+    };
+    await assert.rejects(
+      f.service.shopping("session-a", flow, {
+        intent: {
+          action: "add",
+          variantId: "variant",
+          productName: "Mug",
+          variantName: "Blue",
+          quantity: 3,
+        },
+        actionId: randomUUID(),
+      }),
+    );
+    assert.equal((await f.service.view("session-a", flow)).canRetryCart, true);
+    f.restart();
+    const results = await Promise.all([
+      f.service.retryCart("session-a", flow),
+      f.service.retryCart("session-a", flow),
+    ]);
+    assert.equal(attempts.length, 2);
+    assert.deepEqual(attempts[1], attempts[0]);
+    assert.equal(
+      f.remote.calls.filter((m) => m === "commerce.carts.create").length,
+      1,
+    );
+    for (const result of results) {
+      assert.equal(result.pending, false);
+      assert.equal(result.cart.lines[0].quantity, 3);
+    }
+    assert.equal(f.remote.confirms, 0);
+    assert.equal(f.remote.paymentCalls, 0);
+  } finally {
+    f.close();
+  }
+});
+
+test("customer retry reconciles an existing cart receipt without submitting it again", async () => {
+  const f = fixture();
+  try {
+    const flow = await f.flow();
+    f.remote.lose = "commerce.carts.create";
+    await assert.rejects(
+      f.service.shopping("session-a", flow, {
+        intent: {
+          action: "add",
+          variantId: "variant",
+          productName: "Mug",
+          variantName: "Blue",
+          quantity: 2,
+        },
+        actionId: randomUUID(),
+      }),
+    );
+    const view = await f.service.retryCart("session-a", flow);
+    assert.equal(view.pending, false);
+    assert.equal(view.cart.lines[0].quantity, 2);
+    assert.equal(
+      f.remote.calls.filter((m) => m === "commerce.carts.create").length,
+      1,
+    );
+  } finally {
+    f.close();
+  }
+});
+
+test("customer retry never resends on lookup errors, disabled capabilities or pending purchase confirmation", async () => {
+  const f = fixture();
+  try {
+    const flow = await f.flow();
+    f.remote.lose = "commerce.carts.create";
+    await assert.rejects(
+      f.service.shopping("session-a", flow, {
+        intent: {
+          action: "add",
+          variantId: "variant",
+          productName: "Mug",
+          variantName: "Blue",
+          quantity: 1,
+        },
+        actionId: randomUUID(),
+      }),
+    );
+    const pap = (f.service as any).pap,
+      request = pap.request.bind(pap);
+    pap.request = async (ref: string, method: string, params: any) =>
+      method === "commerce.operations.lookup"
+        ? { error: { code: 1002 } }
+        : request(ref, method, params);
+    const writes = f.remote.writes;
+    await assert.rejects(
+      f.service.retryCart("session-a", flow),
+      /ORIGINAL_RESULT_UNKNOWN/,
+    );
+    assert.equal(f.remote.writes, writes);
+    assert.equal((await f.service.view("session-a", flow)).pending, true);
+    pap.request = request;
+    f.remote.methodAvailability["commerce.carts.create"] = "disabled";
+    await assert.rejects(f.service.retryCart("session-a", flow));
+    assert.equal(f.remote.writes, writes);
+  } finally {
+    f.close();
+  }
+  const purchase = fixture();
+  try {
+    const flow = await prepare(purchase);
+    const review = await purchase.service.review("session-a", flow);
+    purchase.remote.lose = "commerce.checkouts.confirm";
+    await assert.rejects(
+      purchase.service.confirm("session-a", flow, review.intent!.id),
+    );
+    const confirms = purchase.remote.confirms;
+    await assert.rejects(
+      purchase.service.retryCart("session-a", flow),
+      /CART_RETRY_UNAVAILABLE/,
+    );
+    assert.equal(purchase.remote.confirms, confirms);
+    assert.equal(
+      (await purchase.service.view("session-a", flow)).canRetryCart,
+      false,
+    );
+  } finally {
+    purchase.close();
+  }
+});
+
+test("discarded addition stops blocking the cart, cannot replay after restart, and preserves the merchant cart", async () => {
+  const f = fixture();
+  try {
+    const flow = await f.flow();
+    const intent = {
+      action: "add" as const,
+      variantId: "variant",
+      productName: "Mug",
+      variantName: "Blue",
+      quantity: 1,
+    };
+    const first = await f.service.shopping("session-a", flow, {
+      intent,
+      actionId: randomUUID(),
+    });
+    f.remote.lose = "commerce.carts.lines.add";
+    const attempted = {
+      intent,
+      expected_version: first.cart.version,
+      actionId: randomUUID(),
+    };
+    await assert.rejects(f.service.shopping("session-a", flow, attempted));
+    const pending = f.vault.get<any>(`flow:${flow}`).pending;
+    const writes = f.remote.writes;
+    await assert.rejects(
+      f.service.discardCartAddition("another-session", flow),
+    );
+    assert.equal(f.vault.get<any>(`flow:${flow}`).pending, pending);
+    const view = await f.service.discardCartAddition("session-a", flow);
+    assert.equal(view.pending, false);
+    assert.equal(view.canDiscardCartAddition, false);
+    assert.deepEqual(view.cart, f.remote.cart);
+    assert.equal(f.remote.writes, writes);
+    assert.equal(
+      f.vault.get<any>(`flow:${flow}`).commands[pending].status,
+      "discarded",
+    );
+    f.restart();
+    await assert.rejects(
+      f.service.shopping("session-a", flow, attempted),
+      /OPERATION_DISCARDED/,
+    );
+    assert.equal(f.remote.writes, writes);
+    const updated = await f.service.shopping("session-a", flow, {
+      intent: {
+        action: "update-line",
+        lineId: view.cart.lines[0].id,
+        quantity: 2,
+      },
+      expected_version: view.cart.version,
+      actionId: randomUUID(),
+    });
+    assert.equal(updated.pending, false);
+    assert.equal(updated.cart.lines[0].quantity, 2);
+    assert.equal(f.remote.confirms, 0);
+  } finally {
+    f.close();
+  }
+});
+
+test("discard persists through a failed refresh but cannot discard a purchase confirmation", async () => {
+  const f = fixture();
+  try {
+    const flow = await f.flow();
+    const intent = {
+      action: "add" as const,
+      variantId: "variant",
+      productName: "Mug",
+      variantName: "Blue",
+      quantity: 1,
+    };
+    const first = await f.service.shopping("session-a", flow, {
+      intent,
+      actionId: randomUUID(),
+    });
+    f.remote.lose = "commerce.carts.lines.add";
+    await assert.rejects(
+      f.service.shopping("session-a", flow, {
+        intent,
+        expected_version: first.cart.version,
+        actionId: randomUUID(),
+      }),
+    );
+    const pap = (f.service as any).pap,
+      request = pap.request.bind(pap);
+    pap.request = async (ref: string, method: string, params: any) => {
+      if (method === "commerce.carts.get") throw Error("NETWORK_TIMEOUT");
+      return request(ref, method, params);
+    };
+    const writes = f.remote.writes;
+    await assert.rejects(
+      f.service.discardCartAddition("session-a", flow),
+      /NETWORK_TIMEOUT/,
+    );
+    pap.request = request;
+    f.restart();
+    assert.equal((await f.service.view("session-a", flow)).pending, false);
+    assert.equal(f.remote.writes, writes);
+  } finally {
+    f.close();
+  }
+  const purchase = fixture();
+  try {
+    const flow = await prepare(purchase),
+      review = await purchase.service.review("session-a", flow);
+    purchase.remote.lose = "commerce.checkouts.confirm";
+    await assert.rejects(
+      purchase.service.confirm("session-a", flow, review.intent!.id),
+    );
+    await assert.rejects(
+      purchase.service.discardCartAddition("session-a", flow),
+      /CART_DISCARD_UNAVAILABLE/,
+    );
+    assert.equal(
+      (await purchase.service.view("session-a", flow)).pending,
+      true,
+    );
+  } finally {
+    purchase.close();
+  }
+});
+
+test("delivery preparation chooses lowest known fees per group with fresh versions, preserves manual choices and never checks out", async () => {
+  const f = fixture(false, true);
+  try {
+    const flow = await f.flow();
+    const act = (intent: any, version?: string) =>
+      f.service.shopping("session-a", flow, {
+        intent,
+        expected_version: version,
+        actionId: randomUUID(),
+      });
+    let view = await act({
+      action: "add",
+      variantId: "variant",
+      productName: "Mug",
+      variantName: "Blue",
+      quantity: 1,
+    });
+    view = await f.service.contact(
+      "session-a",
+      flow,
+      view.cart.version,
+      {
+        shipping_address: {
+          country: "CN",
+          recipient: "Test",
+          phone: "13800138000",
+          line1: "Test address",
+        },
+      },
+      randomUUID(),
+    );
+    const option = (id: string, amount: string, status = "known") => ({
+      id,
+      label: id,
+      price_status: status,
+      amount: { currency: "CNY", amount_minor: amount },
+    });
+    f.remote.deliveryGroups = [
+      { id: "single", options: [option("only", "0")] },
+      {
+        id: "cheapest",
+        options: [
+          option("express", "1000"),
+          option("free", "0"),
+          option("tie", "0"),
+        ],
+      },
+      {
+        id: "chosen",
+        selected_option_id: "express",
+        options: [option("free", "0"), option("express", "1000")],
+      },
+      {
+        id: "integer",
+        options: [
+          option("big", "9007199254740993"),
+          option("smaller", "9007199254740992"),
+        ],
+      },
+      {
+        id: "unknown",
+        options: [
+          {
+            id: "input",
+            label: "Input",
+            amount: null,
+            price_status: "requires_input",
+          },
+          option("estimate", "0", "estimated"),
+        ],
+      },
+      { id: "empty", options: [] },
+    ];
+    const before = f.remote.calls.length;
+    const originalVersion = view.cart.version;
+    view = await act({ action: "prepare-delivery" }, originalVersion);
+    assert.deepEqual(
+      view.delivery.delivery_groups.map((g: any) => g.selected_option_id),
+      ["only", "free", "express", "smaller", undefined, undefined],
+    );
+    assert.equal(view.cart.version, "v5"); // fixture asserts each expected_version at dispatch
+    assert.equal(view.delivery.cart_version, view.cart.version);
+    assert.equal(
+      f.remote.calls
+        .slice(before)
+        .filter((m) => m === "commerce.carts.delivery_option.select").length,
+      3,
+    );
+    assert.equal(view.quote, undefined);
+    assert.equal(view.checkout, undefined);
+    assert.equal(f.remote.confirms, 0);
+    assert.equal(f.remote.paymentCalls, 0);
+    const writes = f.remote.writes;
+    await act({ action: "prepare-delivery" }, view.cart.version);
+    assert.equal(f.remote.writes, writes); // remount/retry keeps existing selections
+    await assert.rejects(act({ action: "prepare-delivery" }, originalVersion), {
+      code: "CART_VERSION_CHANGED",
+    });
+    view = await act(
+      { action: "select-delivery", groupId: "cheapest", optionId: "express" },
+      view.cart.version,
+    );
+    view = await act({ action: "prepare-delivery" }, view.cart.version);
+    assert.equal(
+      view.delivery.delivery_groups[1].selected_option_id,
+      "express",
+    );
+    // Merchant invalidates the selected option after an address change.
+    view = await f.service.contact(
+      "session-a",
+      flow,
+      view.cart.version,
+      {
+        shipping_address: {
+          country: "CN",
+          recipient: "Test",
+          phone: "13800138000",
+          line1: "New address",
+        },
+      },
+      randomUUID(),
+    );
+    f.remote.deliveryGroups[1].options = [option("new-region", "300")];
+    view = await act({ action: "prepare-delivery" }, view.cart.version);
+    assert.equal(
+      view.delivery.delivery_groups[1].selected_option_id,
+      "new-region",
+    );
+  } finally {
+    f.close();
+  }
+});
+
+for (const outcome of ["fail", "lose"] as const) {
+  test(`automatic delivery ${outcome} stops the sequence without quoting, replay or payment`, async () => {
+    const f = fixture(false, true);
+    try {
+      const flow = await f.flow();
+      let view = await f.service.shopping("session-a", flow, {
+        intent: {
+          action: "add",
+          variantId: "variant",
+          productName: "Mug",
+          variantName: "Blue",
+          quantity: 1,
+        },
+        actionId: randomUUID(),
+      });
+      view = await f.service.contact(
+        "session-a",
+        flow,
+        view.cart.version,
+        {
+          shipping_address: {
+            country: "CN",
+            recipient: "Test",
+            phone: "13800138000",
+            line1: "Test address",
+          },
+        },
+        randomUUID(),
+      );
+      f.remote.deliveryGroups = ["a", "b"].map((id) => ({
+        id,
+        options: [
+          {
+            id: "standard",
+            label: "Standard",
+            price_status: "known",
+            amount: { currency: "CNY", amount_minor: "0" },
+          },
+        ],
+      }));
+      f.remote[outcome] = "commerce.carts.delivery_option.select";
+      const request = {
+        intent: { action: "prepare-delivery" as const },
+        expected_version: view.cart.version,
+        actionId: randomUUID(),
+      };
+      const before = f.remote.calls.length;
+      await assert.rejects(f.service.shopping("session-a", flow, request));
+      await assert.rejects(f.service.shopping("session-a", flow, request));
+      const calls = f.remote.calls.slice(before);
+      assert.equal(
+        calls.filter((m) => m === "commerce.carts.delivery_option.select")
+          .length,
+        1,
+      );
+      assert.equal(
+        calls.some((m) =>
+          /quotes.create|checkouts.create|orders.create/.test(m),
+        ),
+        false,
+      );
+      assert.equal(f.remote.confirms, 0);
+      assert.equal(f.remote.paymentCalls, 0);
+    } finally {
+      f.close();
+    }
+  });
+}
+
+test("automatic delivery refuses stale options and blocking address requirements without a write", async () => {
+  const f = fixture(false, true);
+  try {
+    const flow = await f.flow();
+    let view = await f.service.shopping("session-a", flow, {
+      intent: {
+        action: "add",
+        variantId: "variant",
+        productName: "Mug",
+        variantName: "Blue",
+        quantity: 1,
+      },
+      actionId: randomUUID(),
+    });
+    view = await f.service.contact(
+      "session-a",
+      flow,
+      view.cart.version,
+      {
+        shipping_address: {
+          country: "CN",
+          recipient: "Test",
+          phone: "13800138000",
+          line1: "Test address",
+        },
+      },
+      randomUUID(),
+    );
+    const request = () => ({
+      intent: { action: "prepare-delivery" as const },
+      expected_version: view.cart.version,
+      actionId: randomUUID(),
+    });
+    const writes = f.remote.writes;
+    f.remote.deliveryRequirements = [
+      { code: "ADDRESS_REQUIRED", blocking: true },
+    ];
+    const blocked = await f.service.shopping("session-a", flow, request());
+    assert.equal(
+      blocked.delivery.delivery_groups[0].selected_option_id,
+      undefined,
+    );
+    f.remote.deliveryRequirements = [];
+    const original = f.service.pap.request;
+    f.service.pap.request = async (...args: Parameters<typeof original>) => {
+      const result: any = await original(...args);
+      if (args[1] === "commerce.carts.delivery_options.list")
+        result.result.data.cart_version = "stale";
+      return result;
+    };
+    await assert.rejects(f.service.shopping("session-a", flow, request()), {
+      code: "CART_VERSION_CHANGED",
+    });
+    assert.equal(f.remote.writes, writes);
+  } finally {
+    f.close();
+  }
+});
+
+test("empty, partial and whitespace cart addresses cannot trigger automatic delivery; saving a complete address unlocks it", async () => {
+  const f = fixture(false, true);
+  try {
+    const flow = await f.flow();
+    let view = await f.service.shopping("session-a", flow, {
+      intent: {
+        action: "add",
+        variantId: "variant",
+        productName: "Mug",
+        variantName: "Blue",
+        quantity: 1,
+      },
+      actionId: randomUUID(),
+    });
+    const valid = {
+      country: "CN",
+      recipient: "Test",
+      phone: "13800138000",
+      line1: "Test address",
+    };
+    for (const address of [
+      undefined,
+      null,
+      {},
+      { country: "CN" },
+      { ...valid, recipient: "" },
+      { ...valid, line1: "   " },
+      { ...valid, phone: "" },
+      { ...valid, country: "US" },
+    ]) {
+      f.remote.cart.shipping_address = address;
+      await f.service.tool(
+        "session-a",
+        "frontvia_cart",
+        { flowId: flow, action: "get" },
+        randomUUID(),
+      );
+      const before = f.remote.calls.length;
+      await assert.rejects(
+        f.service.shopping("session-a", flow, {
+          intent: { action: "prepare-delivery" },
+          expected_version: view.cart.version,
+          actionId: randomUUID(),
+        }),
+        { code: "CONTACT_REQUIRED" },
+      );
+      assert.equal(
+        f.remote.calls.slice(before).some((m) => m.includes("delivery")),
+        false,
+      );
+    }
+    const before = f.remote.writes;
+    await assert.rejects(
+      f.service.contact(
+        "session-a",
+        flow,
+        view.cart.version,
+        {
+          shipping_address: { ...valid, recipient: "   " },
+        },
+        randomUUID(),
+      ),
+    );
+    assert.equal(f.remote.writes, before);
+    view = await f.service.contact(
+      "session-a",
+      flow,
+      view.cart.version,
+      { shipping_address: valid },
+      randomUUID(),
+    );
+    view = await f.service.shopping("session-a", flow, {
+      intent: { action: "prepare-delivery" },
+      expected_version: view.cart.version,
+      actionId: randomUUID(),
+    });
+    assert.equal(
+      view.delivery.delivery_groups[0].selected_option_id,
+      "standard",
+    );
+    assert.equal(view.quote, undefined);
+    assert.equal(f.remote.confirms, 0);
   } finally {
     f.close();
   }

@@ -4,9 +4,11 @@ import {
   MapPin,
   ChevronDown,
   CircleCheck,
+  CircleX,
   Check,
   Truck,
 } from "lucide-react";
+import { orderStatus } from "./order-summary.js";
 import { Badge, Separator } from "./ui.js";
 export const items = (v: any) =>
   Array.isArray(v)
@@ -100,6 +102,7 @@ export function Totals({ totals }: { totals: any }) {
 export function Order({ order }: { order: any }) {
   const status = order.payment?.status;
   const paid = status === "paid" || status === "captured";
+  const summary = orderStatus(order);
   const payment: Record<string, string> = {
     paid: "已付款",
     unpaid: "未付款",
@@ -124,11 +127,17 @@ export function Order({ order }: { order: any }) {
   return (
     <article className="fv-order">
       <div className="fv-order-hero">
-        <div className="fv-order-icon">
-          <CircleCheck aria-hidden />
+        <div className="fv-order-icon" data-variant={summary.variant}>
+          {order.status === "canceled" ? (
+            <CircleX aria-hidden />
+          ) : summary.variant === "success" ? (
+            <CircleCheck aria-hidden />
+          ) : (
+            <Package aria-hidden />
+          )}
         </div>
         <div>
-          <h4>{order.status === "canceled" ? "订单已取消" : "订单已创建"}</h4>
+          <h4>{summary.label}</h4>
           <p className="fv-description">
             订单号：{order.display_number ?? order.id}
           </p>

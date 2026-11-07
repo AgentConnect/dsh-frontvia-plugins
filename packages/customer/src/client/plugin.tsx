@@ -1,3 +1,4 @@
+import type { StartShopping } from "./storefront-cart.js";
 import type { ViewScope } from "../view-scope.js";
 import { Storefront } from "./storefront.js";
 import {
@@ -89,7 +90,12 @@ export const inject = [
 type UI = { flowId: string; sessionId: string; card: string };
 const errorText: Record<string, string> = {
   CART_ALREADY_SUBMITTED:
-    "这次选购已提交订单，请开始新的购物；原订单可在我的订单中查看。",
+    "商品已生成订单，请到“我的订单”查看。继续加购会使用新的购物车。",
+  OPERATION_DISCARDED: "这次加购已结束，请重新选择商品。",
+  CART_DISCARD_UNAVAILABLE: "当前操作无法取消，请查看订单状态。",
+  ADD_NOT_COMPLETED: "未能加入商品，请重试。",
+  CART_RETRY_FAILED: "这次购物车修改未成功，请检查商品数量后重试。",
+  CART_RETRY_UNAVAILABLE: "当前购物车无法重试，请刷新查看最新状态。",
   OPERATION_NOT_COMPLETED: "操作未完成，请刷新核对当前进度后再试。",
   CHECKOUT_IN_PROGRESS: "当前已准备结算，请先核对报价；需要修改时请重新报价。",
   ORDER_CANCEL_UNAVAILABLE:
@@ -112,9 +118,11 @@ const errorText: Record<string, string> = {
   NETWORK_UNCERTAIN: "暂未收到商店回复，请先核对原操作结果。",
   QUOTE_CHANGED: "报价或购物车已变化，请重新报价并核对。",
   CONFIRMATION_EXPIRED: "确认已过期，请重新核对当前报价。",
+  CONTACT_REQUIRED: "请先填写并保存完整的收货信息。",
   CART_VERSION_CHANGED: "购物车已更新，请刷新后重试。",
   RESOLVE_PENDING_OPERATION: "上次操作结果尚未明确，请先核对原结果。",
-  ORIGINAL_RESULT_UNKNOWN: "暂未查到原操作结果，请稍后再次核对，不要重复购买。",
+  ORIGINAL_RESULT_UNKNOWN:
+    "暂未查到原操作记录，请稍后再次核对。当前不会重复提交该操作。",
   CONNECTION_DISCONNECTED: "连接已断开，请在 PAP 连接页重新连接。",
   CONNECTION_BINDING_CHANGED:
     "PAP 连接配置已变化，请先在连接页核对原配置。购物记录已保留。",
@@ -241,12 +249,16 @@ export function apply(ctx: any) {
     sendToAgent,
     resume = false,
     startShopping,
+    addedQuantity,
+    initialError,
     catalog,
   }: {
     ui: UI;
     sendToAgent?: (s: string) => Promise<unknown>;
     resume?: boolean;
-    startShopping?: () => void;
+    startShopping?: StartShopping;
+    addedQuantity?: number;
+    initialError?: string;
     catalog?: CatalogSnapshot;
   }) {
     const accountRevision = useAccountRevision();
@@ -254,7 +266,9 @@ export function apply(ctx: any) {
     const container = useRef<HTMLElement | null>(null);
     // The selected service panel must load once even if a background WebView
     // delays its first intersection event. Historical chat cards can defer.
-    const visible = useRef(resume || typeof IntersectionObserver === "undefined");
+    const visible = useRef(
+      resume || typeof IntersectionObserver === "undefined",
+    );
     const scope = useRef<ViewScope>(
       resume || ["products", "connection"].includes(ui.card)
         ? "catalog"
@@ -275,7 +289,7 @@ export function apply(ctx: any) {
     const canShop = resume || !!sendToAgent;
     const [liveData, setData] = useState<any>(),
       [busy, setBusy] = useState(""),
-      [actionError, setError] = useState(""),
+      [actionError, setError] = useState(initialError ?? ""),
       [viewError, setViewError] = useState(""),
       [tab, setTab] = useState<string | undefined>(
         resume ? undefined : ui.card === "connection" ? "products" : ui.card,
@@ -330,7 +344,7 @@ export function apply(ctx: any) {
       dirtyForm.current = false;
       setData(undefined);
       setForm(blankContact);
-      setError("");
+      setError(initialError ?? "");
       setViewError("");
       setTab(
         resume ? undefined : ui.card === "connection" ? "products" : ui.card,
@@ -390,6 +404,14 @@ export function apply(ctx: any) {
         if (op === "contact") dirtyForm.current = false;
         if (op !== "view") views.publish(ui, value);
         if (
+          op === "retry-cart" &&
+          !value.pending &&
+          value.operation?.status === "failed"
+        ) {
+          setError("CART_RETRY_FAILED");
+          return false;
+        }
+        if (
           op === "order-cancel" &&
           !value.pending &&
           value.operation?.status === "failed"
@@ -407,7 +429,8 @@ export function apply(ctx: any) {
           return false;
         }
       } catch (e: any) {
-        if (op === "order-cancel" || op === "shopping")
+        if (op === "discard-cart-add") views.invalidate(ui, ["cart"]);
+        if (op === "order-cancel" || op === "shopping" || op === "retry-cart")
           views.invalidate(ui, ["checkout"]);
         setError(op === "confirm" ? "CONFIRMATION_RESULT_UNKNOWN" : e.message);
         if (op === "confirm" && e.message !== "PERSONAL_ACCOUNT_CHANGED")
@@ -501,10 +524,14 @@ export function apply(ctx: any) {
           <Storefront
             data={data}
             busy={!!busy}
-            error={errorText[error] ?? error}
+            error={
+              error ? (errorText[error] ?? "暂时无法完成，请稍后重试。") : ""
+            }
+            errorCode={error}
             action={action}
             now={tick}
             startShopping={startShopping}
+            addedQuantity={addedQuantity}
             onViewChange={onViewChange}
           />
         </div>
@@ -1247,12 +1274,14 @@ export function apply(ctx: any) {
           openAccount={() => ctx.layout.selectPanel("dsh-identity")}
           call={call}
           openConnections={() => ctx.layout.selectPanel("pap-connections")}
-          renderFlow={(ui, startShopping) => (
+          renderFlow={(ui, startShopping, addedQuantity, initialError) => (
             <FlowCard
               key={ui.flowId}
               ui={ui}
               resume
               startShopping={startShopping}
+              addedQuantity={addedQuantity}
+              initialError={initialError}
             />
           )}
         />
@@ -1279,12 +1308,16 @@ export function apply(ctx: any) {
     sendToAgent,
     resume = false,
     startShopping,
+    addedQuantity,
+    initialError,
     catalog,
   }: {
     ui: UI;
     sendToAgent?: (s: string) => Promise<unknown>;
     resume?: boolean;
-    startShopping?: () => void;
+    startShopping?: StartShopping;
+    addedQuantity?: number;
+    initialError?: string;
     catalog?: CatalogSnapshot;
   }) {
     return ui.card === "consultation" ? (
@@ -1302,6 +1335,8 @@ export function apply(ctx: any) {
         sendToAgent={sendToAgent}
         resume={resume}
         startShopping={startShopping}
+        addedQuantity={addedQuantity}
+        initialError={initialError}
       />
     );
   }

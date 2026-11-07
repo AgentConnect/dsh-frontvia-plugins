@@ -25,6 +25,36 @@ export type Merchant = {
 export type ServiceSelection = { merchantKey?: string; flowId?: string };
 export const flowKind = (flow: ServiceFlow) =>
   flow.kind === "consultation" ? "consultation" : "shopping";
+
+export function merchantCommerceSite(merchant: Merchant) {
+  return (
+    merchant.sites.find((site) =>
+      site.description?.methods?.includes("commerce.capabilities.get"),
+    ) ??
+    merchant.sites.find((site) =>
+      merchant.flows.some(
+        (flow) => flow.siteId === site.id && flowKind(flow) === "shopping",
+      ),
+    )
+  );
+}
+
+/** Search is display-only; retain the complete merchant binding for selection. */
+export function filterServiceMerchants(merchants: Merchant[], query: string) {
+  const terms = query.trim().toLocaleLowerCase().split(/\s+/).filter(Boolean);
+  return merchants.filter((merchant) => {
+    const text = [
+      merchant.title,
+      merchant.domain,
+      merchant.storeId,
+      ...merchant.sites.map((site) => site.label),
+    ]
+      .filter(Boolean)
+      .join(" ")
+      .toLocaleLowerCase();
+    return terms.every((term) => text.includes(term));
+  });
+}
 const title = (site: ServiceSite) => {
   const label = site.label?.trim();
   return label &&
