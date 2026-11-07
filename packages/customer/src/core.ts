@@ -70,6 +70,7 @@ export type Flow = {
   checkout?: any;
   order?: any;
   orders?: any;
+  viewedOrder?: any;
   ordersCursor?: string;
   operation?: any;
   intent?: Intent;
@@ -338,6 +339,15 @@ export class CustomerService {
       )
     );
   }
+  /** A dedicated owner shopping session does not require an Agent conversation.
+   * Retrying the same entry action reuses its durable flow. */
+  async openStore(siteId: string, actionId: string) {
+    z.uuid().parse(actionId);
+    const site = this.pap.sites().find((s) => s.id === siteId);
+    if (!site || consultationSite(site)) fail("SITE_NOT_APPROVED");
+    const result = await this.connect(`storefront:${actionId}`, siteId);
+    return result.ui;
+  }
   async connect(sessionId: string, siteId: string) {
     if (!sessionId || sessionId.length > 200) fail("SESSION_REQUIRED");
     // A DSH chat retains its model context. Do not mix a second personal
@@ -457,6 +467,7 @@ export class CustomerService {
     if (r) {
       if (method.startsWith("commerce.carts.")) {
         f.cart = r;
+        delete f.delivery;
         delete f.quote;
         delete f.intent;
       }
@@ -917,10 +928,104 @@ export class CustomerService {
         case "browse":
           await run(
             "frontvia_products",
-            { action: "browse", cursor: intent.cursor },
+            {
+              action: intent.query ? "search" : "browse",
+              query: intent.query,
+              cursor: intent.cursor,
+            },
             "browse",
           );
           break;
+        case "product":
+          await run(
+            "frontvia_products",
+            { action: "get", product_id: intent.productId },
+            "product",
+          );
+          await run(
+            "frontvia_products",
+            { action: "variants", product_id: intent.productId },
+            "variants",
+          );
+          break;
+        case "variant-page":
+          await run(
+            "frontvia_products",
+            {
+              action: "variants",
+              product_id: intent.productId,
+              cursor: intent.cursor,
+            },
+            "variants",
+          );
+          break;
+        case "update-line":
+        case "remove-line":
+          await run(
+            "frontvia_cart",
+            {
+              action: intent.action === "update-line" ? "update" : "remove",
+              line_id: intent.lineId,
+              ...(intent.action === "update-line"
+                ? { quantity: intent.quantity }
+                : {}),
+              expected_version,
+            },
+            "line",
+          );
+          break;
+        case "select-delivery":
+          await run(
+            "frontvia_cart",
+            {
+              action: "delivery_select",
+              group_id: intent.groupId,
+              option_id: intent.optionId,
+              expected_version,
+            },
+            "delivery",
+          );
+          await run(
+            "frontvia_cart",
+            { action: "delivery_options" },
+            "delivery-options",
+          );
+          break;
+        case "quote":
+          await run(
+            "frontvia_checkout",
+            { action: "quote", expected_version },
+            "quote",
+          );
+          break;
+        case "edit-cart": {
+          const current = this.flow(sessionId, flowId);
+          if (!expected_version || current.cart?.version !== expected_version)
+            fail("CART_VERSION_CHANGED");
+          await run("frontvia_checkout", { action: "revise" }, "revise");
+          break;
+        }
+        case "orders":
+          await run(
+            "frontvia_orders",
+            { action: "list", cursor: intent.cursor },
+            "orders",
+          );
+          break;
+        case "order-detail": {
+          // Browsing a historic order must never retarget the active checkout's payment/cancel controls.
+          const current = this.flow(sessionId, flowId);
+          this.policy(current);
+          await this.currentCapabilities(current);
+          current.viewedOrder = await this.read(
+            current,
+            "orders.get",
+            { order_id: intent.orderId },
+            signal,
+          );
+          this.save(current);
+          break;
+        }
         case "variants":
           await run(
             "frontvia_products",
@@ -1024,6 +1129,10 @@ export class CustomerService {
     if (f.order && !f.checkout?.order_ids?.includes(f.order.id))
       f.order = await this.read(f, "orders.get", { order_id: f.order.id });
     if (f.orders) f.orders = await this.ordersPage(f);
+    if (f.viewedOrder)
+      f.viewedOrder = await this.read(f, "orders.get", {
+        order_id: f.viewedOrder.id,
+      });
     this.save(f);
     return {
       cart: f.cart,
@@ -1118,6 +1227,7 @@ export class CustomerService {
       },
       order: f.order,
       orders: f.orders,
+      viewedOrder: f.viewedOrder,
       operation: f.operation,
       pending: !!f.pending,
       cancelPending:

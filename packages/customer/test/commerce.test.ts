@@ -51,6 +51,7 @@ function fixture(cache = false, cny = false, language?: string) {
     generation: "one",
     methodAvailability: {} as Record<string, string>,
     variantItems: undefined as any[] | undefined,
+    selectedDelivery: undefined as string | undefined,
     cancelPaymentRace: false,
     paymentCalls: 0,
     paymentOverride: undefined as any,
@@ -186,6 +187,12 @@ function fixture(cache = false, cny = false, language?: string) {
           },
         });
       }
+      if (m === "commerce.products.get")
+        return response({
+          id: p.product_id,
+          title: "Test Mug",
+          description: "Ceramic mug",
+        });
       if (m === "commerce.variants.list")
         return response({
           items: remote.variantItems ?? [
@@ -212,6 +219,9 @@ function fixture(cache = false, cny = false, language?: string) {
           delivery_groups: [
             {
               id: "group",
+              ...(remote.selectedDelivery
+                ? { selected_option_id: remote.selectedDelivery }
+                : {}),
               options: [
                 {
                   id: "standard",
@@ -237,7 +247,12 @@ function fixture(cache = false, cny = false, language?: string) {
           id: "cart",
           store_id: "store",
           version: "v1",
-          lines: p.lines,
+          lines: p.lines.map((line: any, index: number) => ({
+            ...line,
+            id: `line-${index}`,
+            title: "Test Mug",
+            unit_price: { currency, amount_minor: remote.price },
+          })),
           totals: {
             grand_total: { amount_minor: remote.price, currency },
           },
@@ -246,6 +261,22 @@ function fixture(cache = false, cny = false, language?: string) {
         assert.equal(p.expected_version, remote.cart.version);
         remote.cart.version = "v" + (Number(remote.cart.version.slice(1)) + 1);
         if (p.patch) Object.assign(remote.cart, p.patch);
+        if (m === "commerce.carts.lines.update")
+          remote.cart.lines.find((l: any) => l.id === p.line_id).quantity =
+            p.quantity;
+        if (m === "commerce.carts.lines.remove")
+          remote.cart.lines = remote.cart.lines.filter(
+            (l: any) => l.id !== p.line_id,
+          );
+        if (m === "commerce.carts.lines.add")
+          remote.cart.lines.push({
+            ...p.line,
+            id: `line-${remote.cart.lines.length}`,
+            title: "Test Mug",
+            unit_price: { currency, amount_minor: remote.price },
+          });
+        if (m === "commerce.carts.delivery_option.select")
+          remote.selectedDelivery = p.option_id;
       }
       if (m.startsWith("commerce.carts.")) resource = remote.cart;
       if (m === "commerce.quotes.create") {
@@ -2480,6 +2511,162 @@ test("failed manual delivery and its duplicate do not quote an unselected delive
       1,
     );
     assert.equal(f.remote.confirms, 0);
+  } finally {
+    f.close();
+  }
+});
+
+test("storefront starts without a chat, replays entry and edits cart with version checks", async () => {
+  const f = fixture(false, true);
+  try {
+    const entry = randomUUID();
+    const ui = await f.service.openStore("a", entry);
+    assert.equal((await f.service.openStore("a", entry)).flowId, ui.flowId);
+    assert.match(ui.sessionId, /^storefront:/);
+    const act = (
+      intent: any,
+      expected_version?: string,
+      actionId = randomUUID(),
+    ) =>
+      f.service.shopping(ui.sessionId, ui.flowId, {
+        intent,
+        expected_version,
+        actionId,
+      });
+    let view = await act({ action: "product", productId: "prod" });
+    assert.equal(view.products.items[0].description, "Ceramic mug");
+    assert.equal(view.variantProductId, "prod");
+    view = await act({
+      action: "add",
+      variantId: "variant",
+      productName: "Test Mug",
+      variantName: "Blue",
+      quantity: 1,
+    });
+    const version = view.cart.version;
+    const lineId = view.cart.lines[0].id;
+    const updateId = randomUUID();
+    view = await act(
+      { action: "update-line", lineId, quantity: 3 },
+      version,
+      updateId,
+    );
+    assert.equal(view.cart.lines[0].quantity, 3);
+    f.restart();
+    const duplicate = await act(
+      { action: "update-line", lineId, quantity: 3 },
+      version,
+      updateId,
+    );
+    assert.equal(duplicate.cart.version, view.cart.version);
+    await assert.rejects(
+      act({ action: "remove-line", lineId }, version),
+      /CART_VERSION_CHANGED/,
+    );
+    view = await act({ action: "remove-line", lineId }, view.cart.version);
+    assert.equal(view.cart.lines.length, 0);
+    assert.equal(f.remote.confirms, 0);
+    assert.equal(f.remote.paymentCalls, 0);
+    await assert.rejects(
+      f.service.openStore("removed-site", randomUUID()),
+      /SITE_NOT_APPROVED/,
+    );
+  } finally {
+    f.close();
+  }
+});
+
+test("storefront separates delivery, quote, review and payment; order browsing cannot retarget payment", async () => {
+  const f = fixture(false, true);
+  try {
+    const flow = await f.flow();
+    const act = (intent: any, expected_version?: string) =>
+      f.service.shopping("session-a", flow, {
+        intent,
+        expected_version,
+        actionId: randomUUID(),
+      });
+    let view = await act({
+      action: "add",
+      variantId: "variant",
+      productName: "Mug",
+      variantName: "Blue",
+      quantity: 1,
+    });
+    view = await f.service.contact(
+      "session-a",
+      flow,
+      view.cart.version,
+      {
+        shipping_address: {
+          country: "CN",
+          recipient: "Test",
+          phone: "13800138000",
+          line1: "Test address",
+        },
+      },
+      randomUUID(),
+    );
+    view = await act(
+      { action: "select-delivery", groupId: "group", optionId: "standard" },
+      view.cart.version,
+    );
+    assert.equal(
+      view.delivery.delivery_groups[0].selected_option_id,
+      "standard",
+    );
+    assert.equal(view.quote, undefined);
+    assert.equal(view.checkout, undefined);
+    view = await act({ action: "quote" }, view.cart.version);
+    assert.ok(view.quote);
+    assert.equal(view.checkout, undefined);
+    view = await act({ action: "prepare" });
+    view = await f.service.review("session-a", flow);
+    assert.ok(view.intent);
+    assert.equal(f.remote.confirms, 0);
+    assert.equal(f.remote.paymentCalls, 0);
+    view = await f.service.confirm("session-a", flow, view.intent!.id);
+    const activeOrder = view.order.id;
+    const activeCheckout = view.checkout!.id;
+    const originalRequest = f.service.pap.request;
+    f.service.pap.request = async (ref, method, params: any, ...rest: any[]) =>
+      method === "commerce.orders.get" && params.order_id === "history-order"
+        ? ({
+            result: {
+              data: {
+                id: "history-order",
+                status: "completed",
+                payment: { status: "paid" },
+                fulfillment_status: "shipped",
+                shipments: [
+                  {
+                    id: "shipment",
+                    status: "shipped",
+                    tracking: [
+                      {
+                        carrier: "Test",
+                        tracking_number: "T123",
+                        tracking_url: "https://carrier.test/T123",
+                      },
+                    ],
+                  },
+                ],
+              },
+            },
+          } as any)
+        : originalRequest(ref, method, params, ...rest);
+    view = await act({ action: "order-detail", orderId: "history-order" });
+    assert.equal(view.order.id, activeOrder);
+    assert.equal(view.checkout!.id, activeCheckout);
+    assert.equal(
+      view.viewedOrder.shipments[0].tracking[0].tracking_number,
+      "T123",
+    );
+    f.restart();
+    view = await f.service.view("session-a", flow);
+    assert.equal(view.viewedOrder.id, "history-order");
+    assert.equal(view.order.id, activeOrder);
+    assert.equal(f.remote.paymentCalls, 0);
   } finally {
     f.close();
   }

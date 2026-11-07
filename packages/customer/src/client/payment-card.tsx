@@ -247,7 +247,7 @@ export function PaymentCard({
       )}
       {(data.inlinePayment || state === "scan") && (
         <p className="fv-muted">
-          卡片会自动核对支付进度，付款成功以商家确认结果为准。
+          页面会自动核对支付进度，付款成功以商家确认结果为准。
         </p>
       )}
     </section>

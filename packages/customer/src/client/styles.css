@@ -1392,3 +1392,47 @@
     flex-basis: 260px;
   }
 }
+
+/* Storefront uses the shared shadcn primitives, independently of chat cards. */
+.fv.fv-market { max-width: 1200px; }
+.fv-storefront { width: 100%; min-width: 0; }
+.fv-shop-heading, .fv-shop-navigation { display:flex; align-items:center; justify-content:space-between; gap:16px; flex-wrap:wrap; }
+.fv-shop-heading { padding:24px 0; }
+.fv-shop-heading h3 { font-size:22px; margin:0 0 6px; }
+.fv-storefront .fv-tabs-list { width:auto; }
+.fv-storefront .fv-tabs-content { padding:28px 0; }
+.fv-store-grid, .fv-catalog-grid { display:grid; grid-template-columns:repeat(3,minmax(0,1fr)); gap:20px; }
+.fv-store-grid .fv-card-header, .fv-catalog-item .fv-card-header { display:flex; flex-direction:column; align-items:flex-start; gap:8px; }
+.fv-catalog-item { overflow:hidden; }
+.fv-catalog-item .fv-card-content { padding-top:0; }
+.fv-catalog-item .fv-card-footer .fv-button { width:100%; }
+.fv-catalog-image { aspect-ratio:4/3; background:var(--fv-surface); display:grid; place-items:center; }
+.fv-catalog-image img, .fv-detail-image img { width:100%; height:100%; object-fit:contain; }
+.fv-catalog-image > svg, .fv-detail-image > svg { width:48px; height:48px; color:var(--fv-muted); }
+.fv-product-detail { display:grid; grid-template-columns:minmax(0,1fr) minmax(0,1fr); gap:40px; align-items:start; }
+.fv-detail-image { aspect-ratio:1; display:grid; place-items:center; background:var(--fv-surface); border-radius:12px; overflow:hidden; }
+.fv-product-description { white-space:pre-wrap; line-height:1.8; }
+.fv-search-form { display:flex; gap:8px; align-items:center; max-width:420px; }
+.fv-checkout-layout { display:grid; grid-template-columns:minmax(0,1fr) 320px; gap:32px; align-items:start; }
+.fv-checkout-summary .fv-card-header { flex-direction:column; align-items:flex-start; }
+.fv-checkout-summary .fv-card-content { display:flex; flex-direction:column; gap:18px; }
+.fv-cart-item { display:grid; grid-template-columns:52px minmax(0,1fr) auto; gap:20px; align-items:start; padding:24px 0; border-bottom:1px solid var(--fv-border); }
+.fv-checkout-steps { display:flex; list-style:none; margin:4px 0 24px; padding:0; gap:20px; overflow:auto; }
+.fv-checkout-steps li { flex:1; min-width:115px; display:flex; flex-direction:column; align-items:flex-start; gap:10px; color:var(--fv-muted); font-size:13px; border-top:2px solid var(--fv-border); padding-top:16px; }
+.fv-checkout-steps li[aria-current=step] { color:var(--fv-text); border-color:var(--fv-primary); }
+.fv-checkout-steps li[data-complete=true] { color:var(--fv-text); }
+.fv-checkout-steps li > span { display:grid; place-items:center; width:26px; height:26px; border-radius:50%; background:var(--fv-surface); }
+.fv-checkout-steps svg { width:16px; height:16px; }
+.fv-payment-method { border:0; margin:0; padding:0; display:flex; flex-direction:column; gap:16px; }
+.fv-payment-method legend { margin-bottom:16px; }
+.fv-payment-method label { display:flex; gap:12px; align-items:center; }
+.fv-store-notice { display:flex; align-items:center; gap:12px; color:var(--fv-text); background:var(--fv-surface); padding:12px 16px; border-radius:8px; }
+.fv-store-notice > svg { width:18px; height:18px; }
+.fv-service-history { margin:32px 0; }
+.fv-service-history summary { cursor:pointer; color:var(--fv-muted); padding:16px 0; }
+.fv-market-footer { padding:20px 0; }
+@media(max-width:1000px) { .fv-store-grid,.fv-catalog-grid { grid-template-columns:repeat(2,minmax(0,1fr)); } .fv-checkout-layout { grid-template-columns:minmax(0,1fr) 260px; gap:20px; } }
+@media(max-width:700px) { .fv.fv-market { padding:20px 16px; } .fv-checkout-layout,.fv-product-detail { grid-template-columns:1fr; gap:24px; } .fv-store-grid,.fv-catalog-grid { grid-template-columns:1fr; } .fv-search-form { width:100%; } .fv-shop-navigation .fv-tabs-list { width:100%; overflow:auto; } .fv-shop-navigation { gap:8px; } .fv-cart-item { grid-template-columns:36px minmax(0,1fr); gap:12px; } .fv-cart-item > .fv-price { grid-column:2; } }
+.fv-field-set { min-width:0; }
+.fv-storefront .fv-card-header { flex-direction:column; align-items:flex-start; gap:8px; }
+.fv-storefront .fv-card-title, .fv-storefront .fv-card-description { margin:0; }

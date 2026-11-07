@@ -20,6 +20,7 @@ export const uiSchemas = {
   "personal-verify": z.object({ code: z.string().regex(/^\d{6}$/) }).strict(),
   "personal-logout": z.object({}).strict(),
   list: z.object({}).strict(),
+  "open-store": z.object({ siteId: ref, actionId: z.uuid() }).strict(),
   view: z.object(common).strict(),
   shopping: shoppingActionSchema.extend(common).strict(),
   review: z.object(common).strict(),

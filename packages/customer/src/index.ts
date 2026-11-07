@@ -92,6 +92,8 @@ export async function apply(
               value = await ctx.pap.logoutPersonal();
             if (operation === "list")
               value = { flows: service.list(), sites: ctx.pap.sites() };
+            if (operation === "open-store")
+              value = await service.openStore(a.siteId, a.actionId);
             if (operation === "view")
               value = service.consultation.owns(a.flowId)
                 ? await service.consultation.view(a.sessionId, a.flowId)

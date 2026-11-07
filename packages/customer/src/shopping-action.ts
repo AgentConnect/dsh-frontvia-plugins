@@ -41,9 +41,42 @@ export const shoppingActionSchema = z
   .object({
     intent: z.union([
       cardIntentSchema,
+      z.object({ action: z.literal("product"), productId: id }).strict(),
+      z
+        .object({
+          action: z.literal("variant-page"),
+          productId: id,
+          cursor: z.string().min(1).max(4096),
+        })
+        .strict(),
+      z
+        .object({
+          action: z.literal("update-line"),
+          lineId: id,
+          quantity: z.number().int().min(1).max(100),
+        })
+        .strict(),
+      z.object({ action: z.literal("remove-line"), lineId: id }).strict(),
+      z
+        .object({
+          action: z.literal("select-delivery"),
+          groupId: id,
+          optionId: id,
+        })
+        .strict(),
+      z.object({ action: z.literal("quote") }).strict(),
+      z.object({ action: z.literal("edit-cart") }).strict(),
+      z
+        .object({
+          action: z.literal("orders"),
+          cursor: z.string().min(1).max(4096).optional(),
+        })
+        .strict(),
+      z.object({ action: z.literal("order-detail"), orderId: id }).strict(),
       z
         .object({
           action: z.literal("browse"),
+          query: z.string().trim().max(300).optional(),
           cursor: z.string().min(1).max(4096).optional(),
         })
         .strict(),
