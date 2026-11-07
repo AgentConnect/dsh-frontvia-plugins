@@ -2671,3 +2671,84 @@ test("storefront separates delivery, quote, review and payment; order browsing c
     f.close();
   }
 });
+
+test("removing a line from an unsubmitted checkout retires the draft and replays without duplicate writes", async () => {
+  const f = fixture(false, true);
+  try {
+    const flow = await prepare(f);
+    const before = await f.service.view("session-a", flow);
+    const input = {
+      intent: {
+        action: "remove-line" as const,
+        lineId: before.cart.lines[0].id,
+      },
+      expected_version: before.cart.version,
+      actionId: randomUUID(),
+    };
+    const view = await f.service.shopping("session-a", flow, input);
+    assert.equal(view.cart.lines.length, 0);
+    assert.equal(view.checkout, undefined);
+    assert.equal(view.quote, undefined);
+    assert.equal(view.intent, undefined);
+    f.restart();
+    const writes = f.remote.writes;
+    const replay = await f.service.shopping("session-a", flow, input);
+    assert.equal(replay.cart.lines.length, 0);
+    assert.equal(f.remote.writes, writes);
+    assert.equal(
+      f.remote.calls.filter((m) => m === "commerce.checkouts.cancel").length,
+      1,
+    );
+    assert.equal(f.remote.confirms, 0);
+    assert.equal(f.remote.paymentCalls, 0);
+  } finally {
+    f.close();
+  }
+});
+
+test("cart removal cannot change submitted orders or continue after uncertain draft cancellation", async () => {
+  const f = fixture(false, true);
+  try {
+    const flow = await prepare(f);
+    let view = await f.service.review("session-a", flow);
+    view = await f.service.confirm("session-a", flow, view.intent!.id);
+    for (const intent of [
+      { action: "remove-line", lineId: view.cart.lines[0].id },
+      { action: "update-line", lineId: view.cart.lines[0].id, quantity: 2 },
+    ]) {
+      const writes = f.remote.writes;
+      await assert.rejects(
+        f.service.shopping("session-a", flow, {
+          intent: intent as any,
+          expected_version: view.cart.version,
+          actionId: randomUUID(),
+        }),
+        /CART_ALREADY_SUBMITTED/,
+      );
+      assert.equal(f.remote.writes, writes);
+    }
+    assert.equal(
+      (await f.service.view("session-a", flow)).order.id,
+      view.order.id,
+    );
+  } finally {
+    f.close();
+  }
+  const g = fixture(false, true);
+  try {
+    const flow = await prepare(g);
+    const view = await g.service.view("session-a", flow);
+    g.remote.lose = "commerce.checkouts.cancel";
+    await assert.rejects(
+      g.service.shopping("session-a", flow, {
+        intent: { action: "remove-line", lineId: view.cart.lines[0].id },
+        expected_version: view.cart.version,
+        actionId: randomUUID(),
+      }),
+    );
+    assert.equal(g.remote.calls.includes("commerce.carts.lines.remove"), false);
+    assert.equal(g.remote.cart.lines.length, 1);
+  } finally {
+    g.close();
+  }
+});

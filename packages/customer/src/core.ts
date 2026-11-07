@@ -960,7 +960,21 @@ export class CustomerService {
           );
           break;
         case "update-line":
-        case "remove-line":
+        case "remove-line": {
+          const current = this.flow(sessionId, flowId);
+          if (current.intent?.token || current.order)
+            fail("CART_ALREADY_SUBMITTED");
+          if (current.checkout) {
+            if (!expected_version || current.cart?.version !== expected_version)
+              fail("CART_VERSION_CHANGED");
+            // Only retire an unsubmitted checkout. revise verifies there is no
+            // order, captured/authorized payment or uncertain operation.
+            await run(
+              "frontvia_checkout",
+              { action: "revise" },
+              "revise-before-line",
+            );
+          }
           await run(
             "frontvia_cart",
             {
@@ -974,6 +988,7 @@ export class CustomerService {
             "line",
           );
           break;
+        }
         case "select-delivery":
           await run(
             "frontvia_cart",

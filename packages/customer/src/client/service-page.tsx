@@ -37,6 +37,7 @@ type Props = {
   openAccount: () => void;
   renderFlow: (
     reference: ReturnType<typeof shoppingReference>,
+    startShopping: () => void,
   ) => React.ReactNode;
 };
 export function ServicePage(props: Props) {
@@ -299,7 +300,7 @@ function AccountServicePage({
                   </div>
                 </div>
                 {flow ? (
-                  renderFlow(shoppingReference(flow))
+                  renderFlow(shoppingReference(flow), openStore)
                 ) : (
                   <Empty>
                     <Store />

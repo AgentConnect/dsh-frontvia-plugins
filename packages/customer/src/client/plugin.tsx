@@ -87,6 +87,8 @@ export const inject = [
 ];
 type UI = { flowId: string; sessionId: string; card: string };
 const errorText: Record<string, string> = {
+  CART_ALREADY_SUBMITTED:
+    "这次选购已提交订单，请开始新的购物；原订单可在我的订单中查看。",
   OPERATION_NOT_COMPLETED: "操作未完成，请刷新核对当前进度后再试。",
   CHECKOUT_IN_PROGRESS: "当前已准备结算，请先核对报价；需要修改时请重新报价。",
   ORDER_CANCEL_UNAVAILABLE:
@@ -237,11 +239,13 @@ export function apply(ctx: any) {
     ui,
     sendToAgent,
     resume = false,
+    startShopping,
     catalog,
   }: {
     ui: UI;
     sendToAgent?: (s: string) => Promise<unknown>;
     resume?: boolean;
+    startShopping?: () => void;
     catalog?: CatalogSnapshot;
   }) {
     const accountRevision = useAccountRevision();
@@ -444,6 +448,7 @@ export function apply(ctx: any) {
           error={errorText[error] ?? error}
           action={action}
           now={tick}
+          startShopping={startShopping}
         />
       );
     return (
@@ -1181,7 +1186,14 @@ export function apply(ctx: any) {
           openAccount={() => ctx.layout.selectPanel("dsh-identity")}
           call={call}
           openConnections={() => ctx.layout.selectPanel("pap-connections")}
-          renderFlow={(ui) => <FlowCard key={ui.flowId} ui={ui} resume />}
+          renderFlow={(ui, startShopping) => (
+            <FlowCard
+              key={ui.flowId}
+              ui={ui}
+              resume
+              startShopping={startShopping}
+            />
+          )}
         />
       </>
     );
@@ -1205,11 +1217,13 @@ export function apply(ctx: any) {
     ui,
     sendToAgent,
     resume = false,
+    startShopping,
     catalog,
   }: {
     ui: UI;
     sendToAgent?: (s: string) => Promise<unknown>;
     resume?: boolean;
+    startShopping?: () => void;
     catalog?: CatalogSnapshot;
   }) {
     return ui.card === "consultation" ? (
@@ -1226,6 +1240,7 @@ export function apply(ctx: any) {
         catalog={catalog}
         sendToAgent={sendToAgent}
         resume={resume}
+        startShopping={startShopping}
       />
     );
   }

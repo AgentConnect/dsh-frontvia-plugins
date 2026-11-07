@@ -53,6 +53,7 @@ type Props = {
   error: string;
   action: Action;
   now: number;
+  startShopping?: () => void;
 };
 const steps = [
   "填写收货地址",
@@ -204,7 +205,14 @@ function Logistics({ order }: { order: any }) {
     </Card>
   );
 }
-export function Storefront({ data, busy, error, action, now }: Props) {
+export function Storefront({
+  data,
+  busy,
+  error,
+  action,
+  now,
+  startShopping,
+}: Props) {
   const [tab, setTab] = useState("products");
   const [step, setStep] = useState<number>();
   const [query, setQuery] = useState("");
@@ -241,7 +249,13 @@ export function Storefront({ data, busy, error, action, now }: Props) {
             : 0));
   const quoteExpired = !data?.quote || Date.parse(data.quote.expires_at) <= now;
   const intentExpired = !data?.intent || data.intent.expiresAt <= now;
-  const cartLines = data?.cart?.lines ?? [];
+  const cartLines = locked ? [] : (data?.cart?.lines ?? []);
+  const orderCount = (
+    data?.order?.lines ??
+    data?.quote?.lines ??
+    data?.cart?.lines ??
+    []
+  ).reduce((sum: number, line: any) => sum + line.quantity, 0);
   const count = cartLines.reduce(
     (sum: number, line: any) => sum + line.quantity,
     0,
@@ -631,10 +645,7 @@ export function Storefront({ data, busy, error, action, now }: Props) {
                                 size="sm"
                                 aria-label={`减少 ${line.title ?? "商品"} 数量`}
                                 disabled={
-                                  blocked ||
-                                  locked ||
-                                  !!data.checkout ||
-                                  line.quantity <= 1
+                                  blocked || locked || line.quantity <= 1
                                 }
                                 onClick={() =>
                                   shop({
@@ -652,10 +663,7 @@ export function Storefront({ data, busy, error, action, now }: Props) {
                                 size="sm"
                                 aria-label={`增加 ${line.title ?? "商品"} 数量`}
                                 disabled={
-                                  blocked ||
-                                  locked ||
-                                  !!data.checkout ||
-                                  line.quantity >= 100
+                                  blocked || locked || line.quantity >= 100
                                 }
                                 onClick={() =>
                                   shop({
@@ -669,9 +677,9 @@ export function Storefront({ data, busy, error, action, now }: Props) {
                               </Button>
                               <Button
                                 variant="ghost"
-                                size="icon"
+                                size="sm"
                                 aria-label={`移除 ${line.title ?? "商品"}`}
-                                disabled={blocked || locked || !!data.checkout}
+                                disabled={blocked || locked}
                                 onClick={() =>
                                   shop({
                                     action: "remove-line",
@@ -679,7 +687,8 @@ export function Storefront({ data, busy, error, action, now }: Props) {
                                   })
                                 }
                               >
-                                <Trash2 />
+                                <Trash2 data-icon="inline-start" />
+                                移除
                               </Button>
                             </div>
                           </div>
@@ -747,11 +756,27 @@ export function Storefront({ data, busy, error, action, now }: Props) {
                 ) : (
                   <Empty>
                     <ShoppingCart />
-                    <EmptyTitle>购物车还是空的</EmptyTitle>
+                    <EmptyTitle>
+                      {locked ? "购物车已清空" : "购物车还是空的"}
+                    </EmptyTitle>
                     <EmptyDescription>
-                      去逛逛，选一件喜欢的商品。
+                      {locked
+                        ? "已提交的商品保留在订单中，不再占用购物车。"
+                        : "去逛逛，选一件喜欢的商品。"}
                     </EmptyDescription>
-                    <Button onClick={() => setTab("products")}>浏览商品</Button>
+                    <Button
+                      disabled={busy}
+                      onClick={
+                        locked ? startShopping : () => setTab("products")
+                      }
+                    >
+                      {locked ? "开始新的购物" : "浏览商品"}
+                    </Button>
+                    {locked && (
+                      <Button variant="ghost" onClick={() => setTab("orders")}>
+                        查看原订单
+                      </Button>
+                    )}
                   </Empty>
                 )}
               </div>
@@ -1022,7 +1047,9 @@ export function Storefront({ data, busy, error, action, now }: Props) {
                     <Card className="fv-checkout-summary">
                       <CardHeader>
                         <CardTitle>本次订单</CardTitle>
-                        <CardDescription>{count} 件商品</CardDescription>
+                        <CardDescription>
+                          {locked ? orderCount : count} 件商品
+                        </CardDescription>
                       </CardHeader>
                       <CardContent>
                         <Totals
