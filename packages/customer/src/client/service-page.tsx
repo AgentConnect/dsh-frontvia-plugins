@@ -12,6 +12,7 @@ import {
   Store,
 } from "lucide-react";
 import { useAccountRevision } from "./account.js";
+import { AccountSummary, type AccountStatus } from "./account-summary.js";
 import { shoppingReference } from "./history.js";
 
 import {
@@ -112,6 +113,30 @@ function AccountServicePage({
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(true);
   const [refresh, setRefresh] = useState(0);
+  const [account, setAccount] = useState<{
+    revision: number;
+    status?: AccountStatus;
+    error: boolean;
+  }>();
+  useEffect(() => {
+    let live = true;
+    setAccount(undefined);
+    call("personal-status")
+      .then((status: AccountStatus) => {
+        if (
+          typeof status?.signedIn !== "boolean" ||
+          typeof status.configured !== "boolean"
+        )
+          throw new Error("Invalid account status");
+        if (live) setAccount({ revision, status, error: false });
+      })
+      .catch(() => {
+        if (live) setAccount({ revision, error: true });
+      });
+    return () => {
+      live = false;
+    };
+  }, [call, revision, refresh]);
   const detail = useRef<HTMLDivElement>(null);
   const selectedButton = useRef<HTMLButtonElement>(null);
   const id = useId();
@@ -171,9 +196,7 @@ function AccountServicePage({
           <div>
             <p className="fv-eyebrow">你的商家服务</p>
             <h2>Frontvia 服务</h2>
-            <p className="fv-page-description">
-              管理个人账号，接着上次的咨询与购物。
-            </p>
+            <p className="fv-page-description">接着上次的咨询与购物。</p>
           </div>
           <div className="fv-page-actions">
             <Button
@@ -193,14 +216,11 @@ function AccountServicePage({
           </div>
         </header>
 
-        <Card>
-          <CardContent>
-            <p>个人登录由 DSH 账号服务管理。</p>
-            <Button variant="outline" onClick={openAccount}>
-              打开 DSH 账号
-            </Button>
-          </CardContent>
-        </Card>
+        <AccountSummary
+          status={account?.revision === revision ? account.status : undefined}
+          error={account?.revision === revision && account.error}
+          openAccount={openAccount}
+        />
 
         <section className="fv-history-section" aria-label="最近服务记录">
           <div className="fv-section-heading">

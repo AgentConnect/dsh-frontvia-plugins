@@ -198,6 +198,37 @@
     box-shadow 120ms;
   text-decoration: none;
 }
+.fv .fv-payment {
+  padding: 20px;
+  border: 1px solid var(--fv-border);
+  border-radius: 12px;
+  background: var(--fv-surface);
+}
+.fv .fv-payment-actions {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 10px;
+}
+.fv .fv-payment-qr {
+  display: grid;
+  justify-items: center;
+  gap: 10px;
+  text-align: center;
+  overflow-wrap: anywhere;
+}
+.fv .fv-payment-qr img {
+  display: block;
+  width: min(280px, 100%);
+  height: auto;
+  padding: 12px;
+  background: white;
+  border-radius: 8px;
+}
+.fv a.fv-button:focus-visible {
+  outline: 2px solid var(--fv-primary);
+  outline-offset: 3px;
+}
 .fv .fv-button:hover:not(:disabled) {
   background: var(--fv-primary-hover);
 }
@@ -600,6 +631,11 @@
   margin: 12px 12px 0;
   color: var(--fv-muted);
 }
+.fv .fv-product-media.fv-selected-product-media {
+  width: 240px;
+  max-width: 100%;
+  margin: 0;
+}
 .fv .fv-product-media > svg {
   width: 36px;
   height: 36px;
@@ -924,6 +960,21 @@
   display: flex;
   align-items: center;
   gap: 10px;
+}
+.fv .fv-account-summary {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 8px 16px;
+  margin-bottom: 24px;
+  padding: 8px 0;
+  border-bottom: 1px solid var(--fv-border);
+  color: var(--fv-muted);
+  font-size: 13px;
+}
+.fv .fv-account-summary p {
+  margin: 0;
 }
 .fv-home .fv-card {
   border-radius: 12px;
@@ -1272,4 +1323,18 @@
     padding: 16px;
     gap: 16px;
   }
+}
+
+/* Keep payment actions compact, including the cancellation confirmation row. */
+.fv .fv-payment .fv-payment-actions .fv-button {
+  width: auto;
+  min-height: 38px;
+  font-weight: 400;
+}
+.fv .fv-payment .fv-cancel-order {
+  color: var(--fv-muted);
+}
+.fv .fv-payment .fv-cancel-order:hover:not(:disabled) {
+  color: var(--fv-error);
+  background: color-mix(in srgb, var(--fv-error) 8%, transparent);
 }

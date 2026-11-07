@@ -28,7 +28,10 @@ export type PapPort = Pick<
   Partial<
     Pick<
       PapService,
-      "canAccess" | "signResourceStatement" | "capabilityCacheKey"
+      | "canAccess"
+      | "signResourceStatement"
+      | "capabilityCacheKey"
+      | "hostedPayment"
     >
   >;
 type Command = {
@@ -56,6 +59,7 @@ export type Flow = {
   connection: any;
   products?: any;
   variants?: any;
+  variantProductId?: string;
   cart?: any;
   delivery?: any;
   quote?: any;
@@ -71,6 +75,13 @@ export type Flow = {
   updatedAt: string;
   capabilities?: any;
   purchaseReady?: boolean;
+  paymentQr?: {
+    checkoutId: string;
+    expiresAt: string;
+    svg: string;
+    payee: string;
+    amount: any;
+  };
 };
 function pricing(f: Flow) {
   const c = f.capabilities?.default_context;
@@ -148,6 +159,8 @@ const privateKeys = new Set([
   "confirmation",
   "bytes_base64",
   "next_actions",
+  "paymentQr",
+  "qr_svg",
   "return_url",
   "access_token",
   "refresh_token",
@@ -416,7 +429,15 @@ export class CustomerService {
   }
   private result(f: Flow, card: string, data: any) {
     return {
-      ...modelData(data),
+      ...modelData({
+        ...data,
+        catalogSnapshot: {
+          version: 1,
+          products: f.products,
+          variants: f.variants,
+          variantProductId: f.variantProductId,
+        },
+      }),
       ui: {
         kind: "frontvia-customer",
         card,
@@ -443,7 +464,9 @@ export class CustomerService {
       if (
         method === "commerce.checkouts.cancel" &&
         r.status === "canceled" &&
-        r.can_start_new_attempt
+        r.can_start_new_attempt &&
+        !r.order_ids?.length &&
+        !f.intent?.token
       ) {
         delete f.checkout;
         delete f.quote;
@@ -616,14 +639,19 @@ export class CustomerService {
             signal,
           );
           f.products = data;
-        } else if (args.action === "get")
+          delete f.variants;
+          delete f.variantProductId;
+        } else if (args.action === "get") {
           data = await this.read(
             f,
             "products.get",
             { product_id: id.parse(args.product_id), context: pricing(f) },
             signal,
           );
-        else if (args.action === "variants") {
+          f.products = { items: [data] };
+          delete f.variants;
+          delete f.variantProductId;
+        } else if (args.action === "variants") {
           data = await this.read(
             f,
             "variants.list",
@@ -638,6 +666,7 @@ export class CustomerService {
             signal,
           );
           f.variants = data;
+          f.variantProductId = args.product_id;
         } else fail("INVALID_ACTION");
       } else if (name === "frontvia_cart") {
         if (args.action === "get") {
@@ -966,6 +995,7 @@ export class CustomerService {
       storeId: f.storeId,
       products: f.products,
       variants: f.variants,
+      variantProductId: f.variantProductId,
       cart: f.cart,
       delivery: f.delivery,
       quote: f.quote,
@@ -974,11 +1004,16 @@ export class CustomerService {
         status: f.checkout.status,
         payment_summary: f.checkout.payment_summary,
         paymentAction: this.paymentAction(f),
+        paymentExpiresAt: this.paymentAction(f, true, true)?.expiresAt,
       },
       order: f.order,
       orders: f.orders,
       operation: f.operation,
       pending: !!f.pending,
+      cancelPending:
+        !!f.pending &&
+        f.commands[f.pending]?.method === "commerce.checkouts.cancel",
+      canCancelOrder: this.canCancelOrder(f),
       intent: f.intent && {
         id: f.intent.id,
         expiresAt: f.intent.expiresAt,
@@ -989,6 +1024,11 @@ export class CustomerService {
       cartReady: this.cartReady(f),
       purchaseReady: f.purchaseReady,
       mockPayment: this.policy(f).mockPayment === true,
+      paymentQr: this.visiblePaymentQr(f),
+      inlinePayment:
+        !!this.pap.hostedPayment &&
+        pricing(f).currency === "CNY" &&
+        !!this.paymentAction(f, false, true),
     };
   }
   async contact(
@@ -1019,12 +1059,187 @@ export class CustomerService {
       return this.humanView(f);
     });
   }
-  private paymentAction(f: Flow) {
+  private canCancelOrder(f: Flow) {
+    const unpaid = [
+      "unpaid",
+      "not_paid",
+      "requires_action",
+      "pending",
+      "failed",
+    ];
+    const summary = f.checkout?.payment_summary;
+    return !!(
+      !f.pending &&
+      f.intent?.token &&
+      f.order &&
+      f.checkout?.status === "completed" &&
+      f.checkout.order_ids?.length === 1 &&
+      f.checkout.order_ids[0] === f.order.id &&
+      f.order.status === "open" &&
+      f.order.fulfillment_status === "unfulfilled" &&
+      f.order.totals?.grand_total?.currency === "CNY" &&
+      unpaid.includes(f.order.payment?.status) &&
+      (!summary?.status || unpaid.includes(summary.status)) &&
+      [
+        summary?.authorized_amount,
+        summary?.captured_amount,
+        f.order.payment?.authorized_amount,
+        f.order.payment?.captured_amount,
+      ].every((v) => !v || /^0+$/.test(v.amount_minor)) &&
+      f.capabilities?.methods?.some(
+        (m: any) =>
+          m.method === "commerce.checkouts.cancel" &&
+          m.availability === "supported",
+      )
+    );
+  }
+  /** Owner-only: close the original payment at the merchant before canceling. */
+  async cancelOrder(sessionId: string, flowId: string) {
+    this.views.clear();
+    return this.serial
+      .run(flowId, async () => {
+        const f = this.flow(sessionId, flowId);
+        if (f.pending) fail("RESOLVE_PENDING_OPERATION");
+        if (!f.checkout || !f.intent?.token) fail("ORDER_CANCEL_UNAVAILABLE");
+        await this.currentCapabilities(f, true);
+        f.checkout = await this.read(f, "checkouts.get", {
+          checkout_id: f.checkout.id,
+        });
+        if (f.checkout.order_ids?.length !== 1)
+          fail("ORDER_CANCEL_UNAVAILABLE");
+        f.order = await this.read(f, "orders.get", {
+          order_id: f.checkout.order_ids[0],
+        });
+        this.flow(sessionId, flowId);
+        if (f.checkout.status === "canceled" && f.order.status === "canceled") {
+          delete f.paymentQr;
+          this.save(f);
+          return this.humanView(f);
+        }
+        if (!this.canCancelOrder(f)) {
+          this.save(f);
+          fail("ORDER_CANCEL_UNAVAILABLE");
+        }
+        delete f.paymentQr;
+        this.save(f);
+        await this.write(
+          f,
+          "commerce.checkouts.cancel",
+          { checkout_id: f.checkout.id },
+          randomUUID(),
+        );
+        // A pending receipt is not cancellation success. Recovery uses its saved key.
+        if (!f.pending) await this.refresh(f);
+        return this.humanView(f);
+      })
+      .finally(() => this.views.clear());
+  }
+  private visiblePaymentQr(f: Flow) {
+    const qr = f.paymentQr;
+    if (
+      !qr ||
+      qr.checkoutId !== f.checkout?.id ||
+      f.pending ||
+      Date.parse(qr.expiresAt) <= Date.now() ||
+      ["canceled", "failed"].includes(f.order?.status) ||
+      ["canceled", "failed"].includes(f.checkout?.status) ||
+      ![
+        "unpaid",
+        "not_paid",
+        "requires_action",
+        "partially_paid",
+        "pending",
+      ].includes(
+        f.order?.payment?.status ?? f.checkout?.payment_summary?.status,
+      )
+    )
+      return;
+    return qr;
+  }
+  /** An explicit owner click starts payment for the already confirmed original order. */
+  async startPayment(sessionId: string, flowId: string) {
+    return this.serial.run(flowId, async () => {
+      const f = this.flow(sessionId, flowId);
+      if (!f.intent?.token || f.pending || !f.checkout?.order_ids?.length)
+        fail("CONFIRMATION_REQUIRED");
+      if (!this.pap.hostedPayment) fail("INLINE_PAYMENT_UNAVAILABLE");
+      // Read only this original checkout and its order; do not re-quote or confirm.
+      f.checkout = await this.read(f, "checkouts.get", {
+        checkout_id: f.checkout.id,
+      });
+      if (!f.checkout.order_ids?.[0]) fail("PAYMENT_RESULT_UNKNOWN");
+      f.order = await this.read(f, "orders.get", {
+        order_id: f.checkout.order_ids[0],
+      });
+      delete f.paymentQr;
+      this.save(f);
+      const link =
+        this.paymentAction(f, false, true) ?? fail("PAYMENT_LINK_UNAVAILABLE");
+      const response = await this.pap.hostedPayment(
+        f.connectionRef,
+        link.url,
+        f.checkout.id,
+      );
+      this.flow(sessionId, flowId); // Recheck ownership after network I/O.
+      const d = response?.data;
+      if (
+        !d ||
+        d.checkout_id !== f.checkout.id ||
+        d.expires_at !== Math.floor(Date.parse(link.expiresAt) / 1000) ||
+        canonical(d.quote?.totals?.grand_total) !==
+          canonical(f.order.totals?.grand_total) ||
+        !d.payment ||
+        typeof d.payment.status !== "string"
+      )
+        fail("PAYMENT_RESULT_UNKNOWN");
+      f.order.payment = d.payment;
+      f.order.status = d.order_status;
+      if (d.can_pay && d.action) {
+        if (
+          d.action.type !== "alipay_qr" ||
+          Math.floor(Date.parse(d.action.expires_at) / 1000) !== d.expires_at ||
+          typeof d.payee_name !== "string" ||
+          !d.payee_name.trim() ||
+          d.payee_name.length > 200 ||
+          typeof d.qr_svg !== "string" ||
+          d.qr_svg.length > 256000 ||
+          !/^<\?xml[^>]*>\s*<svg\b|^<svg\b/.test(d.qr_svg) ||
+          /<(?!\/?(?:svg|path|rect)\b|\?xml\b)|\bon\w+\s*=|href\s*=|url\s*\(|<!/i.test(
+            d.qr_svg,
+          )
+        )
+          fail("INVALID_PAYMENT_QR");
+        f.paymentQr = {
+          checkoutId: f.checkout.id,
+          expiresAt: new Date(d.expires_at * 1000).toISOString(),
+          svg: d.qr_svg,
+          payee: d.payee_name,
+          amount: d.quote.totals.grand_total,
+        };
+      }
+      this.save(f);
+      return this.humanView(f);
+    });
+  }
+  private paymentAction(f: Flow, allowExpired = false, allowPending = false) {
     if (!f.intent?.token || f.pending || !f.checkout?.order_ids?.length) return;
+    if (
+      ["canceled", "failed"].includes(f.checkout.status) ||
+      ["canceled", "failed"].includes(f.order?.status) ||
+      ![
+        "unpaid",
+        "not_paid",
+        "requires_action",
+        "partially_paid",
+        ...(allowPending ? ["pending"] : []),
+      ].includes(f.order?.payment?.status ?? f.checkout.payment_summary?.status)
+    )
+      return;
     const a = f.checkout.next_actions?.find(
       (a: any) => a.type === "redirect" && a.purpose === "payment",
     );
-    if (!a || !(Date.parse(a.expires_at) > Date.now())) return;
+    if (!a || !Number.isFinite(Date.parse(a.expires_at))) return;
+    if (!allowExpired && Date.parse(a.expires_at) <= Date.now()) return;
     try {
       const u = new URL(a.url),
         issuer = new URL(this.pap.identity(f.connectionRef).issuer);

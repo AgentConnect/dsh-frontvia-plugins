@@ -21,6 +21,8 @@ export const uiSchemas = {
   list: z.object({}).strict(),
   view: z.object(common).strict(),
   review: z.object(common).strict(),
+  "order-cancel": z.object(common).strict(),
+  "payment-start": z.object(common).strict(),
   recover: z.object(common).strict(),
   original: z
     .object({ ...common, sourceRef: z.string().regex(/^[a-f0-9]{64}$/) })

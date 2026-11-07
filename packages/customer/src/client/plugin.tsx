@@ -1,9 +1,22 @@
 import { useAccountRevision } from "./account.js";
 import { accountRequest } from "./account-request.js";
 import { ServicePage } from "./service-page.js";
+import { ProductSelection } from "./product-selection.js";
+import { productImage as image } from "./product-image.js";
+import {
+  withHistoricalCatalog,
+  type CatalogSnapshot,
+} from "./catalog-history.js";
+import {
+  cardMessage,
+  cardMessageRule,
+  type CardIntent,
+} from "./card-message.js";
+import { FlowViews } from "./flow-views.js";
+import { PaymentCard } from "./payment-card.js";
 import { shoppingStep } from "./shopping-progress.js";
 import { isRequiredContact as contactFieldRequired } from "../contact-fields.js";
-import React, { useEffect, useId, useState } from "react";
+import React, { useEffect, useId, useRef, useState } from "react";
 import {
   ArrowRight,
   Check,
@@ -77,15 +90,18 @@ const money = (m: any) => {
     ? `${m.currency} ${m.amount_decimal}`
     : "待核对";
 };
-const image = (p: any) => {
-  const raw = p.images?.[0]?.url;
-  try {
-    return new URL(raw).protocol === "https:" ? raw : undefined;
-  } catch {
-    return undefined;
-  }
-};
 const errorText: Record<string, string> = {
+  ORDER_CANCEL_UNAVAILABLE:
+    "当前订单不能直接取消，请刷新核对；已付款订单需联系商家退款。",
+  ORDER_CANCEL_FAILED: "取消未完成，订单仍保留。请核对原订单结果后再试。",
+  PAYMENT_CLOSURE_UNCONFIRMED:
+    "尚未确认支付渠道关闭，请查询原订单结果，不要重复操作。",
+  PAID_ORDER_REQUIRES_MERCHANT_REFUND: "订单已有付款，请联系商家退款。",
+  INLINE_PAYMENT_UNAVAILABLE: "当前商家暂未提供卡片扫码支付。",
+  PAYMENT_RESULT_UNKNOWN: "暂未确认原订单支付结果，请刷新核对。",
+  PAYMENT_LINK_UNAVAILABLE: "原订单付款入口已过期或暂不可用，请刷新核对。",
+  INVALID_PAYMENT_LINK: "付款入口暂不可用，请刷新原订单。",
+  INVALID_PAYMENT_QR: "二维码未通过核对，请刷新原订单后重试。",
   PERSONAL_ACCOUNT_CHANGED: "请登录原个人账号后查看此记录。",
   PERSONAL_LOGIN_REQUIRED: "请先到 Frontvia 服务登录个人账号。",
   PERSONAL_CHAT_ACCOUNT_CHANGED: "此聊天已用于另一账号，请新建聊天后连接商家。",
@@ -279,6 +295,7 @@ function Order({ order }: { order: any }) {
     not_paid: "未付款",
     failed: "失败",
     refunded: "已退款",
+    voided: "付款已关闭",
   };
   const fulfillment: Record<string, string> = {
     unfulfilled: "待履约",
@@ -294,7 +311,7 @@ function Order({ order }: { order: any }) {
           <CircleCheck aria-hidden />
         </div>
         <div>
-          <h4>订单已创建</h4>
+          <h4>{order.status === "canceled" ? "订单已取消" : "订单已创建"}</h4>
           <p className="fv-description">
             订单号：{order.display_number ?? order.id}
           </p>
@@ -315,9 +332,11 @@ function Order({ order }: { order: any }) {
           <dd>
             <Badge>
               <Truck aria-hidden />
-              {fulfillment[order.fulfillment_status] ??
-                order.fulfillment_status ??
-                "暂未查到"}
+              {order.status === "canceled"
+                ? "已取消"
+                : (fulfillment[order.fulfillment_status] ??
+                  order.fulfillment_status ??
+                  "暂未查到")}
             </Badge>
           </dd>
         </div>
@@ -344,22 +363,51 @@ export function apply(ctx: any) {
       if (!r.ok) throw new Error(r.error.code);
       return r.value;
     });
+  const views = new FlowViews(
+    (ref) => call("view", ref),
+    15000,
+    () => document.visibilityState !== "hidden",
+  );
+  ctx.effect(() => {
+    const reset = () => views.clear();
+    const refresh = () => {
+      if (document.visibilityState !== "hidden") views.refreshAll();
+    };
+    window.addEventListener("dsh-identity-change", reset);
+    window.addEventListener("focus", refresh);
+    document.addEventListener("visibilitychange", refresh);
+    return () => {
+      window.removeEventListener("dsh-identity-change", reset);
+      window.removeEventListener("focus", refresh);
+      document.removeEventListener("visibilitychange", refresh);
+      views.clear();
+    };
+  });
   function Shopping({
     ui,
     sendToAgent,
     resume = false,
+    catalog,
   }: {
     ui: UI;
     sendToAgent?: (s: string) => Promise<unknown>;
     resume?: boolean;
+    catalog?: CatalogSnapshot;
   }) {
-    const [data, setData] = useState<any>(),
+    const accountRevision = useAccountRevision();
+    const [liveRevision, setLiveRevision] = useState(accountRevision);
+    const dirtyForm = useRef(false);
+    const [liveData, setData] = useState<any>(),
       [busy, setBusy] = useState(""),
       [error, setError] = useState(""),
       [tab, setTab] = useState<string | undefined>(
         resume ? undefined : ui.card === "connection" ? "products" : ui.card,
       ),
       [tick, setTick] = useState(Date.now());
+    const data = withHistoricalCatalog(
+      liveRevision === accountRevision ? liveData : undefined,
+      catalog,
+    );
     const [form, setForm] = useState<Contact>(blankContact),
       [fieldErrors, setFieldErrors] = useState<Partial<Contact>>({});
     const formId = useId();
@@ -387,27 +435,22 @@ export function apply(ctx: any) {
         label: `${"label" in local ? local.label : field.label}${isRequiredContact(field.key) ? "" : "（选填）"}`,
       };
     });
-    const accountRevision = useAccountRevision();
     useEffect(() => {
-      let live = true;
+      dirtyForm.current = false;
       setData(undefined);
       setForm(blankContact);
+      setError("");
       setTab(
         resume ? undefined : ui.card === "connection" ? "products" : ui.card,
       );
-      call("view", ui)
-        .then((v) => {
-          if (live) {
-            setData(v);
-            setForm(contactFrom(v));
-          }
-        })
-        .catch((e) => {
-          if (live) setError(e.message);
-        });
-      return () => {
-        live = false;
-      };
+      return views.subscribe(ui, (state) => {
+        setLiveRevision(accountRevision);
+        setData(state.value);
+        setError(state.error?.message ?? "");
+        if (state.value && !dirtyForm.current) {
+          setForm(contactFrom(state.value));
+        }
+      });
     }, [ui.flowId, ui.sessionId, accountRevision]);
     useEffect(() => {
       const t = setInterval(() => setTick(Date.now()), 1000);
@@ -416,9 +459,34 @@ export function apply(ctx: any) {
     const action = async (op: string, payload: any = {}) => {
       setBusy(op);
       setError("");
+      if (op === "payment-start" || op === "order-cancel")
+        views.publish(ui, {
+          ...liveData,
+          paymentQr: undefined,
+          ...(op === "order-cancel"
+            ? {
+                pending: true,
+                cancelPending: true,
+                canCancelOrder: false,
+                inlinePayment: false,
+              }
+            : {}),
+        });
       try {
-        const value = await call(op, { ...ui, ...payload });
-        setData(value);
+        const value =
+          op === "view"
+            ? await views.refresh(ui)
+            : await call(op, { ...ui, ...payload });
+        if (op === "contact") dirtyForm.current = false;
+        if (op !== "view") views.publish(ui, value);
+        if (
+          op === "order-cancel" &&
+          !value.pending &&
+          value.operation?.status === "failed"
+        ) {
+          setError("ORDER_CANCEL_FAILED");
+          return false;
+        }
         if (
           op === "confirm" &&
           !value.pending &&
@@ -429,15 +497,17 @@ export function apply(ctx: any) {
           return false;
         }
       } catch (e: any) {
+        if (op === "order-cancel") views.invalidate(ui);
         setError(op === "confirm" ? "CONFIRMATION_RESULT_UNKNOWN" : e.message);
-        if (op === "confirm") setData((v: any) => ({ ...v, pending: true }));
+        if (op === "confirm" && e.message !== "PERSONAL_ACCOUNT_CHANGED")
+          views.publish(ui, { ...liveData, pending: true });
         return false;
       } finally {
         setBusy("");
       }
       return true;
     };
-    const ask = async (text: string) => {
+    const ask = async (intent: CardIntent) => {
       if (!sendToAgent) {
         setError("请回到所属聊天，让 Agent 继续购物。");
         return;
@@ -445,7 +515,8 @@ export function apply(ctx: any) {
       setBusy("agent");
       setError("");
       try {
-        await sendToAgent(`当前购物 flowId=${ui.flowId}。${text}`);
+        await sendToAgent(cardMessage(ui.flowId, intent));
+        views.invalidate(ui);
       } catch {
         setError("消息未发送，请在原聊天重试。");
       } finally {
@@ -611,25 +682,14 @@ export function apply(ctx: any) {
                     </Alert>
                   )}
                   <TabsContent value="products">
-                    <div className="fv-stack">
-                      <div className="fv-section-heading">
-                        <div>
-                          <h4>发现心仪的商品</h4>
-                          <p className="fv-description">
-                            选择商品规格，加入本次购物车。
-                          </p>
-                        </div>
-                        {data.cart && (
-                          <Button
-                            variant="ghost"
-                            size="sm"
-                            onClick={() => setTab("cart")}
-                          >
-                            <ShoppingCart data-icon="inline-start" />
-                            购物车
-                          </Button>
-                        )}
-                      </div>
+                    <ProductSelection
+                      data={data}
+                      busy={!!busy}
+                      canAsk={!!sendToAgent}
+                      ask={ask}
+                      formatPrice={money}
+                      onCart={() => setTab("cart")}
+                    >
                       {items(data.products).length ? (
                         <div className="fv-product-grid">
                           {items(data.products).map((p: any) => (
@@ -663,9 +723,11 @@ export function apply(ctx: any) {
                                   size="sm"
                                   disabled={!!busy || !sendToAgent}
                                   onClick={() =>
-                                    ask(
-                                      `查看商品 ${p.id} 的可购买规格，展示规格和真实价格。`,
-                                    )
+                                    ask({
+                                      action: "variants",
+                                      productId: p.id,
+                                      productName: p.title ?? "所选商品",
+                                    })
                                   }
                                 >
                                   选择规格
@@ -684,37 +746,7 @@ export function apply(ctx: any) {
                           </EmptyDescription>
                         </Empty>
                       )}
-                      {items(data.variants).length > 0 && (
-                        <div className="fv-stack">
-                          <div className="fv-section-icon">
-                            <Package aria-hidden />
-                            <h4>可购买规格</h4>
-                          </div>
-                          {items(data.variants).map((v: any) => (
-                            <div className="fv-delivery" key={v.id}>
-                              <div className="fv-delivery-copy">
-                                <p>{v.title}</p>
-                                <span>{money(v.unit_price)}</span>
-                              </div>
-                              <Button
-                                size="sm"
-                                disabled={
-                                  !!busy || !sendToAgent || !data.cartReady
-                                }
-                                onClick={() =>
-                                  ask(
-                                    `将规格 ${v.id} 加购 1 件。已有购物车请先读取最新版本。完成后展示购物车卡片。`,
-                                  )
-                                }
-                              >
-                                {data.cartReady ? "加购 1 件" : "暂不可加购"}
-                                <ShoppingCart data-icon="inline-end" />
-                              </Button>
-                            </div>
-                          ))}
-                        </div>
-                      )}
-                    </div>
+                    </ProductSelection>
                   </TabsContent>
                   <TabsContent value="cart">
                     {data.cart ? (
@@ -778,6 +810,7 @@ export function apply(ctx: any) {
                                         }
                                         disabled={!!busy || data.pending}
                                         onChange={(e) => {
+                                          dirtyForm.current = true;
                                           setForm({
                                             ...form,
                                             [f.key]: e.target.value,
@@ -866,9 +899,13 @@ export function apply(ctx: any) {
                                                 data.pending
                                               }
                                               onClick={() =>
-                                                ask(
-                                                  `选择配送组 ${g.id} 的选项 ${o.id}。先读取最新购物车版本，再选择配送、按新版本生成报价并 prepare；停在待我确认的卡片。`,
-                                                )
+                                                ask({
+                                                  action: "delivery",
+                                                  groupId: g.id,
+                                                  optionId: o.id,
+                                                  optionName:
+                                                    o.label ?? "所选配送方式",
+                                                })
                                               }
                                             >
                                               选择并报价
@@ -886,9 +923,7 @@ export function apply(ctx: any) {
                                       !!busy || !sendToAgent || data.pending
                                     }
                                     onClick={() =>
-                                      ask(
-                                        "收货资料已填写。读取最新购物车并查询可用配送方式，说明运费供我选择。",
-                                      )
+                                      ask({ action: "delivery-options" })
                                     }
                                   >
                                     {busy === "agent" ? (
@@ -979,11 +1014,7 @@ export function apply(ctx: any) {
                                     data.intent?.submitted ||
                                     data.pending
                                   }
-                                  onClick={() =>
-                                    ask(
-                                      "报价已过期，请 revise 未确认的草稿结算，重新读取购物车版本、报价并 prepare，停在用户确认前。",
-                                    )
-                                  }
+                                  onClick={() => ask({ action: "requote" })}
                                 >
                                   重新报价
                                   <RefreshCw data-icon="inline-end" />
@@ -1107,11 +1138,7 @@ export function apply(ctx: any) {
                               quoteExpired ||
                               data.pending
                             }
-                            onClick={() =>
-                              ask(
-                                "请准备当前有效报价的结算，展示待我确认的卡片，不要替我确认。",
-                              )
-                            }
+                            onClick={() => ask({ action: "prepare" })}
                           >
                             准备确认
                             <ArrowRight data-icon="inline-end" />
@@ -1138,22 +1165,19 @@ export function apply(ctx: any) {
                   </TabsContent>
                   <TabsContent value="order">
                     <div className="fv-stack">
-                      {data.checkout?.paymentAction && (
-                        <Alert>
-                          <CreditCard aria-hidden />
-                          <AlertDescription>
-                            原订单已确认，请在付款页核对并完成支付。
-                            <a
-                              href={data.checkout.paymentAction.url}
-                              target="_blank"
-                              rel="noopener noreferrer"
-                              referrerPolicy="no-referrer"
-                            >
-                              打开原订单付款页
-                            </a>
-                          </AlertDescription>
-                        </Alert>
-                      )}
+                      <PaymentCard
+                        data={data}
+                        now={tick}
+                        busy={!!busy}
+                        refresh={() => {
+                          void action("view");
+                        }}
+                        formatPrice={money}
+                        cancel={() => action("order-cancel")}
+                        start={() => {
+                          void action("payment-start");
+                        }}
+                      />
                       {data.order && <Order order={data.order} />}{" "}
                       {items(data.orders)
                         .filter(
@@ -1241,10 +1265,14 @@ export function apply(ctx: any) {
   function Tail({ turn, sendToAgent }: any) {
     const cards = turn.data.get("frontvia-customer-cards")?.cards ?? [];
     const c = cards.at(-1);
+    useEffect(() => {
+      if (c && c.ui.card !== "consultation") views.invalidate(c.ui);
+    }, [c?.callId, c?.ui.flowId, c?.ui.sessionId]);
     return c ? (
       <FlowCard
         key={`${c.ui.flowId}:${c.callId}`}
         ui={c.ui}
+        catalog={c.catalog ?? {}}
         sendToAgent={sendToAgent}
       />
     ) : null;
@@ -1253,10 +1281,12 @@ export function apply(ctx: any) {
     ui,
     sendToAgent,
     resume = false,
+    catalog,
   }: {
     ui: UI;
     sendToAgent?: (s: string) => Promise<unknown>;
     resume?: boolean;
+    catalog?: CatalogSnapshot;
   }) {
     return ui.card === "consultation" ? (
       <section
@@ -1267,7 +1297,12 @@ export function apply(ctx: any) {
         <ConsultationCard ui={ui} call={call} sendToAgent={sendToAgent} />
       </section>
     ) : (
-      <Shopping ui={ui} sendToAgent={sendToAgent} resume={resume} />
+      <Shopping
+        ui={ui}
+        catalog={catalog}
+        sendToAgent={sendToAgent}
+        resume={resume}
+      />
     );
   }
   ctx.slots.inject("main", () =>
@@ -1285,6 +1320,7 @@ export function apply(ctx: any) {
     ),
   );
   ctx.uiConversation.events.register(historyDefinition);
+  ctx.uiConversation.userText.register(cardMessageRule);
   ctx.slots.inject("conversation.chat.turnTail", () =>
     ctx.slots.register(
       {

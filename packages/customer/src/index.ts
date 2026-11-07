@@ -112,6 +112,10 @@ export async function apply(
               );
             if (operation === "review")
               value = await service.review(a.sessionId, a.flowId);
+            if (operation === "order-cancel")
+              value = await service.cancelOrder(a.sessionId, a.flowId);
+            if (operation === "payment-start")
+              value = await service.startPayment(a.sessionId, a.flowId);
             if (operation === "confirm")
               value = await service.confirm(a.sessionId, a.flowId, a.intentId);
             // Legacy accepted operations remain recoverable; never create a new
