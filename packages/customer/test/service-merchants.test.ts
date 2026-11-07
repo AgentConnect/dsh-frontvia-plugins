@@ -66,18 +66,15 @@ test("one merchant groups consultation and commerce while same-domain stores and
   );
 });
 
-test("configured merchants without history stay visible and removed connections do not attach to another store", () => {
+test("configured merchants without history stay visible while removed connections are hidden", () => {
   const merchants = serviceMerchants(
     [site("empty"), { id: "unrelated", label: "Other API" }],
     [flow("old", "removed-a"), flow("older", "removed-b")],
   );
-  assert.equal(merchants.length, 3);
+  assert.equal(merchants.length, 1);
   assert.equal(merchants[0].sites[0].id, "empty");
   assert.equal(resolveServiceSelection(merchants).flow, undefined);
-  assert.deepEqual(
-    merchants.slice(1).map((m) => m.flows.length),
-    [1, 1],
-  );
+  assert.equal(merchants[0].flows.length, 0);
   // Without an issuer/store binding, equal domains and labels are not identity.
   assert.equal(
     serviceMerchants(
@@ -156,4 +153,39 @@ test("unavailable or corrupt browser storage does not prevent merchant selection
     ),
   );
   assert.equal(resolveServiceSelection([]).flow, undefined);
+});
+
+test("removing the selected merchant falls back to a current merchant without deleting or reassigning history", () => {
+  const sites = [site("a", "store-a"), site("b", "store-b")];
+  const flows = [flow("a-cart", "a"), flow("b-cart", "b")];
+  const original = structuredClone(flows);
+  const before = serviceMerchants(sites, flows);
+  const saved = {
+    merchantKey: before.find((m) => m.storeId === "store-a")!.key,
+    flowId: "a-cart",
+  };
+  const after = serviceMerchants([sites[1]], flows);
+  assert.equal(after.length, 1);
+  assert.deepEqual(
+    after[0].flows.map((f) => f.flowId),
+    ["b-cart"],
+  );
+  assert.equal(resolveServiceSelection(after, saved).flow?.flowId, "b-cart");
+  // Covers selections saved by the previous version's removed-merchant tiles.
+  assert.equal(
+    resolveServiceSelection(after, {
+      merchantKey: JSON.stringify(["removed", "a"]),
+      flowId: "a-cart",
+    }).flow?.flowId,
+    "b-cart",
+  );
+  const none = serviceMerchants([], flows);
+  assert.deepEqual(none, []);
+  assert.equal(resolveServiceSelection(none, saved).flow, undefined);
+  assert.deepEqual(flows, original);
+  assert.equal(
+    serviceMerchants(sites, flows).find((m) => m.storeId === "store-a")
+      ?.flows[0].flowId,
+    "a-cart",
+  );
 });

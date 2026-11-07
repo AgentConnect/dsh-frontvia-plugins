@@ -278,10 +278,7 @@ function AccountServicePage({
                   <span className="fv-record-copy">
                     <span className="fv-record-title">{item.title}</span>
                     <span className="fv-record-description">
-                      {item.domain ??
-                        (item.sites.length
-                          ? "已配置商家服务"
-                          : "连接已移除 · 保留历史记录")}
+                      {item.domain ?? "已配置商家服务"}
                       {item.storeId &&
                       merchants.some(
                         (other) =>

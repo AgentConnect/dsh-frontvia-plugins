@@ -37,7 +37,7 @@ const title = (site: ServiceSite) => {
 };
 
 /** Group only by the complete issuer and store binding, never by display name
- * or hostname. Missing bindings and removed sites remain separate. */
+ * or hostname. Removed connections are hidden here without deleting history. */
 export function serviceMerchants(
   sites: ServiceSite[],
   flows: ServiceFlow[],
@@ -73,14 +73,8 @@ export function serviceMerchants(
     group.sites.push(site);
   }
   for (const flow of flows) {
-    const key =
-      keys.get(flow.siteId) ?? JSON.stringify(["removed", flow.siteId]);
-    let group = groups.get(key);
-    if (!group) {
-      group = { key, title: "已移除的商家", sites: [], flows: [] };
-      groups.set(key, group);
-    }
-    group.flows.push(flow);
+    const key = keys.get(flow.siteId);
+    if (key !== undefined) groups.get(key)?.flows.push(flow);
   }
   for (const group of groups.values()) {
     group.flows.sort(
@@ -93,7 +87,6 @@ export function serviceMerchants(
   }
   return [...groups.values()].sort(
     (a, b) =>
-      Number(!a.sites.length) - Number(!b.sites.length) ||
       (b.flows[0]?.updatedAt ?? "").localeCompare(
         a.flows[0]?.updatedAt ?? "",
       ) ||
