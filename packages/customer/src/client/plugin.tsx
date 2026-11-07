@@ -252,7 +252,9 @@ export function apply(ctx: any) {
     const accountRevision = useAccountRevision();
     const [liveRevision, setLiveRevision] = useState(accountRevision);
     const container = useRef<HTMLElement | null>(null);
-    const visible = useRef(typeof IntersectionObserver === "undefined");
+    // The selected service panel must load once even if a background WebView
+    // delays its first intersection event. Historical chat cards can defer.
+    const visible = useRef(resume || typeof IntersectionObserver === "undefined");
     const scope = useRef<ViewScope>(
       resume || ["products", "connection"].includes(ui.card)
         ? "catalog"
