@@ -58,6 +58,9 @@ export class PapProvider extends Service {
   identity(ref: string) {
     return this.core.identity(ref);
   }
+  hostedPayment(ref: string, link: string, checkoutId: string) {
+    return this.core.hostedPayment(ref, link, checkoutId);
+  }
   signResourceStatement(
     ref: string,
     typ: string,
