@@ -3804,3 +3804,229 @@ test("empty, partial and whitespace cart addresses cannot trigger automatic deli
     f.close();
   }
 });
+
+for (const status of ["failed", "pending"] as const) {
+  test(`contact ${status} receipt does not advance from address A to delivery after editing B`, async () => {
+    const f = fixture(false, true);
+    try {
+      const flow = await f.flow();
+      let view = await f.service.shopping("session-a", flow, {
+        intent: {
+          action: "add",
+          variantId: "variant",
+          productName: "Mug",
+          variantName: "Blue",
+          quantity: 1,
+        },
+        actionId: randomUUID(),
+      });
+      const a = {
+        country: "CN",
+        recipient: "Buyer",
+        phone: "13800138000",
+        line1: "Address A",
+      };
+      view = await f.service.contact(
+        "session-a",
+        flow,
+        view.cart.version,
+        { shipping_address: a },
+        randomUUID(),
+      );
+      const b = { ...a, line1: "Address B" };
+      const original = f.service.pap.request;
+      f.service.pap.request = async (...args: Parameters<typeof original>) =>
+        args[1] === "commerce.carts.update"
+          ? {
+              result: {
+                data: {
+                  operation: {
+                    id: "save-b",
+                    status,
+                    effects: status === "failed" ? "none" : "unknown",
+                  },
+                },
+              },
+            }
+          : original(...args);
+      const before = f.remote.calls.length;
+      let advanced = false;
+      try {
+        await f.service.contact(
+          "session-a",
+          flow,
+          view.cart.version,
+          { shipping_address: b },
+          randomUUID(),
+        );
+        advanced = true;
+        await f.service.shopping("session-a", flow, {
+          intent: { action: "prepare-delivery" },
+          expected_version: view.cart.version,
+          actionId: randomUUID(),
+        });
+        assert.fail("address receipt must not report success");
+      } catch (error: any) {
+        assert.equal(error.code, "CONTACT_NOT_SAVED");
+      }
+      assert.equal(advanced, false);
+      assert.deepEqual(f.remote.cart.shipping_address, a);
+      assert.equal(
+        f.remote.calls.slice(before).some((m) => m.includes("delivery")),
+        false,
+      );
+      assert.equal(
+        f.vault.get<any>(`flow:${flow}`).pending !== undefined,
+        status === "pending",
+      );
+      if (status === "failed") {
+        f.service.pap.request = original;
+        view = await f.service.contact(
+          "session-a",
+          flow,
+          view.cart.version,
+          { shipping_address: b },
+          randomUUID(),
+        );
+        assert.equal(view.cart.shipping_address.line1, "Address B");
+      }
+    } finally {
+      f.close();
+    }
+  });
+}
+
+test("ending the first-add wait finds the created cart by receipt without another create, including after restart", async () => {
+  for (const restart of [false, true]) {
+    const f = fixture();
+    try {
+      const flow = await f.flow();
+      const request = {
+        intent: {
+          action: "add" as const,
+          variantId: "variant",
+          productName: "Mug",
+          variantName: "Blue",
+          quantity: 3,
+        },
+        actionId: randomUUID(),
+      };
+      f.remote.lose = "commerce.carts.create";
+      await assert.rejects(f.service.shopping("session-a", flow, request));
+      assert.equal(f.vault.get<any>(`flow:${flow}`).cart, undefined);
+      if (restart) f.restart();
+      const writes = f.remote.writes;
+      const view = await f.service.discardCartAddition("session-a", flow);
+      assert.equal(view.pending, false);
+      assert.equal(view.cart.lines[0].quantity, 3);
+      assert.equal(view.cart.id, f.remote.cart.id);
+      assert.equal(f.remote.writes, writes);
+      f.restart();
+      const replay = await f.service.shopping("session-a", flow, request);
+      assert.equal(replay.cart.id, view.cart.id);
+      assert.equal(f.remote.writes, writes);
+    } finally {
+      f.close();
+    }
+  }
+});
+
+test("missing first-create receipt survives ending the wait and restart; refresh recovers it without a replacement write", async () => {
+  const f = fixture();
+  try {
+    const flow = await f.flow();
+    const request = {
+      intent: {
+        action: "add" as const,
+        variantId: "variant",
+        productName: "Mug",
+        variantName: "Blue",
+        quantity: 2,
+      },
+      actionId: randomUUID(),
+    };
+    f.remote.lose = "commerce.carts.create";
+    await assert.rejects(f.service.shopping("session-a", flow, request));
+    const pending = f.vault.get<any>(`flow:${flow}`).pending;
+    const receipt = f.remote.ops.get(pending);
+    f.remote.ops.delete(pending);
+    const writes = f.remote.writes;
+    let view = await f.service.discardCartAddition("session-a", flow);
+    assert.equal(view.cartCreationPending, true);
+    assert.equal(view.canRetryCart, false);
+    assert.equal(
+      f.vault.get<any>(`flow:${flow}`).commands[pending].status,
+      "pending",
+    );
+    f.restart();
+    view = await f.service.view("session-a", flow, ["cart"]);
+    assert.equal(view.cartCreationPending, true);
+    await f.service.retryCart("session-a", flow); // even the explicit route must remain read-only
+    await assert.rejects(
+      f.service.shopping("session-a", flow, {
+        ...request,
+        actionId: randomUUID(),
+      }),
+      /RESOLVE_PENDING_OPERATION/,
+    );
+    assert.equal(f.remote.writes, writes);
+    f.remote.ops.set(pending, receipt);
+    view = await f.service.view("session-a", flow, ["cart"]);
+    assert.equal(view.pending, false);
+    assert.equal(view.cartCreationPending, false);
+    assert.equal(view.cart.lines[0].quantity, 2);
+    assert.equal(f.remote.writes, writes);
+    assert.equal(
+      f.remote.calls.filter((m) => m === "commerce.carts.create").length,
+      1,
+    );
+  } finally {
+    f.close();
+  }
+});
+
+test("first-create recovery keeps its key when a success receipt lacks a cart reference or the cart read times out", async () => {
+  for (const failure of ["missing-ref", "read-timeout"]) {
+    const f = fixture();
+    try {
+      const flow = await f.flow();
+      f.remote.lose = "commerce.carts.create";
+      await assert.rejects(
+        f.service.shopping("session-a", flow, {
+          intent: {
+            action: "add",
+            variantId: "variant",
+            productName: "Mug",
+            variantName: "Blue",
+            quantity: 1,
+          },
+          actionId: randomUUID(),
+        }),
+      );
+      const key = f.vault.get<any>(`flow:${flow}`).pending;
+      const original = f.service.pap.request;
+      f.service.pap.request = async (...args: Parameters<typeof original>) => {
+        if (failure === "read-timeout" && args[1] === "commerce.carts.get")
+          throw new PapError("NETWORK_TIMEOUT");
+        const result: any = await original(...args);
+        if (
+          failure === "missing-ref" &&
+          args[1] === "commerce.operations.lookup"
+        )
+          delete result.result.data.result_ref;
+        return result;
+      };
+      const view = await f.service.discardCartAddition("session-a", flow);
+      assert.equal(view.cartCreationPending, true);
+      assert.equal(f.vault.get<any>(`flow:${flow}`).pending, key);
+      f.service.pap.request = original;
+      f.restart();
+      const recovered = await f.service.view("session-a", flow, ["cart"]);
+      assert.equal(recovered.pending, false);
+      assert.equal(recovered.cart.id, f.remote.cart.id);
+      assert.equal(f.remote.writes, 1);
+    } finally {
+      f.close();
+    }
+  }
+});
