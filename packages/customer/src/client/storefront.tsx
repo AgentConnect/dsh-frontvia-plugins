@@ -461,7 +461,7 @@ export function Storefront({
         </div>
       ) : (
         <>
-          {data.pending && (
+          {data.pending && !data.cartCreationPending && (
             <Alert variant="warning">
               <AlertDescription>
                 {busy
@@ -496,6 +496,18 @@ export function Storefront({
                 )}
               </Button>
             </Alert>
+          )}
+          {data.cartCreationPending && tab !== "cart" && (
+            <div className="fv-row" role="status">
+              <span className="fv-muted">购物车暂未加载。</span>
+              <Button
+                variant="ghost"
+                disabled={busy}
+                onClick={() => action("view")}
+              >
+                刷新购物车
+              </Button>
+            </div>
           )}
           {data.cartReady === false && (
             <Alert>
@@ -1059,15 +1071,28 @@ export function Storefront({
                   <Empty>
                     <ShoppingCart />
                     <EmptyTitle>
-                      {locked ? "购物车已清空" : "购物车还是空的"}
+                      {data.cartCreationPending
+                        ? "购物车暂未加载"
+                        : locked
+                          ? "购物车已清空"
+                          : "购物车还是空的"}
                     </EmptyTitle>
                     <EmptyDescription>
-                      {locked
-                        ? "已提交的商品保留在订单中，不再占用购物车。"
-                        : "去逛逛，选一件喜欢的商品。"}
+                      {data.cartCreationPending
+                        ? "请稍后刷新。"
+                        : locked
+                          ? "已提交的商品保留在订单中，不再占用购物车。"
+                          : "去逛逛，选一件喜欢的商品。"}
                     </EmptyDescription>
-                    <Button disabled={busy} onClick={() => setTab("products")}>
-                      浏览商品
+                    <Button
+                      disabled={busy}
+                      onClick={() =>
+                        data.cartCreationPending
+                          ? action("view")
+                          : setTab("products")
+                      }
+                    >
+                      {data.cartCreationPending ? "刷新购物车" : "浏览商品"}
                     </Button>
                     {locked && (
                       <Button variant="ghost" onClick={() => setTab("orders")}>

@@ -44,6 +44,7 @@ type Command = {
   method: string;
   params: any;
   status: "pending" | "done" | "discarded";
+  waitEnded?: boolean;
   result?: any;
 };
 type Intent = {
@@ -1290,6 +1291,14 @@ export class CustomerService {
       if (f.pending) {
         if (!this.discardableAddition(f)) fail("CART_DISCARD_UNAVAILABLE");
         const command = f.commands[f.pending];
+        if (command.method === "commerce.carts.create" && !f.cart) {
+          // End the UI wait, not the durable operation: only its receipt can
+          // reveal the cart ID. Never replace or resend this creation.
+          command.waitEnded = true;
+          this.save(f);
+          await this.recoverCartCreation(f);
+          return this.humanView(f);
+        }
         command.status = "discarded";
         delete f.pending;
         this.save(f);
@@ -1300,6 +1309,34 @@ export class CustomerService {
       return this.humanView(f);
     });
   }
+  private cartCreationPending(f: Flow) {
+    const command = f.pending && f.commands[f.pending];
+    return (
+      !!command &&
+      command.method === "commerce.carts.create" &&
+      command.waitEnded === true &&
+      !f.cart
+    );
+  }
+  private async recoverCartCreation(f: Flow) {
+    this.policy(f);
+    await this.currentCapabilities(f);
+    try {
+      await this.recover(f);
+    } catch (error: any) {
+      // Transport failures and unresolved receipts never erase the original
+      // command. Only reads are used; policy checks above still propagate.
+      if (
+        ![
+          "ORIGINAL_RESULT_UNKNOWN",
+          "NETWORK_UNCERTAIN",
+          "NETWORK_TIMEOUT",
+          "NETWORK_FAILURE",
+        ].includes(error.code ?? error.message)
+      )
+        throw error;
+    }
+  }
   /** Explicit owner-UI retry: only reversible cart edits, never checkout/payment. */
   async retryCart(sessionId: string, flowId: string) {
     this.views.clear();
@@ -1308,6 +1345,10 @@ export class CustomerService {
       this.policy(f);
       if (!f.pending) {
         await this.refresh(f);
+        return this.humanView(f);
+      }
+      if (this.cartCreationPending(f)) {
+        await this.recoverCartCreation(f);
         return this.humanView(f);
       }
       const command = f.commands[f.pending];
@@ -1328,6 +1369,7 @@ export class CustomerService {
   private retryableCart(f: Flow) {
     return (
       !!f.pending &&
+      !this.cartCreationPending(f) &&
       !f.order &&
       !f.intent?.token &&
       !f.checkout &&
@@ -1387,6 +1429,13 @@ export class CustomerService {
             [`${kind.slice(0, -1)}_id`]: ref.id,
           });
         }
+        if (
+          c.method === "commerce.carts.create" &&
+          op.status === "succeeded" &&
+          !f.cart &&
+          !resource?.id
+        )
+          fail("ORIGINAL_RESULT_UNKNOWN");
         c.result = { operation: op, resource };
         c.status = "done";
         delete f.pending;
@@ -1415,7 +1464,9 @@ export class CustomerService {
       () =>
         this.serial.run(flowId, async () => {
           const current = this.flow(sessionId, flowId);
-          await this.refresh(current, false, scopes);
+          if (this.cartCreationPending(current))
+            await this.recoverCartCreation(current);
+          else await this.refresh(current, false, scopes);
           return this.humanView(current);
         }),
     );
@@ -1457,7 +1508,9 @@ export class CustomerService {
       operation: f.operation,
       pending: !!f.pending,
       canRetryCart: this.retryableCart(f),
-      canDiscardCartAddition: this.discardableAddition(f),
+      cartCreationPending: this.cartCreationPending(f),
+      canDiscardCartAddition:
+        !this.cartCreationPending(f) && this.discardableAddition(f),
       pendingAction: f.pending
         ? (
             {
@@ -1514,12 +1567,14 @@ export class CustomerService {
       await this.currentCapabilities(f, true);
       if (contact.shipping_address.country !== pricing(f).country)
         fail("ADDRESS_COUNTRY_MISMATCH");
-      await this.write(
+      const result = await this.write(
         f,
         "commerce.carts.update",
         { ...this.change(f, expected), patch: contact },
         actionId,
       );
+      if (result?.operation?.status !== "succeeded" || f.pending)
+        fail("CONTACT_NOT_SAVED");
       return this.humanView(f);
     });
   }
