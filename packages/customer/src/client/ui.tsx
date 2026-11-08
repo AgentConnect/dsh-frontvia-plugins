@@ -100,6 +100,21 @@ export const Input = forwardRef<
     />
   );
 });
+export function FieldSet({
+  className,
+  ...props
+}: React.ComponentProps<"fieldset">) {
+  return (
+    <fieldset
+      data-slot="field-set"
+      className={cn("fv-field-set", className)}
+      {...props}
+    />
+  );
+}
+export function FieldLegend(props: React.ComponentProps<"legend">) {
+  return <legend data-slot="field-legend" {...props} />;
+}
 export function FieldGroup({ className, ...props }: DivProps) {
   return (
     <div

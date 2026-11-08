@@ -92,10 +92,23 @@ export async function apply(
               value = await ctx.pap.logoutPersonal();
             if (operation === "list")
               value = { flows: service.list(), sites: ctx.pap.sites() };
+            if (operation === "open-store")
+              value = await service.openStore(a.siteId, a.actionId);
             if (operation === "view")
               value = service.consultation.owns(a.flowId)
                 ? await service.consultation.view(a.sessionId, a.flowId)
-                : await service.view(a.sessionId, a.flowId);
+                : await service.view(a.sessionId, a.flowId, a.scopes);
+            if (operation === "shopping")
+              value = await service.shopping(
+                a.sessionId,
+                a.flowId,
+                {
+                  intent: a.intent,
+                  expected_version: a.expected_version,
+                  actionId: a.actionId,
+                },
+                request.signal,
+              );
             if (operation === "original")
               value = await service.consultation.original(
                 a.sessionId,
@@ -112,12 +125,20 @@ export async function apply(
               );
             if (operation === "review")
               value = await service.review(a.sessionId, a.flowId);
+            if (operation === "order-cancel")
+              value = await service.cancelOrder(a.sessionId, a.flowId);
+            if (operation === "payment-start")
+              value = await service.startPayment(a.sessionId, a.flowId);
             if (operation === "confirm")
               value = await service.confirm(a.sessionId, a.flowId, a.intentId);
             // Legacy accepted operations remain recoverable; never create a new
             // purchase by submitting a confirmation message to an Agent.
             if (operation === "shopping-confirm")
               fail("DIRECT_COMMERCE_REQUIRED");
+            if (operation === "discard-cart-add")
+              value = await service.discardCartAddition(a.sessionId, a.flowId);
+            if (operation === "retry-cart")
+              value = await service.retryCart(a.sessionId, a.flowId);
             if (operation === "recover") {
               await service.tool(
                 a.sessionId,
@@ -130,7 +151,7 @@ export async function apply(
               );
               value = service.consultation.owns(a.flowId)
                 ? await service.consultation.view(a.sessionId, a.flowId)
-                : await service.view(a.sessionId, a.flowId);
+                : await service.view(a.sessionId, a.flowId, a.scopes);
             }
             result = { ok: true, value };
           } catch (e) {

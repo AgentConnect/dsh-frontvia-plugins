@@ -55,6 +55,7 @@ function fixture() {
     expiry: 3600,
     refreshes: 0,
     revoked: false,
+    paymentBeforeReturn: undefined as (() => void) | undefined,
   };
   const decode = (jwt: string, key: any) => {
     const [h, p, s] = jwt.split(".");
@@ -70,6 +71,10 @@ function fixture() {
   };
   const transport: Transport = async (r) => {
     record.calls.push(r);
+    if (r.url.endsWith("/hosted-payer/rpc")) {
+      record.paymentBeforeReturn?.();
+      return { data: { payment: { status: "pending" } } };
+    }
     if (r.url.endsWith("/poppy.json"))
       return {
         protocol_version: "0.2",
@@ -161,6 +166,73 @@ function fixture() {
     },
   };
 }
+test("hosted payment redeems only the original issuer checkout capability without forwarding PAP credentials", async () => {
+  const f = fixture();
+  f.config.sites[0].issuer = "https://auth.test/companies/a";
+  const id = "00000000-0000-4000-8000-000000000001";
+  const access = "v2.00000000-0000-4000-8000-000000000002." + "a".repeat(43);
+  const expires = Math.floor(Date.now() / 1000) + 300;
+  const link = `https://auth.test/companies/a/pay/${id}?expires=${expires}&access=${access}`;
+  try {
+    const { connectionRef } = await f.service.connect("a");
+    await f.service.hostedPayment(connectionRef, link, id);
+    const request = f.record.calls.at(-1);
+    assert.equal(request.url, "https://auth.test/companies/a/hosted-payer/rpc");
+    assert.deepEqual(request.headers, {
+      "Content-Type": "application/json",
+      Origin: "https://auth.test",
+    });
+    assert.deepEqual(JSON.parse(request.body), {
+      method: "start",
+      checkout_id: id,
+      expires,
+      access,
+    });
+    assert(!request.body.includes(f.record.token));
+    assert.equal(request.maxResponseBytes, 512 * 1024);
+    const count = f.record.calls.length;
+    for (const invalid of [
+      link.replace("auth.test", "evil.test"),
+      link.replace("/companies/a/", "/companies/b/"),
+      link.replace(id, "00000000-0000-4000-8000-000000000003"),
+      link + "&access=extra",
+      link + "#fragment",
+      link.replace(`expires=${expires}`, "expires=1"),
+      link.replace("https://", "http://"),
+      link.replace("auth.test", "user:pass@auth.test"),
+    ])
+      await assert.rejects(
+        f.service.hostedPayment(connectionRef, invalid, id),
+        /INVALID_PAYMENT_LINK/,
+      );
+    assert.equal(f.record.calls.length, count);
+    await f.service.disconnect(connectionRef);
+    await assert.rejects(
+      f.service.hostedPayment(connectionRef, link, id),
+      /CONNECTION_DISCONNECTED/,
+    );
+  } finally {
+    f.close();
+  }
+});
+test("payment response is rejected when the connection binding changes during I/O", async () => {
+  const f = fixture();
+  f.config.sites[0].issuer = "https://auth.test/companies/a";
+  try {
+    const { connectionRef } = await f.service.connect("a");
+    f.record.paymentBeforeReturn = () => {
+      f.config.sites[0].resource = "https://other.test/rpc";
+    };
+    const id = "00000000-0000-4000-8000-000000000001";
+    const link = `https://auth.test/companies/a/pay/${id}?expires=${Math.floor(Date.now() / 1000) + 300}&access=${"a".repeat(43)}`;
+    await assert.rejects(
+      f.service.hostedPayment(connectionRef, link, id),
+      /CONNECTION_BINDING_CHANGED/,
+    );
+  } finally {
+    f.close();
+  }
+});
 test("stored connections reject changed authority before credential or network use", async (t) => {
   for (const field of [
     "clientId",
@@ -392,11 +464,18 @@ test("RPC response budget applies to one host request and does not alter authent
   }
 });
 
-test("valid connection reuse avoids discovery and token issuance but explicit disconnect reconnects", async()=>{
- const f=fixture();try{
-  const first=await f.service.connect('a'),count=f.record.calls.length;
-  const second=await f.service.connect('a');assert.equal(first.connectionRef,second.connectionRef);assert.equal(f.record.calls.length,count);
-  await f.service.disconnect(first.connectionRef);
-  await f.service.connect('a');assert(f.record.calls.length>count);
- }finally{f.close();}
+test("valid connection reuse avoids discovery and token issuance but explicit disconnect reconnects", async () => {
+  const f = fixture();
+  try {
+    const first = await f.service.connect("a"),
+      count = f.record.calls.length;
+    const second = await f.service.connect("a");
+    assert.equal(first.connectionRef, second.connectionRef);
+    assert.equal(f.record.calls.length, count);
+    await f.service.disconnect(first.connectionRef);
+    await f.service.connect("a");
+    assert(f.record.calls.length > count);
+  } finally {
+    f.close();
+  }
 });

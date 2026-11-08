@@ -1,4 +1,6 @@
 import { z } from "zod";
+import { shoppingActionSchema } from "./shopping-action.js";
+import { viewScopes } from "./view-scope.js";
 import { contactSchema } from "./core.js";
 const ref = z.string().min(1).max(200);
 const common = {
@@ -19,9 +21,20 @@ export const uiSchemas = {
   "personal-verify": z.object({ code: z.string().regex(/^\d{6}$/) }).strict(),
   "personal-logout": z.object({}).strict(),
   list: z.object({}).strict(),
-  view: z.object(common).strict(),
+  "open-store": z.object({ siteId: ref, actionId: z.uuid() }).strict(),
+  view: z
+    .object({
+      ...common,
+      scopes: z.array(z.enum(viewScopes)).min(1).max(6).optional(),
+    })
+    .strict(),
+  shopping: shoppingActionSchema.extend(common).strict(),
   review: z.object(common).strict(),
+  "order-cancel": z.object(common).strict(),
+  "payment-start": z.object(common).strict(),
   recover: z.object(common).strict(),
+  "retry-cart": z.object(common).strict(),
+  "discard-cart-add": z.object(common).strict(),
   original: z
     .object({ ...common, sourceRef: z.string().regex(/^[a-f0-9]{64}$/) })
     .strict(),

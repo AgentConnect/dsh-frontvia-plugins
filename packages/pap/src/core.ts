@@ -363,11 +363,13 @@ export class PapService {
   async inspect(input: unknown) {
     const link = typeof input === "string" ? parseServiceLink(input) : null;
     const config = link ? null : importSchema.parse(input),
-      origins = link ? [new URL(link.discoveryUrl).origin, new URL(link.resource).origin] : [
-        new URL(config!.discovery_url).origin,
-        ...config!.sites.map((s) => new URL(s.issuer).origin),
-        ...config!.sites.map((s) => new URL(s.resource).origin),
-      ];
+      origins = link
+        ? [new URL(link.discoveryUrl).origin, new URL(link.resource).origin]
+        : [
+            new URL(config!.discovery_url).origin,
+            ...config!.sites.map((s) => new URL(s.issuer).origin),
+            ...config!.sites.map((s) => new URL(s.resource).origin),
+          ];
     const sites = await inspectImport(
       link ? input : config,
       this.inspectionWire ??
@@ -375,15 +377,26 @@ export class PapService {
           this.config.targets.some(
             (t) => t.origin === new URL(request.url).origin,
           )
-            ? httpsTransport(this.config.targets, this.config.caFile)(request)
-            : publicTransport(origins)(request)),
+            ? httpsTransport(
+                this.config.targets,
+                this.config.caFile,
+                this.agents,
+              )(request)
+            : publicTransport(origins, undefined, this.agents)(request)),
     );
     // Importing a link for a previously configured binding must retain its
     // local ID, sessions and account association rather than create a duplicate.
-    if (link) for (const site of sites) {
-      const prior = this.configuredSites().find(s => s.imported && s.domain === site.domain && s.issuer === site.issuer && s.resource === site.resource);
-      if (prior) site.id = prior.id;
-    }
+    if (link)
+      for (const site of sites) {
+        const prior = this.configuredSites().find(
+          (s) =>
+            s.imported &&
+            s.domain === site.domain &&
+            s.issuer === site.issuer &&
+            s.resource === site.resource,
+        );
+        if (prior) site.id = prior.id;
+      }
     const previewId = randomUUID();
     for (const [key, p] of this.previews)
       if (p.expires < Date.now()) this.previews.delete(key);
@@ -432,11 +445,18 @@ export class PapService {
       }
       // Resolve bindings inside the import lock, after validating requested IDs.
       // Previews may precede another import, and JSON/link IDs can differ.
-      const selected = requested.map(site => {
-        const existing = prior.find(s => s.domain === site.domain &&
-          s.issuer === site.issuer && s.resource === site.resource);
-        return {...site, id: existing?.id ?? site.id,
-          service: site.service ?? existing?.service};
+      const selected = requested.map((site) => {
+        const existing = prior.find(
+          (s) =>
+            s.domain === site.domain &&
+            s.issuer === site.issuer &&
+            s.resource === site.resource,
+        );
+        return {
+          ...site,
+          id: existing?.id ?? site.id,
+          service: site.service ?? existing?.service,
+        };
       });
       const next = [
         ...prior.filter((s) => !selected.some((n) => n.id === s.id)),
@@ -839,6 +859,64 @@ export class PapService {
       c.disconnected = true;
       this.save(c);
       return this.public(c);
+    });
+  }
+  /** Owner payment UI only: redeem the server-issued, single-order payer capability.
+   * Never send PAP credentials to this endpoint or accept an arbitrary UI URL.
+   */
+  async hostedPayment(ref: string, link: string, checkoutId: string) {
+    return this.serial.run(ref, async () => {
+      const c = this.load(ref);
+      if (c.disconnected) fail("CONNECTION_DISCONNECTED");
+      const issuer = new URL(this.site(c.siteId).issuer);
+      let url: URL;
+      try {
+        url = new URL(link);
+      } catch {
+        return fail("INVALID_PAYMENT_LINK");
+      }
+      const entries = [...url.searchParams.keys()];
+      const expires = Number(url.searchParams.get("expires"));
+      const access = url.searchParams.get("access") ?? "";
+      if (
+        url.protocol !== "https:" ||
+        url.origin !== issuer.origin ||
+        url.username ||
+        url.password ||
+        url.hash ||
+        !/^[a-f0-9-]{36}$/i.test(checkoutId) ||
+        !/^\/companies\/[^/]+$/.test(issuer.pathname) ||
+        url.pathname !== `${issuer.pathname}/pay/${checkoutId}` ||
+        entries.length !== 2 ||
+        new Set(entries).size !== 2 ||
+        !entries.includes("expires") ||
+        !entries.includes("access") ||
+        !Number.isSafeInteger(expires) ||
+        expires <= now() ||
+        !/^(?:[A-Za-z0-9_-]{43}|v2\.[a-f0-9-]{36}\.[A-Za-z0-9_-]{43})$/i.test(
+          access,
+        )
+      )
+        fail("INVALID_PAYMENT_LINK");
+      const generation = c.personalIdentity
+        ? this.personal.current().generation
+        : undefined;
+      const reply = await this.wire({
+        url: `${issuer.origin}${issuer.pathname}/hosted-payer/rpc`,
+        method: "POST",
+        headers: { "Content-Type": "application/json", Origin: issuer.origin },
+        body: JSON.stringify({
+          method: "start",
+          checkout_id: checkoutId,
+          expires,
+          access,
+        }),
+        timeoutMs: 45000,
+        maxResponseBytes: 512 * 1024,
+      });
+      if (generation) this.personal.assert(generation);
+      this.load(ref);
+      return reply;
     });
   }
   async request(

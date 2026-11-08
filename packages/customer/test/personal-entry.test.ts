@@ -138,6 +138,8 @@ test("Frontvia owner routes manage the shared PAP identity without exposing cred
       "personal-code",
       "personal-verify",
       "personal-logout",
+      "shopping",
+      "open-store",
     ])
       assert.equal((await call(op)).status, 403);
     assert.equal(calls.length, 0);
