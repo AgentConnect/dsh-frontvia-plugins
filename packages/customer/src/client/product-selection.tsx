@@ -1,6 +1,14 @@
 import React, { useEffect, useState } from "react";
 import { ArrowLeft, ShoppingCart } from "lucide-react";
-import { Button, Empty, EmptyTitle, EmptyDescription } from "./ui.js";
+import {
+  Button,
+  Empty,
+  EmptyTitle,
+  EmptyDescription,
+  Field,
+  FieldLabel,
+  Input,
+} from "./ui.js";
 import type { CardIntent } from "./card-message.js";
 import { ProductGallery } from "./product-gallery.js";
 
@@ -38,6 +46,7 @@ export function ProductSelection({
   children: React.ReactNode;
 }) {
   const [showList, setShowList] = useState(false);
+  const [quantities, setQuantities] = useState<Record<string, string>>({});
   useEffect(
     () => setShowList(false),
     [data.flowId, data.variants, data.variantProductId],
@@ -89,9 +98,31 @@ export function ProductSelection({
               >
                 {variants.map((v: any) => {
                   const stock = v.availability;
+                  const maximum =
+                    typeof stock?.quantity_available === "number" &&
+                    Number.isFinite(stock.quantity_available)
+                      ? Math.max(
+                          0,
+                          Math.min(100, Math.floor(stock.quantity_available)),
+                        )
+                      : 100;
                   const unavailable =
                     ["out_of_stock", "unavailable"].includes(stock?.status) ||
-                    stock?.quantity_available === 0;
+                    maximum === 0;
+                  const quantityKey = JSON.stringify([
+                    data.flowId,
+                    productId,
+                    v.id,
+                  ]);
+                  const quantityText = quantities[quantityKey] ?? "1";
+                  const quantity = Number(quantityText);
+                  const validQuantity =
+                    quantityText.trim() !== "" &&
+                    Number.isInteger(quantity) &&
+                    quantity >= 1 &&
+                    quantity <= maximum;
+                  const disabled =
+                    busy || !canAsk || !data.cartReady || unavailable;
                   return (
                     <div className="fv-delivery" key={v.id}>
                       <div className="fv-delivery-copy">
@@ -117,26 +148,56 @@ export function ProductSelection({
                             : ""}
                         </span>
                       </div>
-                      <Button
-                        size="sm"
-                        disabled={
-                          busy || !canAsk || !data.cartReady || unavailable
-                        }
-                        onClick={() =>
-                          ask({
-                            action: "add",
-                            variantId: v.id,
-                            productName: product?.title ?? "所选商品",
-                            variantName: v.title ?? "所选规格",
-                            quantity: 1,
-                          })
-                        }
-                      >
-                        {unavailable || !data.cartReady
-                          ? "暂不可加购"
-                          : "加购 1 件"}
-                        <ShoppingCart data-icon="inline-end" />
-                      </Button>
+                      <div className="fv-chat-add">
+                        <Field>
+                          <FieldLabel>
+                            数量
+                            <Input
+                              type="number"
+                              inputMode="numeric"
+                              min={1}
+                              max={maximum}
+                              step={1}
+                              aria-label={`${v.title === "Default" ? "默认规格" : (v.title ?? "商品规格")}加购数量`}
+                              aria-invalid={!validQuantity && !unavailable}
+                              value={quantityText}
+                              disabled={disabled}
+                              onChange={(event) =>
+                                setQuantities((previous) => ({
+                                  ...previous,
+                                  [quantityKey]: event.target.value,
+                                }))
+                              }
+                            />
+                          </FieldLabel>
+                        </Field>
+                        <Button
+                          size="sm"
+                          disabled={disabled || !validQuantity}
+                          onClick={() => {
+                            if (disabled || !validQuantity) return;
+                            return ask({
+                              action: "add",
+                              variantId: v.id,
+                              productName: product?.title ?? "所选商品",
+                              variantName: v.title ?? "所选规格",
+                              quantity,
+                            });
+                          }}
+                        >
+                          {unavailable || !data.cartReady
+                            ? "暂不可加购"
+                            : validQuantity
+                              ? `加购 ${quantity} 件`
+                              : "加入购物车"}
+                          <ShoppingCart data-icon="inline-end" />
+                        </Button>
+                      </div>
+                      {!validQuantity && !unavailable && (
+                        <p className="fv-field-error" role="status">
+                          请输入 1–{maximum} 之间的整数
+                        </p>
+                      )}
                     </div>
                   );
                 })}

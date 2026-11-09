@@ -1598,6 +1598,9 @@
 .fv .fv-chat-variants > .fv-delivery { flex:1; flex-direction:column; align-items:stretch; gap:16px; padding:16px; border-radius:12px; }
 .fv .fv-chat-variants .fv-delivery-copy { display:flex; flex-direction:column; gap:6px; }
 .fv .fv-chat-variants .fv-price { font-size:20px; }
+.fv-chat-add { display:flex; align-items:flex-end; gap:12px; }
+.fv-chat-add > .fv-field { flex:0 0 96px; min-width:0; }
+.fv .fv-chat-add > .fv-button { flex:1; min-height:40px; }
 .fv-chat-product-detail[data-has-product=false] > .fv-chat-variants { min-height:0; }
 @container (max-width:600px) {
   .fv-chat-product-detail { grid-template-columns:minmax(0,1fr); }

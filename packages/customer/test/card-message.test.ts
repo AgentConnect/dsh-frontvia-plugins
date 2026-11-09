@@ -8,6 +8,43 @@ import {
 const flowId = "27c7071a-3c3a-445b-ac23-d33dae7af4e2";
 const variantId = "128a4c25-f7d4-40e0-b90b-695d614da330";
 
+test("card quantities agree in the envelope, model instruction and visible label, with bounded integer validation", () => {
+  for (const quantity of [1, 3, 100]) {
+    const raw = cardMessage(flowId, {
+      action: "add",
+      variantId,
+      productName: "杯垫",
+      variantName: "Default",
+      quantity,
+    });
+    assert.equal(JSON.parse(raw.split("\n")[1]).intent.quantity, quantity);
+    assert.ok(raw.includes(`将规格 ${variantId} 加购 ${quantity} 件。`));
+    assert.ok(
+      cardMessageRule
+        .match(raw, 0)!
+        .data.display.includes(`加购 ${quantity} 件`),
+    );
+    assert.equal(
+      cardMessageRule.match(
+        raw.replace(`加购 ${quantity} 件。`, "加购 99 件。"),
+        0,
+      ),
+      undefined,
+    );
+  }
+  for (const quantity of [0, -1, 1.5, 101, NaN, Infinity]) {
+    assert.throws(() =>
+      cardMessage(flowId, {
+        action: "add",
+        variantId,
+        productName: "杯垫",
+        variantName: "Default",
+        quantity,
+      }),
+    );
+  }
+});
+
 test("add-to-cart shows a human product and quantity while preserving exact model routing and version checks", () => {
   const raw = cardMessage(flowId, {
     action: "add",

@@ -4,6 +4,7 @@ import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { act, create, type ReactTestRenderer } from "react-test-renderer";
 import { ProductSelection } from "../src/client/product-selection.js";
+import { cardMessage, cardMessageRule } from "../src/client/card-message.js";
 import {
   catalogSnapshot,
   withHistoricalCatalog,
@@ -30,6 +31,132 @@ const render = (data: any) =>
       children: createElement("div", null, "完整商品列表"),
     }),
   );
+
+test("chat quantity editing sends the exact count and blocks invalid, stale-stock and unavailable additions", async () => {
+  let tree!: ReactTestRenderer;
+  let data: any = {
+    flowId: "flow-one",
+    cartReady: true,
+    variants: {
+      items: [
+        {
+          ...variant,
+          availability: { status: "in_stock", quantity_available: 5 },
+        },
+      ],
+    },
+  };
+  const messages: string[] = [];
+  const renderCard = () =>
+    createElement(ProductSelection, {
+      data,
+      busy: false,
+      canAsk: true,
+      formatPrice: () => "CNY 289.90",
+      onCart() {},
+      children: null,
+      ask: async (intent) => {
+        messages.push(
+          cardMessage("27c7071a-3c3a-445b-ac23-d33dae7af4e2", intent),
+        );
+      },
+    });
+  const input = () => tree.root.findByType("input");
+  const add = () => tree.root.findAllByType("button").at(-1)!;
+  const edit = async (value: string) => {
+    await act(async () => input().props.onChange({ target: { value } }));
+  };
+  const update = async () => {
+    await act(async () => {
+      tree.update(renderCard());
+    });
+  };
+  try {
+    await act(async () => {
+      tree = create(renderCard());
+    });
+    assert.equal(input().props.max, 5);
+    for (const value of ["", "0", "-1", "1.5", "6"]) {
+      await edit(value);
+      assert.equal(add().props.disabled, true, value);
+      await act(async () => {
+        await add().props.onClick();
+      });
+    }
+    assert.equal(messages.length, 0);
+    await edit("3");
+    assert.equal(add().props.disabled, false);
+    await act(async () => {
+      await add().props.onClick();
+    });
+    assert.equal(JSON.parse(messages[0].split("\n")[1]).intent.quantity, 3);
+    assert.match(
+      cardMessageRule.match(messages[0], 0)!.data.display,
+      /加购 3 件/,
+    );
+
+    data = {
+      ...data,
+      variants: {
+        items: [{ ...variant, id: "v2", availability: { status: "unknown" } }],
+      },
+    };
+    await update();
+    assert.equal(
+      input().props.value,
+      "1",
+      "variant quantities are independent",
+    );
+    assert.equal(input().props.max, 100);
+    await edit("101");
+    assert.equal(add().props.disabled, true);
+    data = {
+      ...data,
+      variants: {
+        items: [
+          {
+            ...variant,
+            availability: { status: "in_stock", quantity_available: 2 },
+          },
+        ],
+      },
+    };
+    await update();
+    assert.equal(input().props.value, "3");
+    assert.equal(
+      add().props.disabled,
+      true,
+      "stock falling below the draft blocks submission",
+    );
+    data = { ...data, flowId: "flow-two" };
+    await update();
+    assert.equal(
+      input().props.value,
+      "1",
+      "another shopping flow starts with its own count",
+    );
+    data = {
+      ...data,
+      variants: {
+        items: [
+          {
+            ...variant,
+            availability: { status: "out_of_stock", quantity_available: 0 },
+          },
+        ],
+      },
+    };
+    await update();
+    assert.equal(input().props.disabled, true);
+    assert.equal(add().props.disabled, true);
+    await act(async () => {
+      await add().props.onClick();
+    });
+    assert.equal(messages.length, 1);
+  } finally {
+    await act(async () => tree?.unmount());
+  }
+});
 
 test("chat catalog snapshots keep multiple photos; switching photos and returning to the list never send an agent command", async () => {
   const products = {
