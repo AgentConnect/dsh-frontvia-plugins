@@ -1,4 +1,5 @@
-import { AccountClient } from "dsh-identity-client/core";
+import { attachFrontvia } from "../src/pap-integration.js";
+import { AccountClient, type PersonalConfig } from "dsh-identity-client/core";
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { mkdtempSync, readFileSync } from "node:fs";
@@ -17,7 +18,7 @@ import {
   PapError,
   type PapConfig,
   type Transport,
-} from "../src/core.js";
+} from "../../pap/src/core.js";
 
 function fixture(managed = true) {
   const dir = mkdtempSync(join(tmpdir(), "pap-personal-")),
@@ -28,7 +29,7 @@ function fixture(managed = true) {
     privateKeyEncoding: { type: "pkcs8", format: "pem" },
     publicKeyEncoding: { type: "spki", format: "pem" },
   }).privateKey;
-  const config: PapConfig = {
+  const config: PapConfig & { personal: PersonalConfig } = {
     clientId: "https://client.test/client.json",
     callback: "https://client.test/callback",
     signingKeyRef: "SIGN",
@@ -157,15 +158,23 @@ function fixture(managed = true) {
       result: { data: "private-answer-" + user },
     };
   };
-  let vault = new Vault(path, key),
-    service = new PapService(
-      policy,
-      secrets,
-      vault,
-      wire,
-      new AccountClient(config.personal!, vault, secrets, wire, "DEVICE"),
-    );
+  let vault = new Vault(path, key);
+  let account = new AccountClient(
+    config.personal,
+    vault,
+    secrets,
+    wire,
+    "DEVICE",
+  );
+  let service = new PapService(policy, secrets, vault, wire);
+  let integration = attachFrontvia(service, account);
   return {
+    get account() {
+      return account;
+    },
+    get integration() {
+      return integration;
+    },
     config,
     requests,
     keys,
@@ -185,17 +194,19 @@ function fixture(managed = true) {
     restart() {
       vault.close();
       vault = new Vault(path, key);
-      service = new PapService(
-        policy,
-        secrets,
+      account = new AccountClient(
+        config.personal,
         vault,
+        secrets,
         wire,
-        new AccountClient(config.personal!, vault, secrets, wire, "DEVICE"),
+        "DEVICE",
       );
+      service = new PapService(policy, secrets, vault, wire);
+      integration = attachFrontvia(service, account);
     },
     async login(phone = "+12025550101") {
-      await service.personal.requestCode(phone);
-      await service.personal.verify("123456");
+      await account.requestCode(phone);
+      await account.verify("123456");
     },
   };
 }
@@ -210,14 +221,12 @@ test("phone identity survives restart and re-login; switch hides previous connec
       identity = f.service.identity(first.connectionRef);
     assert.equal(first.personalSignedIn, true);
     assert.equal(first.signedIn, false);
-    assert(
-      !JSON.stringify(f.service.personal.status()).includes("fv.personal"),
-    );
+    assert(!JSON.stringify(f.account.status()).includes("fv.personal"));
     assert(!readFileSync(f.path).includes(Buffer.from("dsh.personal.v1.a")));
     f.restart();
     assert.equal((f.service.status() as any[]).length, 1);
     assert.deepEqual(f.service.identity(first.connectionRef), identity);
-    await f.service.personal.logout();
+    await f.account.logout();
     assert.deepEqual(f.service.status(), []);
     assert.throws(() => f.service.identity(first.connectionRef));
     await f.login("+12025550102");
@@ -236,7 +245,7 @@ test("phone identity survives restart and re-login; switch hides previous connec
         ),
       { code: "PERSONAL_ACCOUNT_CHANGED" },
     );
-    await f.service.personal.logout();
+    await f.account.logout();
     await f.login();
     assert.equal((f.service.status() as any[])[0].connected, false);
     const again = await f.service.connect("shop");
@@ -261,16 +270,16 @@ test("imported token origin cannot collect personal credentials; logout uncertai
     f.config.personal!.audiences = ["https://shop.test/companies/a"];
     const c = await f.service.connect("shop");
     f.failLogout(true);
-    await assert.rejects(() => f.service.personal.logout(), {
+    await assert.rejects(() => f.account.logout(), {
       code: "PERSONAL_LOGOUT_PENDING",
     });
     f.restart();
-    assert(f.service.personal.status().logoutPending);
+    assert(f.account.status().logoutPending);
     assert.throws(() => f.service.identity(c.connectionRef));
     await assert.rejects(() => f.login(), { code: "PERSONAL_LOGOUT_PENDING" });
     f.failLogout(false);
-    await f.service.personal.logout();
-    assert(!f.service.personal.status().logoutPending);
+    await f.account.logout();
+    assert(!f.account.status().logoutPending);
   } finally {
     f.vault.close();
   }
@@ -288,7 +297,7 @@ test("logout while token or resource response is in flight cannot restore access
       {},
     );
     await new Promise((r) => setTimeout(r, 10));
-    await f.service.personal.logout();
+    await f.account.logout();
     release();
     await assert.rejects(() => pending, { code: "PERSONAL_LOGIN_REQUIRED" });
     assert.deepEqual(f.service.status(), []);
@@ -297,7 +306,7 @@ test("logout while token or resource response is in flight cannot restore access
     f.block(new Promise((r) => (release = r)));
     const renewal = f.service.renew(c.connectionRef);
     await new Promise((r) => setTimeout(r, 10));
-    await f.service.personal.logout();
+    await f.account.logout();
     release();
     await assert.rejects(() => renewal, { code: "PERSONAL_LOGIN_REQUIRED" });
     assert.deepEqual(f.service.status(), []);
@@ -308,16 +317,16 @@ test("logout while token or resource response is in flight cannot restore access
 test("logout racing OTP verification revokes the newly issued parent login instead of forgetting a live credential", async () => {
   const f = fixture();
   try {
-    await f.service.personal.requestCode("+12025550101");
+    await f.account.requestCode("+12025550101");
     let release!: () => void;
     f.block(new Promise((r) => (release = r)));
-    const verifying = f.service.personal.verify("123456");
+    const verifying = f.account.verify("123456");
     await new Promise((r) => setTimeout(r, 10));
-    const out = f.service.personal.logout();
+    const out = f.account.logout();
     release();
     await assert.rejects(() => verifying, { code: "PERSONAL_ACCOUNT_CHANGED" });
     await out;
-    assert(!f.service.personal.status().signedIn);
+    assert(!f.account.status().signedIn);
     assert(
       f.requests.some(
         (r) =>
@@ -374,7 +383,7 @@ test("personal purchase statements use the current resource proof key and cannot
         }),
       /STATEMENT_BINDING_MISMATCH/,
     );
-    await f.service.personal.logout();
+    await f.account.logout();
     assert.throws(
       () => f.service.signResourceStatement(c.connectionRef, typ, claims),
       /PERSONAL_/,
@@ -417,6 +426,136 @@ test("replacing a lost device key creates a fresh connection and never sends an 
     );
     assert.equal((f.service.status() as unknown[]).length, 2);
   } finally {
+    f.vault.close();
+  }
+});
+
+test("legacy identity connections retain subject and proof key across adapter migration and restart", async () => {
+  const f = fixture();
+  try {
+    await f.login();
+    const first = await f.service.connect("shop");
+    const binding = f.service.identity(first.connectionRef);
+    const stored = f.vault.get<any>(`connection:${first.connectionRef}`)!;
+    delete stored.authenticationProvider;
+    f.vault.set(`connection:${first.connectionRef}`, stored);
+    f.restart();
+    assert.deepEqual(f.service.identity(first.connectionRef), binding);
+    await f.service.request(first.connectionRef, "example.read", {});
+    assert.equal(
+      (await f.service.connect("shop")).connectionRef,
+      first.connectionRef,
+    );
+    assert.equal(
+      f.vault.get<any>(`connection:${first.connectionRef}`).proofKey,
+      stored.proofKey,
+    );
+  } finally {
+    f.service.close();
+    f.vault.close();
+  }
+});
+
+test("removing the adapter blocks saved identity connections without deleting them or falling back to anonymous grants", async () => {
+  const f = fixture();
+  try {
+    await f.login();
+    const { connectionRef } = await f.service.connect("shop");
+    const before = f.requests.length;
+    const stored = f.vault.get<any>(`connection:${connectionRef}`);
+    f.integration.dispose();
+    assert.deepEqual(f.service.status(), []);
+    await assert.rejects(
+      f.service.request(connectionRef, "example.read", {}),
+      /IDENTITY_PROVIDER_REQUIRED/,
+    );
+    await assert.rejects(
+      f.service.connect("shop"),
+      /IDENTITY_PROVIDER_REQUIRED/,
+    );
+    assert.equal(f.requests.length, before);
+    assert.deepEqual(f.vault.get(`connection:${connectionRef}`), stored);
+    const restored = attachFrontvia(f.service, f.account);
+    try {
+      await f.service.request(connectionRef, "example.read", {});
+    } finally {
+      restored.dispose();
+    }
+  } finally {
+    f.service.close();
+    f.vault.close();
+  }
+});
+
+test("removing an identity adapter during a resource request rejects the returned data", async () => {
+  const f = fixture();
+  try {
+    await f.login();
+    const { connectionRef } = await f.service.connect("shop");
+    let unblock!: () => void;
+    f.block(
+      new Promise<void>((resolve) => {
+        unblock = resolve;
+      }),
+    );
+    const pending = f.service.request(connectionRef, "example.read", {});
+    await new Promise((resolve) => setImmediate(resolve));
+    f.integration.dispose();
+    unblock();
+    await assert.rejects(pending, /IDENTITY_PROVIDER_REQUIRED/);
+  } finally {
+    f.service.close();
+    f.vault.close();
+  }
+});
+
+test("the identity adapter receives only the resource public key and unregistered statement types are denied", async () => {
+  const f = fixture();
+  const assertion = f.account.assertion.bind(f.account);
+  let called = false;
+  f.account.assertion = async (issuer, resource, key) => {
+    called = true;
+    assert(key.includes("BEGIN PUBLIC KEY"));
+    assert(!key.includes("PRIVATE KEY"));
+    assert.equal(createPublicKey(key).export({ format: "jwk" }).d, undefined);
+    return assertion(issuer, resource, key);
+  };
+  try {
+    await f.login();
+    const { connectionRef } = await f.service.connect("shop");
+    assert(called);
+    const identity = f.service.identity(connectionRef);
+    assert.throws(
+      () =>
+        f.service.signResourceStatement(connectionRef, "arbitrary+jwt", {
+          client_id: identity.clientId,
+          issuer: identity.issuer,
+          resource: identity.resource,
+        }),
+      /STATEMENT_BINDING_MISMATCH/,
+    );
+  } finally {
+    f.service.close();
+    f.vault.close();
+  }
+});
+
+test("legacy account-only profiles do not expose old unbound guest records as the signed-in account", async () => {
+  const f = fixture();
+  try {
+    await f.login();
+    const { connectionRef } = await f.service.connect("shop");
+    const stored = f.vault.get<any>(`connection:${connectionRef}`);
+    delete stored.personalIdentity;
+    delete stored.authenticationProvider;
+    f.vault.set(`connection:${connectionRef}`, stored);
+    assert.equal(f.service.canAccess(connectionRef), false);
+    await assert.rejects(
+      f.service.request(connectionRef, "example.read", {}),
+      /PERSONAL_ACCOUNT_CHANGED/,
+    );
+  } finally {
+    f.service.close();
     f.vault.close();
   }
 });

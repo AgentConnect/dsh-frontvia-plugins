@@ -50,6 +50,13 @@ test("Frontvia owner routes manage the shared PAP identity without exposing cred
     }
     throw new Error("unexpected account request");
   };
+  const account = new AccountClient(
+    accountConfig,
+    vault,
+    secrets,
+    wire,
+    "DEVICE",
+  );
   const pap = new PapService(
     {
       clientId: "https://client.test/agent.json",
@@ -68,12 +75,12 @@ test("Frontvia owner routes manage the shared PAP identity without exposing cred
     { get: async () => undefined, set: async () => {} },
     vault,
     wire,
-    new AccountClient(accountConfig, vault, secrets, wire, "DEVICE"),
   );
   const routes = new Map<string, any>(),
     definitions = new Map<string, any>();
   const cleanups: (() => void)[] = [];
   const ctx: any = {
+    identity: { account },
     reflect: {
       provide: (name: string, value: any) => {
         ctx[name] = value;
@@ -163,18 +170,18 @@ test("Frontvia owner routes manage the shared PAP identity without exposing cred
     const login = await result("personal-verify", { code: "123456" });
     assert.equal(login.value.signedIn, true);
     assert(!JSON.stringify(login).includes("dsh.personal."));
-    assert.equal(pap.personal.current().userId, "person-a");
-    assert.equal((pap.personal as any).token, undefined);
-    assert.equal("token" in pap.personal.current(), false);
-    const identity = pap.personal.identity();
+    assert.equal(account.current().userId, "person-a");
+    assert.equal((account as any).token, undefined);
+    assert.equal("token" in account.current(), false);
+    const identity = account.identity();
     assert.equal(
       (await result("personal-status")).value.phone,
       "+12 •••• 0101",
     );
-    assert.equal(pap.personal.identity(), identity);
+    assert.equal(account.identity(), identity);
     assert(!readFileSync(path).includes(Buffer.from("dsh.personal.host-only")));
     assert.equal((await result("personal-logout")).value.signedIn, false);
-    assert.throws(() => pap.personal.current(), {
+    assert.throws(() => account.current(), {
       code: "PERSONAL_LOGIN_REQUIRED",
     });
     assert.deepEqual(

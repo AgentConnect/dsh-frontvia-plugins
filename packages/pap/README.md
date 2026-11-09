@@ -1,46 +1,48 @@
 # dsh-pap
 
-Generic PAP 0.2 client service for official DeepSeek Harness 0.2.1-rc.3. Exposes `ctx.pap` and a connection sidebar. No commerce or payment tools. Configure via a protected `configFile`; keys are DSH credential references, not package contents. See the repository README for local installation and validation boundaries.
+独立的 PAP 0.2 客户端插件，适用于 DeepSeek Harness 0.2.2-rc.1。提供 `ctx.pap` 和「PAP 连接」页面，仅依赖宿主的 Profile、凭据、连接和界面服务；不依赖 DSH 账号或 Frontvia Customer 插件。
 
 ## 连接页面
 
-账号以单行展示，登录和管理入口跳转至独立的 DSH 账号页。商家按 issuer 与 store_id 分组；绑定信息不完整时保留独立服务，不按域名或名称合并。服务列表展示连接状态，接口数量、资源地址与客户端信息收在详情内。
+管理服务发现、连接、授权、断开、移除和恢复。列表按发现域名与 issuer 分组，各资源保留独立连接；不按商家、店铺或业务类型推断身份。资源地址、会话有效期和客户端信息收在详情中。
 
-添加商家使用原生模态弹窗，默认填写服务链接，也可切换 JSON 配置。检查只生成预览，选择服务并确认后才导入；请求期间不可关闭，Esc 关闭后恢复入口焦点。断开、移除收在“更多”中，移除仍需确认并保留历史记录。“打开商城”仅在 Customer 已加载时显示，打开 Frontvia 服务页，不自动连接、购买或切换其已选店铺。
+添加服务支持 HTTPS 资源链接和 JSON 配置。检查只生成预览，选择资源并确认后才导入，不自动连接或授权。页面不显示账号登录、手机号、商城入口或业务操作。
 
-## 手机号个人账号
+## 单独使用
 
-默认安装会在当前 DSH Profile 中启用 Frontvia 个人登录。打开「Frontvia 服务」即可查看已登录账号或使用验证码登录。要指定其他账号环境，可在受保护的 `configFile` 中增加：
+无配置时也可启动、检查和保存服务信息。建立连接前，需要有效的客户端身份：已发布的 HTTPS 客户端元数据、匹配的签名密钥及回调。插件不会假定任意服务接受临时生成的本地身份。
+
+通过插件的 `configFile` 指向仅当前用户可读的 JSON 文件（0600）：
 
 ```json
 {
-  "personal": {
-    "origin": "https://identity.example.com",
-    "requestOrigin": "https://identity.example.com",
-    "tokenOrigins": ["https://platform.example.com"]
-  }
+  "clientId": "https://client.example.com/client.json",
+  "callback": "https://client.example.com/callback",
+  "signingKeyRef": "MY_PAP_SIGNING_KEY",
+  "keyId": "key-1",
+  "storageKeyRef": "MY_PAP_STORAGE_KEY",
+  "dataDir": "/absolute/path/to/pap-data",
+  "sites": [],
+  "targets": []
 }
 ```
 
-`origin` 是提供 `/v1/personal/*` 的可信 Frontvia 服务；`requestOrigin` 必须
-是服务端已配置允许的 Origin。`tokenOrigins` 是可接收个人登录凭据的可信
-Platform issuer origin，不能从导入的商家配置自动追加。使用系统证书的公网
-HTTPS 可直接解析；本地测试使用现有 `targets` 和专用 CA，不关闭 TLS 校验。
+密钥引用由宿主凭据服务解析，不能把私钥写进导入配置或包中。公开服务使用 HTTPS、目标地址校验和 DNS 防护；本地隔离测试才使用显式 `targets` 和专用 CA。服务方仍决定是否接受客户端及授权方式。
 
-PAP 连接页只提供 PAP 客户端连接管理和当前身份展示。手机号验证码登录、
-注册和退出入口位于 **Frontvia 服务**。原有加密会话和凭据存储位置不变，
-Frontvia 通过宿主服务操作同一个账号会话，PAP 使用其身份建立连接。
-PAP 不注册 `pap/personal-*` 页面接口；`pap/status` 只返回脱敏身份状态，
-不包含验证码挑战信息。个人令牌不交给浏览器或模型。
-配置个人账号后，连接商家须先到 Frontvia 服务登录。
+PAP 可以单独安装其本地构建包；仓库的 `install:desktop` 是包含账号和商城的组合安装，不是单独安装命令，也不是版本发布。
 
-默认安装在首次连接商家时向 Frontvia 账号服务登记当前 Profile 的设备公钥，签名私钥由本机 DSH 保存。服务端需支持 `POST /v1/personal/pap/devices`。显式配置的客户端继续使用自己的 CIMD/JWKS、匹配签名密钥和 HTTPS 回调。公开 Frontvia
-服务自动校验客户端，旧导出配置中的允许列表不再形成审批门槛；服务端仍能
-拒绝已禁用客户端、错误签名或未发布服务。个人登录不授予商家管理权限；
-个人购物由 Commerce capabilities 和 Customer 的 owner 确认入口控制，
-PAP 只提供当前资源连接的绑定证明签名，不注册购买工具。
+## 可选身份适配
 
-退出立即停用本机连接；若服务端退出结果未知，会保留加密的待退出凭据并明确
-提示重试，重启也不会悄悄恢复。换号后仅显示该账号连接，同账号重登复用原
-连接引用和咨询身份。旧聊天仍是 DSH 的历史，换号后应新建聊天；Customer 会
-阻止把另一账号接入已有账号记录的聊天。
+宿主插件可通过 `registerAuthentication` 提供特定授权方式。适配器根据已核验的授权服务器元数据匹配，提供不含令牌的主体/会话代次及授权字段；PAP 仅传递资源公钥。账号登录和设备登记由适配器自己的账号服务负责。
+
+显式客户端在服务支持标准 JWT bearer 路径时继续使用原配置。需要扩展授权却未安装对应适配器时，连接明确失败，不降级为匿名身份。每条连接记录适配器归属，并在异步调用后重新检查登录代次、适配器实例及连接绑定。适配器卸载不删除连接，已在途请求不能返回旧账号数据。
+
+`registerStatement` 仅供可信宿主扩展注册明确的证明策略。未注册的类型、跨客户端/issuer/resource 的声明均拒绝；私钥始终由 PAP 保存。`requestBound` 是无 PAP 凭据、同 issuer origin 的宿主辅助请求，不暴露为页面 RPC 或模型工具。
+
+Frontvia 的身份匹配、购买证明策略和支付链接规则在 Customer 的适配层中，PAP 不导入这些实现。`pap/status` 不读取或刷新账号，不返回账号信息。
+
+## 已有数据与回退
+
+不迁移或删除数据库。保留原 Profile 中的 `plugin-data/frontvia/pap` 路径、加密密钥引用、连接 ID、主体和 DPoP 密钥，路径名称仅用于兼容旧安装。已有 `personalIdentity` 记录由明确声明兼容能力的适配器读取；适配器缺失、账号退出或换号时拒绝访问。
+
+旧 `personal` 配置只作为兼容标记，不再配置账号服务；账号环境由独立账号插件管理。回退前停止宿主并恢复整套匹配的旧插件构建，保留凭据和数据；不要删除数据库或复制另一账号的 Profile。

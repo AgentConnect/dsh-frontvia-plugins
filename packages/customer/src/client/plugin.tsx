@@ -234,11 +234,15 @@ export function apply(ctx: any) {
     const refresh = () => {
       if (document.visibilityState !== "hidden") views.refreshAll();
     };
+    const notifyPap = () =>
+      window.dispatchEvent(new Event("pap-connections-change"));
+    window.addEventListener("dsh-identity-change", notifyPap);
     window.addEventListener("dsh-identity-change", reset);
     window.addEventListener("focus", refresh);
     document.addEventListener("visibilitychange", refresh);
     return () => {
       window.removeEventListener("dsh-identity-change", reset);
+      window.removeEventListener("dsh-identity-change", notifyPap);
       window.removeEventListener("focus", refresh);
       document.removeEventListener("visibilitychange", refresh);
       views.clear();

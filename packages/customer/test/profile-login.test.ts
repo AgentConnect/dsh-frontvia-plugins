@@ -103,7 +103,7 @@ test("a DSH profile installing both bundles without config registers the login, 
       flows: [],
       sites: [],
     });
-    assert.equal((await call("pap/status")).personal.configured, true);
+    assert.equal("personal" in (await call("pap/status")), false);
     assert.equal(
       (await call("frontvia-customer/personal-status")).signedIn,
       false,
@@ -151,15 +151,17 @@ test("default account verifies an existing session after restart, isolates profi
       config.storageKeyRef,
       secrets,
     );
-    const service = new PapService(
-      config,
-      secrets,
+    const account = new AccountClient(
+      defaultPersonalConfig,
       vault,
+      secrets,
       wire,
-      new AccountClient(defaultPersonalConfig, vault, secrets, wire, "DEVICE"),
+      "DEVICE",
     );
+    const service = new PapService(config, secrets, vault, wire);
     return {
       service,
+      account,
       close() {
         service.close();
         vault.close();
@@ -168,29 +170,27 @@ test("default account verifies an existing session after restart, isolates profi
   }
   let host = await start("desktop");
   try {
-    assert.equal((await host.service.personal.refresh()).signedIn, false);
-    await host.service.personal.requestCode("+12025550101");
-    await host.service.personal.verify("123456");
+    assert.equal((await host.account.refresh()).signedIn, false);
+    await host.account.requestCode("+12025550101");
+    await host.account.verify("123456");
     host.close();
     host = await start("desktop");
-    assert.equal((await host.service.personal.refresh()).signedIn, true);
+    assert.equal((await host.account.refresh()).signedIn, true);
     const other = await start("another");
     try {
-      assert.equal((await other.service.personal.refresh()).signedIn, false);
+      assert.equal((await other.account.refresh()).signedIn, false);
     } finally {
       other.close();
     }
     me = "offline";
-    await assert.rejects(host.service.personal.refresh(), {
+    await assert.rejects(host.account.refresh(), {
       code: "NETWORK_UNCERTAIN",
     });
     me = "ok";
-    assert.equal((await host.service.personal.refresh()).signedIn, true);
+    assert.equal((await host.account.refresh()).signedIn, true);
     me = "revoked";
-    assert.equal((await host.service.personal.refresh()).signedIn, false);
-    assert.ok(
-      (await host.service.personal.requestCode("+12025550101")).challenge,
-    );
+    assert.equal((await host.account.refresh()).signedIn, false);
+    assert.ok((await host.account.requestCode("+12025550101")).challenge);
   } finally {
     host.close();
     rmSync(dir, { recursive: true, force: true });

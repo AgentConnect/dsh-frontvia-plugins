@@ -68,7 +68,7 @@ function fixture(cache = false, cny = false, language?: string) {
   };
   const response = (data: any) => ({ result: { data: copy(data) } });
   const pap: PapPort = {
-    apiVersion: 1,
+    apiVersion: 2,
     hostedPayment: async (_ref, _url, checkoutId) => {
       remote.paymentCalls++;
       return {

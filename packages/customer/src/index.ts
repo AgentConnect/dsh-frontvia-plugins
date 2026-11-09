@@ -1,3 +1,5 @@
+import type {} from "dsh-identity-client";
+import { attachFrontvia } from "./pap-integration.js";
 import type { Context } from "@deepseek-ai/cordis";
 import { credentialRef } from "@deepseek-ai/dsh-credentials";
 import {
@@ -21,6 +23,7 @@ import { uiSchemas } from "./ui-contract.js";
 export const name = "dsh-frontvia-customer";
 export const inject = [
   "pap",
+  "identity",
   "profileContext",
   "tools",
   "credentials",
@@ -51,7 +54,24 @@ export async function apply(
     secrets,
   );
   ctx.effect(() => () => vault.close());
-  const service = new CustomerService(c, ctx.pap, secrets, vault);
+  if (ctx.pap.apiVersion !== 2) fail("PAP_VERSION_UNSUPPORTED");
+  const integration = attachFrontvia(ctx.pap, ctx.identity.account);
+  ctx.effect(() => () => integration.dispose());
+  // Preserve the PAP service receiver; business-only operations belong to this adapter.
+  const pap = {
+    apiVersion: 2 as const,
+    sites: () => ctx.pap.sites(),
+    status: (ref?: string) => ctx.pap.status(ref),
+    connect: (site: string) => ctx.pap.connect(site),
+    identity: (ref: string) => ctx.pap.identity(ref),
+    request: (...args: Parameters<typeof ctx.pap.request>) =>
+      ctx.pap.request(...args),
+    canAccess: (ref: string) => ctx.pap.canAccess(ref),
+    capabilityCacheKey: (ref: string) => ctx.pap.capabilityCacheKey(ref),
+    signResourceStatement: integration.signResourceStatement,
+    hostedPayment: integration.hostedPayment,
+  };
+  const service = new CustomerService(c, pap, secrets, vault);
   for (const tool of tools(service)) ctx.tools.register(tool as any);
   ctx.systemPrompt.section({
     name: "frontvia-customer:shopping",
@@ -83,13 +103,13 @@ export async function apply(
             const a = uiSchemas[operation].parse(message.payload) as any;
             let value: any;
             if (operation === "personal-status")
-              value = await ctx.pap.personalStatus();
+              value = await ctx.identity.account.refresh();
             if (operation === "personal-code")
-              value = await ctx.pap.requestPersonalCode(a.phone);
+              value = await ctx.identity.account.requestCode(a.phone);
             if (operation === "personal-verify")
-              value = await ctx.pap.verifyPersonalCode(a.code);
+              value = await ctx.identity.account.verify(a.code);
             if (operation === "personal-logout")
-              value = await ctx.pap.logoutPersonal();
+              value = await ctx.identity.account.logout();
             if (operation === "list")
               value = { flows: service.list(), sites: ctx.pap.sites() };
             if (operation === "open-store")

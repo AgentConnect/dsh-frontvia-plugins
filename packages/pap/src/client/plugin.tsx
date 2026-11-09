@@ -1,8 +1,6 @@
-import { groupMerchants } from "./merchants.js";
-import { IdentityPanel, type PersonalIdentity } from "./identity-panel.js";
+import { groupServices } from "./services.js";
 import React, { useEffect, useId, useRef, useState } from "react";
 import {
-  ArrowRight,
   Check,
   ChevronDown,
   CircleAlert,
@@ -13,9 +11,6 @@ import {
   RefreshCw,
   Plus,
   Ellipsis,
-  MessageCircle,
-  ShoppingBag,
-  Store,
   Unplug,
   Trash2,
   Undo2,
@@ -48,7 +43,6 @@ type Site = {
   domain: string;
   resource?: string;
   issuer?: string;
-  service?: { store_id?: string };
   clientAllowed?: boolean;
   description?: { methods: string[]; profile?: string };
 };
@@ -67,7 +61,6 @@ type Connection = {
 };
 type Status = {
   configured: boolean;
-  personal?: PersonalIdentity;
   sites: Site[];
   connections: Connection[];
   removedSites?: Site[];
@@ -77,13 +70,6 @@ type Status = {
     signingKeyConfigured: boolean;
   };
 };
-function serviceKind(site: Site) {
-  if (site.description?.methods.some((m) => m.startsWith("commerce.")))
-    return { title: "购物服务", Icon: ShoppingBag };
-  if (site.description?.profile === "frontvia.merchant_consultation.v1")
-    return { title: "咨询与知识", Icon: MessageCircle };
-  return { title: site.label, Icon: Store };
-}
 type Operation =
   | "connect"
   | "disconnect"
@@ -96,45 +82,42 @@ type Run = (
   payload: Record<string, unknown>,
 ) => Promise<any>;
 const messages: Record<string, string> = {
-  PAP_DEVICE_ENROLLMENT_UNAVAILABLE:
-    "当前账号服务尚未启用自动设备接入。个人账号仍可使用，商家连接需等待服务端更新。",
+  IDENTITY_PROVIDER_REQUIRED: "此连接需要对应的身份插件，请启用后重试。",
   INVALID_DEVICE_IDENTITY: "账号服务返回的设备身份未通过验证。",
-  PAP_CLIENT_IDENTITY_REQUIRED:
-    "此 Profile 可以登录个人账号。连接商家还需要配置已发布的 PAP 客户端签名身份。",
-  PAP_CONFIGURATION_REQUIRED: "请先配置 PAP 客户端，再连接商家。",
+  PAP_CLIENT_IDENTITY_REQUIRED: "请配置有效的 PAP 客户端身份后再连接。",
+  PAP_CONFIGURATION_REQUIRED: "请先配置 PAP 客户端，再连接服务方。",
   CLIENT_KEY_REQUIRED: "客户端签名密钥未就绪，请检查此 Profile 的凭据配置。",
-  SITE_NOT_APPROVED: "此商家尚未登记，请检查连接配置。",
-  DISCOVERY_MISMATCH: "商家的发现信息与已登记配置不一致，连接未建立。",
-  ISSUER_MISMATCH: "商家的身份服务与已登记配置不一致，连接未建立。",
-  ENDPOINT_MISMATCH: "商家的授权地址与已登记配置不一致，连接未建立。",
+  SITE_NOT_APPROVED: "此服务方尚未登记，请检查连接配置。",
+  DISCOVERY_MISMATCH: "服务方的发现信息与已登记配置不一致，连接未建立。",
+  ISSUER_MISMATCH: "服务方的身份服务与已登记配置不一致，连接未建立。",
+  ENDPOINT_MISMATCH: "服务方的授权地址与已登记配置不一致，连接未建立。",
   ACCOUNT_REAUTHORIZATION_REQUIRED: "此账户需要重新授权，请展开下方账户授权。",
-  SESSION_REQUIRED: "请先连接商家，建立 PAP 会话。",
+  SESSION_REQUIRED: "请先连接服务方，建立 PAP 会话。",
   CONNECTION_REQUIRED: "连接已不可用，请刷新状态后重新连接。",
   CONNECTION_BINDING_CHANGED:
-    "连接配置已变化，旧凭据已停用。请恢复原配置；使用新商家时请创建独立连接配置。",
+    "连接配置已变化，旧凭据已停用。请恢复原配置；使用新服务方时请创建独立连接配置。",
   CONNECTION_BINDING_REQUIRED:
     "旧连接缺少身份绑定信息，暂时无法安全续接。原数据已保留，请在独立 Profile 中配置新连接。",
-  PERSONAL_LOGIN_REQUIRED: "请先到 Frontvia 服务登录个人账号。",
-  PERSONAL_ACCOUNT_CHANGED: "账号已变化，请重新连接商家。",
+  PERSONAL_LOGIN_REQUIRED: "此连接需要登录，请在对应的身份插件完成登录后重试。",
+  PERSONAL_ACCOUNT_CHANGED: "账号已变化，请重新连接服务方。",
   PERSONAL_TOKEN_ORIGIN_UNTRUSTED:
-    "此商家身份服务尚未配置为可信地址，个人凭据未发送。",
-  PERSONAL_COMMERCE_AUTHORIZATION_UNAVAILABLE:
-    "当前个人账号支持公开咨询，商家购物账号授权尚未接通。",
+    "此服务方身份服务尚未配置为可信地址，个人凭据未发送。",
+  PROVIDER_AUTHORIZATION_REQUIRED: "请通过此连接对应的身份插件完成授权。",
   CLIENT_NOT_ALLOWED:
-    "此旧配置限制了客户端，请重新导入商家最新的免审批连接配置。",
-  HTTP_401: "客户端身份尚未通过商家验证，请核对客户端登记与签名凭据。",
+    "此旧配置限制了客户端，请重新导入服务方最新的免审批连接配置。",
+  HTTP_401: "客户端身份尚未通过服务方验证，请核对客户端登记与签名凭据。",
   HTTP_403: "服务拒绝了此请求，请检查服务是否已发布或账号是否有效。",
-  INVALID_SCOPE: "授权范围格式不正确，请使用商家提供的范围，并以空格分隔。",
+  INVALID_SCOPE: "授权范围格式不正确，请使用服务方提供的范围，并以空格分隔。",
   CALLBACK_REJECTED:
-    "回调地址未通过校验。请检查是否属于当前商家和本次授权；过期时请重新创建授权链接。",
-  AUTHORIZATION_DENIED: "商家未批准此次授权。你可以重新创建授权链接后再试。",
+    "回调地址未通过校验。请检查是否属于当前服务方和本次授权；过期时请重新创建授权链接。",
+  AUTHORIZATION_DENIED: "服务方未批准此次授权。你可以重新创建授权链接后再试。",
   SITE_REVISION_CHANGED: "配置已变化，请刷新状态后重新确认。",
   SITE_NOT_REMOVED: "配置已恢复或发生变化，请刷新状态。",
-  INVALID_AUTHORIZATION_URL: "商家返回的授权链接无效，请检查连接配置。",
+  INVALID_AUTHORIZATION_URL: "服务方返回的授权链接无效，请检查连接配置。",
 };
 function errorMessage(error: unknown) {
   const code = error instanceof Error ? error.message : "";
-  return messages[code] ?? "操作未完成，请检查商家服务是否可用后重试。";
+  return messages[code] ?? "操作未完成，请检查服务列表是否可用后重试。";
 }
 function validUrl(value: string) {
   try {
@@ -163,14 +146,13 @@ export function apply(ctx: any) {
     if (!result.ok) throw new Error(result.error.code);
     return result.value;
   };
-  function Merchant({
+  function ServiceConnection({
     site,
     connection,
     retiredDevice,
     busy,
     run,
     now,
-    openStore,
   }: {
     site: Site;
     connection?: Connection;
@@ -178,7 +160,6 @@ export function apply(ctx: any) {
     busy: string;
     run: Run;
     now: number;
-    openStore?: () => void;
   }) {
     const id = useId();
     const [scopes, setScopes] = useState("");
@@ -230,14 +211,15 @@ export function apply(ctx: any) {
           setAuthorization("");
           setOpen(false);
           setNotice("连接已断开。");
-        } else if (operation !== "remove") setNotice("商家连接已建立。");
+        } else if (operation !== "remove") setNotice("服务方连接已建立。");
       } catch (e) {
         setError(errorMessage(e));
       }
     };
     const pending = (operation: Operation) =>
       busy === `${operation}:${site.id}`;
-    const { title, Icon } = serviceKind(site);
+    const title = site.label;
+    const Icon = Link2;
     const needsReview = !!connection?.bindingError;
     const needsApproval = site.clientAllowed === false;
     const status = needsReview
@@ -269,7 +251,7 @@ export function apply(ctx: any) {
               <span className="pap-service-title">{title}</span>
               {(needsReview || needsApproval) && (
                 <span className="pap-service-caption">
-                  {needsReview ? "连接信息需更新" : "需要商家批准"}
+                  {needsReview ? "连接信息需更新" : "需要服务方批准"}
                 </span>
               )}
             </span>
@@ -299,14 +281,7 @@ export function apply(ctx: any) {
               >
                 {detailsOpen ? "收起详情" : "查看原因"}
               </Button>
-            ) : connected ? (
-              openStore ? (
-                <Button variant="outline" size="sm" onClick={openStore}>
-                  打开商城
-                  <ArrowRight aria-hidden />
-                </Button>
-              ) : null
-            ) : connection?.signedIn ? (
+            ) : connected ? null : connection?.signedIn ? (
               <Button
                 variant="outline"
                 size="sm"
@@ -391,7 +366,7 @@ export function apply(ctx: any) {
         )}
         {retiredDevice && (
           <p className="pap-field-help" role="status">
-            设备身份已更换。新连接使用当前密钥；旧订单和服务记录仍绑定原设备身份。
+            设备身份已更换。新连接使用当前密钥；旧连接仍绑定原设备身份。
           </p>
         )}
         {deleteRevision && (
@@ -409,7 +384,7 @@ export function apply(ctx: any) {
             <div>
               <h4>移除「{title}」？</h4>
               <p>
-                该服务将从列表移除，并停止使用本机连接。购物和订单记录保留，已提交的订单不会取消。之后可在“已移除服务”中恢复，恢复后需重新连接。
+                该服务将从列表移除，并停止使用本机连接。已有记录保留。之后可在“已移除服务”中恢复，恢复后需重新连接。
               </p>
             </div>
             <div className="pap-delete-actions">
@@ -477,9 +452,9 @@ export function apply(ctx: any) {
               <dt>连接身份</dt>
               <dd>
                 {connection?.personalSignedIn
-                  ? "个人账号"
+                  ? "身份服务授权"
                   : connection?.signedIn
-                    ? "商家账户"
+                    ? "服务方账户"
                     : "独立 PAP 身份"}
               </dd>
             </div>
@@ -494,7 +469,7 @@ export function apply(ctx: any) {
                 <dt>接口契约</dt>
                 <dd>
                   {site.description.methods.length}{" "}
-                  项已发布接口，使用权限由商家核验
+                  项已发布接口，使用权限由服务方核验
                 </dd>
               </div>
             )}
@@ -515,7 +490,7 @@ export function apply(ctx: any) {
                 <KeyRound aria-hidden />
                 <span>
                   账户授权
-                  <span className="pap-summary-hint">按需连接商家账户</span>
+                  <span className="pap-summary-hint">按需连接服务方账户</span>
                 </span>
                 <Badge>可选</Badge>
                 <ChevronDown className="pap-chevron" aria-hidden />
@@ -523,7 +498,7 @@ export function apply(ctx: any) {
               <div className="pap-auth-content">
                 <p className="pap-muted">
                   独立 PAP
-                  身份可直接使用商家开放的服务。仅在需要访问账户专属资源时，才需要额外授权。
+                  身份可直接使用服务方开放的服务。仅在需要访问账户专属资源时，才需要额外授权。
                 </p>
                 <form
                   onSubmit={(e) => {
@@ -547,12 +522,12 @@ export function apply(ctx: any) {
                         onChange={(e) => setScopes(e.target.value)}
                         autoComplete="off"
                         spellCheck={false}
-                        placeholder="填写商家提供的授权范围"
+                        placeholder="填写服务方提供的授权范围"
                         disabled={!!busy}
                         aria-describedby={`${id}-scopes-help`}
                       />
                       <p id={`${id}-scopes-help`} className="pap-field-help">
-                        多个范围用空格分隔，具体权限由商家确认。
+                        多个范围用空格分隔，具体权限由服务方确认。
                       </p>
                     </Field>
                   </FieldGroup>
@@ -572,7 +547,7 @@ export function apply(ctx: any) {
                         target="_blank"
                         rel="noopener noreferrer"
                       >
-                        前往商家授权
+                        前往服务方授权
                         <ExternalLink data-icon="inline-end" aria-hidden />
                       </a>
                     )}
@@ -623,7 +598,7 @@ export function apply(ctx: any) {
                         aria-describedby={`${id}-callback-help`}
                       />
                       <p id={`${id}-callback-help`} className="pap-field-help">
-                        此地址仅用于当前商家的授权校验，不会发送给聊天模型。
+                        此地址仅用于当前服务方的授权校验，不会发送给聊天模型。
                       </p>
                       {invalid && (
                         <FieldError>请输入完整的 HTTPS 回调地址。</FieldError>
@@ -649,33 +624,7 @@ export function apply(ctx: any) {
     );
   }
 
-  const subscribeMain = (notify: () => void) =>
-    ctx.slots.subscribe("main", notify);
-  const hasCustomer = () =>
-    ctx.slots
-      .entries("main")
-      .some(
-        (entry: { options: { key?: string } }) =>
-          entry.options.key === "dsh-identity",
-      );
-  const hasStorefront = () =>
-    ctx.slots
-      .entries("main")
-      .some(
-        (entry: { options: { key?: string } }) =>
-          entry.options.key === "frontvia-customer",
-      );
   function Panel() {
-    const storefrontAvailable = React.useSyncExternalStore(
-      subscribeMain,
-      hasStorefront,
-      hasStorefront,
-    );
-    const customerAvailable = React.useSyncExternalStore(
-      subscribeMain,
-      hasCustomer,
-      hasCustomer,
-    );
     const [data, setData] = useState<Status>();
     const [error, setError] = useState("");
     const [busy, setBusy] = useState("");
@@ -729,12 +678,12 @@ export function apply(ctx: any) {
         setError("");
         void refresh();
       };
-      window.addEventListener("dsh-identity-change", changed);
+      window.addEventListener("pap-connections-change", changed);
       void refresh();
       const timer = setInterval(() => setNow(Date.now()), 15000);
       return () => {
         clearInterval(timer);
-        window.removeEventListener("dsh-identity-change", changed);
+        window.removeEventListener("pap-connections-change", changed);
       };
     }, []);
     const run: Run = async (operation, payload) => {
@@ -754,7 +703,7 @@ export function apply(ctx: any) {
         if (operation === "remove" || operation === "restore") {
           setNotice(
             operation === "remove"
-              ? "配置已删除，购物和订单记录已保留。可在页面下方恢复配置。"
+              ? "配置已删除，已有记录已保留。可在页面下方恢复配置。"
               : "配置已恢复，请重新连接服务。",
           );
           focusAfterMutation.current = true;
@@ -784,7 +733,7 @@ export function apply(ctx: any) {
           c.connected &&
           (c.expiresAt === undefined || c.expiresAt * 1000 > now),
       ).length ?? 0;
-    const groups = groupMerchants(data?.sites ?? []);
+    const groups = groupServices(data?.sites ?? []);
     const attention =
       data?.sites.filter(
         (s) =>
@@ -832,23 +781,11 @@ export function apply(ctx: any) {
                   aria-controls="pap-import-form"
                 >
                   <Plus aria-hidden />
-                  添加商家
+                  添加服务
                 </Button>
               )}
             </div>
           </header>
-          {data?.configured && data.personal && (
-            <IdentityPanel
-              identity={data.personal}
-              openAccount={
-                customerAvailable
-                  ? () => {
-                      if (hasCustomer()) ctx.layout.selectPanel("dsh-identity");
-                    }
-                  : undefined
-              }
-            />
-          )}
           {error && (
             <Alert variant="destructive">
               <CircleAlert aria-hidden />
@@ -876,7 +813,7 @@ export function apply(ctx: any) {
               call={call}
               onImported={async () => {
                 await refresh();
-                setNotice("商家服务已添加。选择服务即可查看连接与授权状态。");
+                setNotice("服务列表已添加。选择服务即可查看连接与授权状态。");
               }}
             />
           )}
@@ -901,7 +838,7 @@ export function apply(ctx: any) {
                 <EmptyTitle>先配置你的 PAP 客户端</EmptyTitle>
                 <EmptyDescription>
                   当前 Profile
-                  尚未配置客户端身份。完成配置并重启后，即可在这里添加和连接商家。
+                  尚未配置客户端身份。完成配置并重启后，即可在这里添加和连接服务方。
                 </EmptyDescription>
                 <p className="pap-field-help">
                   配置步骤请参阅 PAP 插件 README。
@@ -911,9 +848,7 @@ export function apply(ctx: any) {
           ) : (
             <>
               <div className="pap-overview" aria-label="连接概览">
-                <span>
-                  {groups.length} 家商家 · {data.sites.length} 项服务
-                </span>
+                <span>{data.sites.length} 项服务</span>
                 <span>
                   <i
                     className="pap-status-dot"
@@ -933,16 +868,16 @@ export function apply(ctx: any) {
                   </span>
                 )}
               </div>
-              <main className="pap-service-groups" aria-label="商家服务">
+              <main className="pap-service-groups" aria-label="服务列表">
                 {groups.length ? (
-                  groups.map(({ key, title, domain, storeId, sites }) => (
+                  groups.map(({ key, title, domain, sites }) => (
                     <section
                       className="pap-merchant-group"
                       key={key}
-                      aria-label={`${title} 商家服务`}
+                      aria-label={`${title} 服务列表`}
                     >
                       <header className="pap-group-header">
-                        <Store aria-hidden />
+                        <Link2 aria-hidden />
                         <div className="pap-merchant-name">
                           <h3>{title}</h3>
                           <p>
@@ -953,7 +888,7 @@ export function apply(ctx: any) {
                                 g.title === title &&
                                 g.domain === domain,
                             )
-                              ? ` · ${storeId ?? sites[0].id}`
+                              ? ` · ${sites[0].issuer ?? sites[0].id}`
                               : ""}
                           </p>
                         </div>
@@ -961,7 +896,7 @@ export function apply(ctx: any) {
                       </header>
                       <div className="pap-service-list">
                         {sites.map((site) => (
-                          <Merchant
+                          <ServiceConnection
                             key={site.id}
                             site={site}
                             connection={data.connections.find(
@@ -977,19 +912,6 @@ export function apply(ctx: any) {
                             busy={busy}
                             run={run}
                             now={now}
-                            openStore={
-                              storefrontAvailable &&
-                              site.description?.methods.some((m) =>
-                                m.startsWith("commerce."),
-                              )
-                                ? () => {
-                                    if (hasStorefront())
-                                      ctx.layout.selectPanel(
-                                        "frontvia-customer",
-                                      );
-                                  }
-                                : undefined
-                            }
                           />
                         ))}
                       </div>
@@ -999,21 +921,21 @@ export function apply(ctx: any) {
                   <Card>
                     <Empty>
                       <div className="pap-empty-icon">
-                        <Store aria-hidden />
+                        <Link2 aria-hidden />
                       </div>
                       <EmptyTitle>
                         {data.removedSites?.length
                           ? "暂无可用配置"
-                          : "添加第一个商家"}
+                          : "添加第一个服务"}
                       </EmptyTitle>
                       <EmptyDescription>
                         {data.removedSites?.length
-                          ? "添加新商家，或从下方恢复已删除的配置。"
-                          : "粘贴商家提供的连接配置，查看可使用的服务。"}
+                          ? "添加新服务方，或从下方恢复已删除的配置。"
+                          : "粘贴服务方提供的连接配置，查看可使用的服务。"}
                       </EmptyDescription>
                       <Button onClick={() => setImportOpen(true)}>
                         <Plus aria-hidden />
-                        添加商家
+                        添加服务
                       </Button>
                     </Empty>
                   </Card>
@@ -1028,7 +950,7 @@ export function apply(ctx: any) {
                       <ChevronDown aria-hidden />
                     </summary>
                     <p className="pap-field-help">
-                      恢复只重新显示配置，不会自动连接或执行购物操作。
+                      恢复只重新显示配置，不会自动连接。
                     </p>
                     <div className="pap-removed-list">
                       {data.removedSites.map((site) => (
@@ -1073,8 +995,8 @@ export function apply(ctx: any) {
                         <dd>
                           {data.client.clientId ??
                             (data.client.automatic
-                              ? "首次连接商家时自动建立"
-                              : "待配置商家连接身份")}
+                              ? "首次连接服务方时自动建立"
+                              : "待配置服务方连接身份")}
                         </dd>
                       </div>
                       <div>

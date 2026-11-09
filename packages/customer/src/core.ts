@@ -33,12 +33,15 @@ export type PapPort = Pick<
   Partial<
     Pick<
       PapService,
-      | "canAccess"
-      | "signResourceStatement"
-      | "capabilityCacheKey"
-      | "hostedPayment"
+      "canAccess" | "signResourceStatement" | "capabilityCacheKey"
     >
-  >;
+  > & {
+    hostedPayment?: (
+      ref: string,
+      link: string,
+      checkoutId: string,
+    ) => Promise<any>;
+  };
 type Command = {
   key: string;
   method: string;
@@ -169,7 +172,7 @@ export class CustomerService {
     private secrets: Secrets,
     private vault: Vault,
   ) {
-    if (pap.apiVersion !== 1) fail("PAP_VERSION_UNSUPPORTED");
+    if (pap.apiVersion !== 2) fail("PAP_VERSION_UNSUPPORTED");
     this.consultation = new ConsultationService(pap, vault);
   }
   private save(f: Flow) {

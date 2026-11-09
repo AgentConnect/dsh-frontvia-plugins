@@ -1,3 +1,4 @@
+import { AccountClient } from "dsh-identity-client/core";
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { mkdtempSync, writeFileSync, readFileSync } from "node:fs";
@@ -117,6 +118,23 @@ test("built PAP and Customer bundles preserve connection errors through tools an
       },
     },
   };
+  const accountVault = new Vault(join(dir, "identity.sqlite"), key);
+  cleanups.push(() => accountVault.close());
+  ctx.identity = {
+    account: new AccountClient(
+      {
+        origin: "https://identity.test",
+        requestOrigin: "https://identity.test",
+        audiences: ["https://auth.test"],
+      },
+      accountVault,
+      { get: async () => key, set: async () => {} },
+      async () => {
+        throw new Error("unexpected identity network");
+      },
+      "DEVICE",
+    ),
+  };
   try {
     await papBundle.apply(ctx, { configFile: papConfig });
     await customerBundle.apply(ctx, { configFile: customerConfig });
@@ -168,8 +186,7 @@ test("built PAP and Customer bundles preserve connection errors through tools an
       );
     };
     const status = (await (await call("pap/status")).json()).result.value;
-    assert.equal(status.personal.signedIn, false);
-    assert.equal(status.personal.challenge, undefined);
+    assert.equal("personal" in status, false);
     assert(!JSON.stringify(status).includes("host-only-otp-challenge"));
     const site = status.sites[0];
     ctx.connection.browserPeer.principal.kind = "guest";
@@ -239,7 +256,7 @@ test("Customer activation fails closed before registering routes or tools on inc
     tools: unknown[] = [],
     routes: unknown[] = [];
   const ctx = {
-    pap: { apiVersion: 2 },
+    pap: { apiVersion: 1 },
     credentials: {
       resolve: async () => ({ value: randomBytes(32).toString("base64url") }),
       set: async () => {},
@@ -290,7 +307,12 @@ test("owner UI route preserves a business failure in the actual DSH response con
   const cleanups: (() => void)[] = [];
   const routes = new Map<string, any>();
   const ctx = {
-    pap: { apiVersion: 1 },
+    identity: { account: { device: {} } },
+    pap: {
+      apiVersion: 2,
+      registerAuthentication: () => () => {},
+      registerStatement: () => () => {},
+    },
     credentials: {
       resolve: async () => ({ value: randomBytes(32).toString("base64url") }),
       set: async () => {},

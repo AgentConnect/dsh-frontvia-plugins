@@ -414,7 +414,7 @@ function fixture(cache = false) {
   };
   const respond = (data: any) => ({ result: { data: structuredClone(data) } });
   const pap = {
-    apiVersion: 1,
+    apiVersion: 2,
     ...(cache
       ? {
           capabilityCacheKey: () => (remote.personalAccess ? "one" : undefined),

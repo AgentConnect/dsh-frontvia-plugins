@@ -68,10 +68,11 @@ export function ImportPanel({
       setSelected(result.sites.map((s: any) => s.resource));
     } catch (e: any) {
       const messages: Record<string, string> = {
-        INVALID_SERVICE_LINK: "链接不完整，请复制商家提供的完整 PAP 服务链接。",
+        INVALID_SERVICE_LINK:
+          "链接不完整，请复制服务方提供的完整 PAP 服务链接。",
         IMPORT_BINDING_MISMATCH:
-          "配置与商家发布的地址不一致，请重新导出连接配置。",
-        DISCOVERY_MISMATCH: "商家发现信息与配置不一致。",
+          "配置与服务方发布的地址不一致，请重新导出连接配置。",
+        DISCOVERY_MISMATCH: "服务方发现信息与配置不一致。",
         PUBLIC_HTTPS_REQUIRED: "只能导入可验证的公网 HTTPS 服务。",
         INVALID_SERVICE_CONTRACT: "该服务尚未提供可识别的接口契约。",
         IMPORT_PREVIEW_EXPIRED: "检查结果已过期，请重新检查。",
@@ -123,14 +124,14 @@ export function ImportPanel({
     >
       <header className="pap-import-header">
         <div>
-          <h3 id={`${id}-title`}>添加商家</h3>
+          <h3 id={`${id}-title`}>添加服务</h3>
         </div>
         <Button
           variant="ghost"
           size="icon"
           onClick={onClose}
           disabled={!!busy}
-          aria-label="关闭添加商家"
+          aria-label="关闭添加服务"
         >
           <X aria-hidden />
         </Button>
@@ -148,7 +149,7 @@ export function ImportPanel({
         <form onSubmit={inspect}>
           <Field>
             <FieldLabel htmlFor={id}>
-              {advanced ? "JSON 配置" : "商家服务链接"}
+              {advanced ? "JSON 配置" : "服务链接"}
             </FieldLabel>
             {advanced ? (
               <textarea
@@ -160,7 +161,7 @@ export function ImportPanel({
                   setJson(e.target.value);
                   setError("");
                 }}
-                placeholder="粘贴商家提供的完整 JSON 配置"
+                placeholder="粘贴服务方提供的完整 JSON 配置"
                 spellCheck={false}
                 autoComplete="off"
                 disabled={!!busy}
@@ -228,14 +229,7 @@ export function ImportPanel({
           </div>
           <div className="pap-resource-list">
             {preview.sites.map((site: any) => {
-              const title = site.description.methods.some((m: string) =>
-                m.startsWith("commerce."),
-              )
-                ? "购物服务"
-                : site.description.profile ===
-                    "frontvia.merchant_consultation.v1"
-                  ? "咨询与知识"
-                  : site.label;
+              const title = site.label;
               return (
                 <label
                   className="pap-resource-option"
@@ -258,7 +252,7 @@ export function ImportPanel({
                     <span className="pap-resource-title">{title}</span>
                     <span className="pap-resource-domain">{site.domain}</span>
                     {site.clientAllowed === false && (
-                      <span className="pap-resource-meta">需要商家批准</span>
+                      <span className="pap-resource-meta">需要服务方批准</span>
                     )}
                   </span>
                 </label>

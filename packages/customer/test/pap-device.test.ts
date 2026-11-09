@@ -4,10 +4,10 @@ import { createHash, randomBytes, createPublicKey, verify } from "node:crypto";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { DeviceIdentity } from "../src/device.js";
-import { PersonalAccount } from "../src/personal.js";
-import { Vault, PapError } from "../src/storage.js";
-import type { Transport } from "../src/network.js";
+import { DeviceIdentity } from "dsh-identity-client/core";
+import { PersonalAccount } from "dsh-identity-client/core";
+import { Vault, PapError } from "../../pap/src/storage.js";
+import type { Transport } from "../../pap/src/network.js";
 
 test("device enrollment retries with the same local key, verifies authority and coalesces concurrent merchant connections", async () => {
   const dir = mkdtempSync(join(tmpdir(), "pap-device-"));
