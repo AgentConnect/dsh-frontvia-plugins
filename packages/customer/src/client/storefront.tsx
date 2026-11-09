@@ -47,6 +47,7 @@ import { items, money, Lines, Totals, Order } from "./commerce-display.js";
 import { OrderList } from "./order-list.js";
 import { storefrontOrders } from "./order-summary.js";
 import { ProductGallery } from "./product-gallery.js";
+import { StorefrontLoading } from "./storefront-loading.js";
 import { productImage } from "./product-image.js";
 import { PaymentCard, paymentState } from "./payment-card.js";
 import { isRequiredContact, cartContactReady } from "../contact-fields.js";
@@ -454,7 +455,7 @@ function StorefrontContent({
     <section
       className="fv-storefront fv-stack"
       aria-label="店铺商城"
-      aria-busy={busy}
+      aria-busy={busy || (!data && !error)}
     >
       {error && !data?.pending && (
         <Alert variant="destructive">
@@ -469,10 +470,9 @@ function StorefrontContent({
         </Alert>
       )}
       {!data ? (
-        <div role="status">
-          <Skeleton className="fv-skeleton-block" />
-          <p>正在读取店铺…</p>
-        </div>
+        !error || busy ? (
+          <StorefrontLoading />
+        ) : null
       ) : (
         <>
           {data.pending && !data.cartCreationPending && (
