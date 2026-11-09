@@ -49,7 +49,21 @@ export function ProductSelection({
     (p) => productId && p.id === productId,
   );
   return (
-    <div className="fv-stack" aria-label={selecting ? "商品规格" : "商品列表"}>
+    <div
+      className="fv-stack fv-chat-products"
+      aria-label={selecting ? "商品规格" : "商品列表"}
+    >
+      {selecting && (
+        <Button
+          className="fv-chat-back"
+          variant="ghost"
+          size="sm"
+          onClick={() => setShowList(true)}
+        >
+          <ArrowLeft data-icon="inline-start" />
+          返回商品列表
+        </Button>
+      )}
       <div className="fv-section-heading">
         <div>
           <h4>{selecting ? (product?.title ?? "选择商品规格") : "商品"}</h4>
@@ -66,16 +80,13 @@ export function ProductSelection({
       </div>
       {selecting ? (
         <>
-          <div>
-            <Button variant="ghost" size="sm" onClick={() => setShowList(true)}>
-              <ArrowLeft data-icon="inline-start" />
-              返回商品列表
-            </Button>
-          </div>
           <div className="fv-chat-product-detail" data-has-product={!!product}>
             {product && <ProductGallery product={product} />}
             {variants.length ? (
-              <div className="fv-stack" aria-label="可购买规格">
+              <div
+                className="fv-stack fv-chat-variants"
+                aria-label="可购买规格"
+              >
                 {variants.map((v: any) => {
                   const stock = v.availability;
                   const unavailable =
