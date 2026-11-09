@@ -54,16 +54,10 @@ export function ProductSelection({
     <div className="fv-stack" aria-label={selecting ? "商品规格" : "商品列表"}>
       <div className="fv-section-heading">
         <div>
-          <h4>
-            {selecting ? (product?.title ?? "选择商品规格") : "发现心仪的商品"}
-          </h4>
-          <p className="fv-description">
-            {data.historicalCatalog
-              ? "当时查询的商品与价格 · 购物车和订单显示最新进度"
-              : selecting
-                ? "核对规格、单价和库存，再加入购物车。"
-                : "选择商品规格，加入本次购物车。"}
-          </p>
+          <h4>{selecting ? (product?.title ?? "选择商品规格") : "商品"}</h4>
+          {data.historicalCatalog && (
+            <p className="fv-description">历史商品与价格，请以最新报价为准。</p>
+          )}
         </div>
         {data.cart && (
           <Button variant="ghost" size="sm" onClick={onCart}>

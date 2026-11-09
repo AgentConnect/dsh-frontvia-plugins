@@ -34,6 +34,9 @@
   max-width: none;
   margin-inline: 0;
 }
+.fv.fv-inline > .fv-card > .fv-card-header { padding:16px 20px; }
+.fv.fv-inline > .fv-card > .fv-card-content,
+.fv.fv-inline > .fv-card > .fv-tabs > .fv-card-content { padding-inline:20px; }
 .fv-viewport {
   flex: 1;
   height: 100%;

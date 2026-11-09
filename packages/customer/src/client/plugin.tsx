@@ -56,7 +56,6 @@ import {
   Button,
   Card,
   CardContent,
-  CardDescription,
   CardFooter,
   CardHeader,
   CardTitle,
@@ -569,13 +568,10 @@ export function apply(ctx: any) {
               <ShoppingBag aria-hidden />
             </div>
             <div className="fv-header-text">
-              <CardTitle>Frontvia</CardTitle>
-              <CardDescription>挑选好物，安心下单</CardDescription>
+              <CardTitle>商家购物</CardTitle>
             </div>
             <div className="fv-header-actions">
-              <Badge>
-                {data?.mockPayment ? "测试商店 · Mock" : "商家购物服务"}
-              </Badge>
+              {data?.mockPayment && <Badge>测试商店 · Mock</Badge>}
               <Button
                 variant="ghost"
                 size="icon"
@@ -611,8 +607,8 @@ export function apply(ctx: any) {
                   <Info aria-hidden />
                   <AlertDescription>
                     {data?.cartReady === false
-                      ? "当前连接仅支持浏览商品，尚未开通购物车和结算。个人账号已登录不代表购物能力已开通。"
-                      : "可以加入购物车。购买确认尚未就绪，请先完成购买服务配置。"}
+                      ? "当前店铺仅支持浏览，暂不可加购或结账。"
+                      : "可以加购，暂不可结账。"}
                   </AlertDescription>
                 </Alert>
               )}
@@ -731,7 +727,6 @@ export function apply(ctx: any) {
                                 </p>
                               </CardContent>
                               <CardFooter>
-                                <span className="fv-muted">查看可选规格</span>
                                 <Button
                                   variant="outline"
                                   size="sm"
@@ -754,11 +749,11 @@ export function apply(ctx: any) {
                       ) : (
                         <Empty>
                           <Search aria-hidden />
-                          <EmptyTitle>想买点什么？</EmptyTitle>
+                          <EmptyTitle>暂无商品</EmptyTitle>
                           <EmptyDescription>
                             {resume
                               ? "点击浏览商品，查看商家当前商品。"
-                              : "告诉 Agent 你想找的商品，搜索结果会出现在这里。"}
+                              : "告诉智能体你想找的商品。"}
                           </EmptyDescription>
                         </Empty>
                       )}
@@ -1002,10 +997,7 @@ export function apply(ctx: any) {
                     ) : (
                       <Empty>
                         <ShoppingCart aria-hidden />
-                        <EmptyTitle>购物车还是空的</EmptyTitle>
-                        <EmptyDescription>
-                          先选一件心仪的商品，再填写收货资料。
-                        </EmptyDescription>
+                        <EmptyTitle>购物车为空</EmptyTitle>
                         <Button
                           variant="outline"
                           size="sm"
@@ -1022,10 +1014,7 @@ export function apply(ctx: any) {
                       <div className="fv-stack">
                         <div className="fv-section-heading">
                           <div>
-                            <h4>确认你的订单</h4>
-                            <p className="fv-description">
-                              商品、收货信息和费用都在这里。
-                            </p>
+                            <h4>确认订单</h4>
                           </div>
                           <Badge
                             variant={quoteExpired ? "warning" : "secondary"}
@@ -1240,7 +1229,6 @@ export function apply(ctx: any) {
                         </Empty>
                       )}
                       <div className="fv-between">
-                        <span className="fv-muted">以商店当前记录为准</span>
                         <Button
                           variant="outline"
                           size="sm"
@@ -1261,24 +1249,14 @@ export function apply(ctx: any) {
               )}
             </CardContent>
           </Tabs>
-          <CardFooter>
-            <span className="fv-row">
-              <LockKeyhole aria-hidden />
-              由你确认购买
-            </span>
-            <span role="status" aria-live="polite">
-              {busy ? (
-                <span className="fv-row">
-                  <Spinner />
-                  正在处理…
-                </span>
-              ) : data?.mockPayment ? (
-                "测试环境 · Mock 支付"
-              ) : (
-                "支付方式和金额请以结算信息为准"
-              )}
-            </span>
-          </CardFooter>
+          {busy && (
+            <CardFooter>
+              <span className="fv-row" role="status" aria-live="polite">
+                <Spinner />
+                正在处理…
+              </span>
+            </CardFooter>
+          )}
         </Card>
       </section>
     );
