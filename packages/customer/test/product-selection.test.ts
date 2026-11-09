@@ -2,7 +2,12 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
+import { act, create, type ReactTestRenderer } from "react-test-renderer";
 import { ProductSelection } from "../src/client/product-selection.js";
+import {
+  catalogSnapshot,
+  withHistoricalCatalog,
+} from "../src/client/catalog-history.js";
 
 const variant = {
   id: "v1",
@@ -25,6 +30,89 @@ const render = (data: any) =>
       children: createElement("div", null, "完整商品列表"),
     }),
   );
+
+test("chat catalog snapshots keep multiple photos; switching photos and returning to the list never send an agent command", async () => {
+  const products = {
+    items: [
+      {
+        id: "p1",
+        title: "桌面台灯",
+        images: [
+          { url: "https://shop.test/front.jpg", alt: "正面" },
+          { url: "https://shop.test/side.jpg", alt: "侧面" },
+        ],
+      },
+    ],
+  };
+  const snapshot = catalogSnapshot({
+    ui: { card: "products" },
+    catalogSnapshot: {
+      version: 1,
+      products,
+      variants: { items: [variant] },
+      variantProductId: "p1",
+    },
+  });
+  const data = withHistoricalCatalog({ cartReady: true }, snapshot);
+  const commands: unknown[] = [];
+  let tree!: ReactTestRenderer;
+  try {
+    await act(async () => {
+      tree = create(
+        createElement(ProductSelection, {
+          data,
+          busy: false,
+          canAsk: true,
+          ask: async (intent) => {
+            commands.push(intent);
+          },
+          formatPrice: () => "CNY 289.90",
+          onCart() {},
+          children: createElement("div", { "aria-label": "测试商品列表" }),
+        }),
+      );
+    });
+    const mainImage = () =>
+      tree.root.findByProps({ className: "fv-detail-image" }).findByType("img");
+    assert.equal(mainImage().props.alt, "正面");
+    await act(async () => {
+      tree.root
+        .findByProps({ "aria-label": "查看第 2 张商品图片" })
+        .props.onClick();
+    });
+    assert.equal(mainImage().props.alt, "侧面");
+    assert.deepEqual(commands, []);
+    await act(async () => {
+      tree.root
+        .findAllByType("button")
+        .find((n) => n.props.children?.includes?.("加购 1 件"))!
+        .props.onClick();
+    });
+    assert.deepEqual(commands, [
+      {
+        action: "add",
+        variantId: "v1",
+        productName: "桌面台灯",
+        variantName: "Default",
+        quantity: 1,
+      },
+    ]);
+    await act(async () => {
+      tree.root
+        .findAllByType("button")
+        .find((n) => n.props.children?.includes?.("返回商品列表"))!
+        .props.onClick();
+    });
+    assert.ok(tree.root.findByProps({ "aria-label": "测试商品列表" }));
+    assert.equal(
+      tree.root.findAllByProps({ className: "fv-product-gallery" }).length,
+      0,
+    );
+    assert.equal(commands.length, 1);
+  } finally {
+    await act(async () => tree?.unmount());
+  }
+});
 
 test("a saved variant result replaces the full list with the selected product, exact options, price and stock", () => {
   // No variantProductId: existing installed flows must also recover correctly.
