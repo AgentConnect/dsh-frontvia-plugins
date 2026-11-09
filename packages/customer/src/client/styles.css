@@ -1640,3 +1640,20 @@
 @media(max-width:700px) {
   .fv-market .fv-product-info { min-height:0; }
 }
+
+/* Shipping form and summary share a top edge, inset and heading baseline. */
+.fv .fv-chat-shipping { gap:20px; }
+.fv .fv-contact-panel { border-radius:12px; box-shadow:none; }
+.fv .fv-contact-panel > .fv-card-header { padding:16px; }
+.fv .fv-contact-panel .fv-card-title { font-size:13px; line-height:20px; }
+.fv .fv-contact-panel .fv-card-content { padding:0 16px 16px; }
+.fv .fv-contact-panel .fv-field-group { gap:16px 14px; }
+.fv .fv-contact-panel .fv-field-label { min-height:18px; display:flex; align-items:flex-end; }
+.fv .fv-contact-panel .fv-contact-actions { padding:16px; align-items:center; }
+.fv .fv-contact-actions .fv-privacy { flex:1; min-width:0; }
+.fv .fv-chat-shipping .fv-button { min-height:40px; }
+.fv .fv-chat-shipping > .fv-summary h4 { line-height:20px; }
+@container (max-width:460px) {
+  .fv .fv-contact-panel .fv-contact-actions { flex-direction:column; align-items:stretch; }
+  .fv .fv-contact-actions > .fv-button { width:100%; }
+}

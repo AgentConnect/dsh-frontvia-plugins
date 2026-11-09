@@ -141,13 +141,6 @@ const errorText: Record<string, string> = {
 };
 const baseContactFields = [
   {
-    key: "phone",
-    label: "联系电话",
-    placeholder: "收货联系电话",
-    autoComplete: "shipping tel",
-    max: 40,
-  },
-  {
     key: "recipient",
     label: "收货人",
     placeholder: "填写收货人姓名",
@@ -155,11 +148,11 @@ const baseContactFields = [
     max: 200,
   },
   {
-    key: "email",
-    label: "联系邮箱",
-    placeholder: "name@example.com",
-    autoComplete: "email",
-    max: 254,
+    key: "phone",
+    label: "联系电话",
+    placeholder: "收货联系电话",
+    autoComplete: "shipping tel",
+    max: 40,
   },
   {
     key: "line1",
@@ -189,6 +182,13 @@ const baseContactFields = [
     placeholder: "例如 94105",
     autoComplete: "shipping postal-code",
     max: 40,
+  },
+  {
+    key: "email",
+    label: "联系邮箱",
+    placeholder: "name@example.com",
+    autoComplete: "email",
+    max: 254,
   },
 ] as const;
 type Contact = Record<(typeof baseContactFields)[number]["key"], string>;
@@ -327,7 +327,7 @@ export function apply(ctx: any) {
                 placeholder: "填写省、市、区及街道门牌号",
               }
             : field.key === "region"
-              ? { label: "省 / 自治区 / 直辖市", placeholder: "例如 浙江省" }
+              ? { label: "省份 / 地区", placeholder: "例如 浙江省" }
               : field.key === "city"
                 ? { placeholder: "例如 杭州市" }
                 : field.key === "postal_code"
@@ -801,101 +801,108 @@ export function apply(ctx: any) {
                               : "美国 · USD"}
                           </Badge>
                         </div>
-                        <div className="fv-form-layout">
+                        <div className="fv-form-layout fv-chat-shipping">
                           <div className="fv-stack">
                             {locked ? (
                               <Address cart={data.cart} />
                             ) : (
-                              <form
-                                noValidate
-                                onSubmit={saveContact}
-                                aria-label="收货资料"
-                              >
-                                <FieldGroup>
-                                  {contactFields.map((f) => (
-                                    <Field
-                                      key={f.key}
-                                      className={
-                                        "wide" in f ? "fv-wide" : undefined
-                                      }
-                                      data-invalid={!!fieldErrors[f.key]}
-                                      data-disabled={!!busy || data.pending}
-                                    >
-                                      <FieldLabel
-                                        htmlFor={`${formId}-${f.key}`}
-                                      >
-                                        {f.label}
-                                      </FieldLabel>
-                                      <Input
-                                        id={`${formId}-${f.key}`}
-                                        name={f.key}
-                                        required={isRequiredContact(f.key)}
-                                        maxLength={f.max}
-                                        type={
-                                          f.key === "email" ? "email" : "text"
-                                        }
-                                        autoComplete={f.autoComplete}
-                                        placeholder={f.placeholder}
-                                        value={form[f.key]}
-                                        aria-invalid={!!fieldErrors[f.key]}
-                                        aria-describedby={
-                                          fieldErrors[f.key]
-                                            ? `${formId}-${f.key}-error`
-                                            : undefined
-                                        }
-                                        disabled={!!busy || data.pending}
-                                        onChange={(e) => {
-                                          dirtyForm.current = true;
-                                          setForm({
-                                            ...form,
-                                            [f.key]: e.target.value,
-                                          });
-                                          setFieldErrors({
-                                            ...fieldErrors,
-                                            [f.key]: undefined,
-                                          });
-                                        }}
-                                      />
-                                      {fieldErrors[f.key] && (
-                                        <FieldError
-                                          id={`${formId}-${f.key}-error`}
+                              <Card className="fv-contact-panel">
+                                <CardHeader>
+                                  <CardTitle>收货信息</CardTitle>
+                                </CardHeader>
+                                <form
+                                  noValidate
+                                  onSubmit={saveContact}
+                                  aria-label="收货资料"
+                                >
+                                  <CardContent>
+                                    <FieldGroup>
+                                      {contactFields.map((f) => (
+                                        <Field
+                                          key={f.key}
+                                          className={
+                                            "wide" in f ? "fv-wide" : undefined
+                                          }
+                                          data-invalid={!!fieldErrors[f.key]}
+                                          data-disabled={!!busy || data.pending}
                                         >
-                                          {fieldErrors[f.key]}
-                                        </FieldError>
-                                      )}
-                                    </Field>
-                                  ))}
-                                </FieldGroup>
-                                <div className="fv-form-actions">
-                                  <div className="fv-privacy">
-                                    <LockKeyhole aria-hidden />
-                                    <span>
-                                      收货资料仅用于配送，
-                                      <br />
-                                      不会发送给 AI 模型。
-                                    </span>
-                                  </div>
-                                  <Button
-                                    type="submit"
-                                    disabled={
-                                      !!busy ||
-                                      data.pending ||
-                                      (!dirty && contactReady)
-                                    }
-                                  >
-                                    {busy === "contact" ? (
-                                      <Spinner />
-                                    ) : contactReady && !dirty ? (
-                                      <Check data-icon="inline-start" />
-                                    ) : null}
-                                    {busy === "contact"
-                                      ? "正在保存…"
-                                      : contactReady && !dirty
-                                        ? "收货资料已保存"
-                                        : "保存收货资料"}
-                                  </Button>
-                                </div>
-                              </form>
+                                          <FieldLabel
+                                            htmlFor={`${formId}-${f.key}`}
+                                          >
+                                            {f.label}
+                                          </FieldLabel>
+                                          <Input
+                                            id={`${formId}-${f.key}`}
+                                            name={f.key}
+                                            required={isRequiredContact(f.key)}
+                                            maxLength={f.max}
+                                            type={
+                                              f.key === "email"
+                                                ? "email"
+                                                : "text"
+                                            }
+                                            autoComplete={f.autoComplete}
+                                            placeholder={f.placeholder}
+                                            value={form[f.key]}
+                                            aria-invalid={!!fieldErrors[f.key]}
+                                            aria-describedby={
+                                              fieldErrors[f.key]
+                                                ? `${formId}-${f.key}-error`
+                                                : undefined
+                                            }
+                                            disabled={!!busy || data.pending}
+                                            onChange={(e) => {
+                                              dirtyForm.current = true;
+                                              setForm({
+                                                ...form,
+                                                [f.key]: e.target.value,
+                                              });
+                                              setFieldErrors({
+                                                ...fieldErrors,
+                                                [f.key]: undefined,
+                                              });
+                                            }}
+                                          />
+                                          {fieldErrors[f.key] && (
+                                            <FieldError
+                                              id={`${formId}-${f.key}-error`}
+                                            >
+                                              {fieldErrors[f.key]}
+                                            </FieldError>
+                                          )}
+                                        </Field>
+                                      ))}
+                                    </FieldGroup>
+                                  </CardContent>
+                                  <CardFooter className="fv-contact-actions">
+                                    <div className="fv-privacy">
+                                      <LockKeyhole aria-hidden />
+                                      <span>
+                                        收货资料仅用于配送，不会发送给 AI 模型。
+                                      </span>
+                                    </div>
+                                    <Button
+                                      type="submit"
+                                      disabled={
+                                        !!busy ||
+                                        data.pending ||
+                                        (!dirty && contactReady)
+                                      }
+                                    >
+                                      {busy === "contact" ? (
+                                        <Spinner />
+                                      ) : contactReady && !dirty ? (
+                                        <Check data-icon="inline-start" />
+                                      ) : null}
+                                      {busy === "contact"
+                                        ? "正在保存…"
+                                        : contactReady && !dirty
+                                          ? "收货资料已保存"
+                                          : "保存收货资料"}
+                                    </Button>
+                                  </CardFooter>
+                                </form>
+                              </Card>
                             )}
                             {contactReady && !dirty && !locked && (
                               <>
