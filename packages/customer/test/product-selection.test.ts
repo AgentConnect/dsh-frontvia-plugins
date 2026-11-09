@@ -76,15 +76,28 @@ test("chat quantity editing sends the exact count and blocks invalid, stale-stoc
       tree = create(renderCard());
     });
     assert.equal(input().props.max, 5);
+    const feedback = tree.root.findByProps({
+      className: "fv-field-error fv-quantity-feedback",
+    });
+    assert.equal(feedback.props["aria-hidden"], true);
     for (const value of ["", "0", "-1", "1.5", "6"]) {
       await edit(value);
       assert.equal(add().props.disabled, true, value);
+      assert.equal(
+        tree.root.findByProps({
+          className: "fv-field-error fv-quantity-feedback",
+        }),
+        feedback,
+        "validation reuses its reserved feedback row",
+      );
+      assert.equal(feedback.props["aria-hidden"], false);
       await act(async () => {
         await add().props.onClick();
       });
     }
     assert.equal(messages.length, 0);
     await edit("3");
+    assert.equal(feedback.props["aria-hidden"], true);
     assert.equal(add().props.disabled, false);
     await act(async () => {
       await add().props.onClick();

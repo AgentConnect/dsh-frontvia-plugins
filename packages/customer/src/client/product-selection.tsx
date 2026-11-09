@@ -200,11 +200,13 @@ export function ProductSelection({
                           <ShoppingCart data-icon="inline-end" />
                         </Button>
                       </div>
-                      {!validQuantity && !unavailable && (
-                        <p className="fv-field-error" role="status">
-                          请输入 1–{maximum} 之间的整数
-                        </p>
-                      )}
+                      <p
+                        className="fv-field-error fv-quantity-feedback"
+                        role="status"
+                        aria-hidden={validQuantity || unavailable}
+                      >
+                        请输入 1–{maximum} 之间的整数
+                      </p>
                     </div>
                   );
                 })}
