@@ -792,9 +792,6 @@ function StorefrontContent({
                     <div className="fv-section-heading">
                       <div>
                         <h3>店内商品</h3>
-                        <p className="fv-description">
-                          发现喜欢的，选好规格再加入购物车。
-                        </p>
                       </div>
                       <form
                         className="fv-search-form"
@@ -1114,9 +1111,6 @@ function StorefrontContent({
                   <div className="fv-section-heading">
                     <div>
                       <h3>结账</h3>
-                      <p className="fv-description">
-                        核对本次购物信息，完成下单与支付。
-                      </p>
                     </div>
                     <Button
                       variant="ghost"
@@ -1467,11 +1461,6 @@ function StorefrontContent({
                 <div className="fv-section-heading">
                   <div>
                     <h3>{showOrderDetails ? "订单详情" : "我的订单"}</h3>
-                    <p className="fv-description">
-                      {showOrderDetails
-                        ? "查看这笔订单的商品、支付与配送信息。"
-                        : "选择一笔订单，查看商品、支付结果和配送进度。"}
-                    </p>
                   </div>
                   <Button
                     variant="outline"

@@ -1435,7 +1435,6 @@
 .fv-store-notice > svg { width:18px; height:18px; }
 .fv-service-history { margin:32px 0; }
 .fv-service-history summary { cursor:pointer; color:var(--fv-muted); padding:16px 0; }
-.fv-market-footer { padding:20px 0; }
 @media(max-width:1000px) { .fv-store-grid,.fv-catalog-grid { grid-template-columns:repeat(2,minmax(0,1fr)); } .fv-checkout-layout { grid-template-columns:minmax(0,1fr) 260px; gap:20px; } }
 @media(max-width:700px) { .fv.fv-market { padding:20px 16px; } .fv-checkout-layout,.fv-product-detail { grid-template-columns:1fr; gap:24px; } .fv-store-grid,.fv-catalog-grid { grid-template-columns:1fr; } .fv-search-form { width:100%; } .fv-shop-navigation .fv-tabs-list { max-width:100%; overflow:auto; } .fv-shop-navigation { gap:8px; } .fv-cart-item { grid-template-columns:36px minmax(0,1fr); gap:12px; } .fv-cart-item > .fv-price { grid-column:2; } }
 .fv-field-set { min-width:0; }

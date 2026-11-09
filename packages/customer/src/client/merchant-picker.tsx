@@ -44,9 +44,6 @@ export function MerchantPicker({
             <h3>我的店铺</h3>
             <Badge>{merchants.length} 家</Badge>
           </div>
-          <p className="fv-description">
-            选择一家店铺，继续选购或查看服务记录。
-          </p>
         </div>
         {merchants.length > 1 && (
           <Field className="fv-merchant-search">
