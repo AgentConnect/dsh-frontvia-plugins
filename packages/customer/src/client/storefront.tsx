@@ -46,6 +46,7 @@ import {
 import { items, money, Lines, Totals, Order } from "./commerce-display.js";
 import { OrderList } from "./order-list.js";
 import { storefrontOrders } from "./order-summary.js";
+import { ProductGallery } from "./product-gallery.js";
 import { productImage } from "./product-image.js";
 import { PaymentCard, paymentState } from "./payment-card.js";
 import { isRequiredContact, cartContactReady } from "../contact-fields.js";
@@ -422,7 +423,6 @@ function StorefrontContent({
   const product = items(data?.products).find(
     (p: any) => p.id === data?.variantProductId,
   );
-  const image = productImage(product);
   const pendingLabel =
     (
       {
@@ -601,23 +601,14 @@ function StorefrontContent({
                       返回商品列表
                     </Button>
                     <div className="fv-product-detail">
-                      <div className="fv-detail-image">
-                        {image ? (
-                          <img
-                            src={image}
-                            alt={product?.title ?? "商品"}
-                            referrerPolicy="no-referrer"
-                          />
-                        ) : (
-                          <Package />
-                        )}
-                      </div>
+                      <ProductGallery product={product} />
                       <div className="fv-stack">
-                        <p className="fv-eyebrow">商品详情</p>
                         <h3>{product?.title ?? "选择商品规格"}</h3>
-                        <p className="fv-product-description">
-                          {product?.description ?? "商家暂未提供商品介绍。"}
-                        </p>
+                        {product?.description?.trim() && (
+                          <p className="fv-product-description">
+                            {product.description}
+                          </p>
+                        )}
                         <Separator />
                         <h4>规格与库存</h4>
                         {items(data.variants).length ? (
