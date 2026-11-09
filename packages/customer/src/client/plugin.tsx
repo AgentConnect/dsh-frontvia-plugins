@@ -56,7 +56,6 @@ import {
   Button,
   Card,
   CardContent,
-  CardDescription,
   CardFooter,
   CardHeader,
   CardTitle,
@@ -142,13 +141,6 @@ const errorText: Record<string, string> = {
 };
 const baseContactFields = [
   {
-    key: "phone",
-    label: "联系电话",
-    placeholder: "收货联系电话",
-    autoComplete: "shipping tel",
-    max: 40,
-  },
-  {
     key: "recipient",
     label: "收货人",
     placeholder: "填写收货人姓名",
@@ -156,11 +148,11 @@ const baseContactFields = [
     max: 200,
   },
   {
-    key: "email",
-    label: "联系邮箱",
-    placeholder: "name@example.com",
-    autoComplete: "email",
-    max: 254,
+    key: "phone",
+    label: "联系电话",
+    placeholder: "收货联系电话",
+    autoComplete: "shipping tel",
+    max: 40,
   },
   {
     key: "line1",
@@ -190,6 +182,13 @@ const baseContactFields = [
     placeholder: "例如 94105",
     autoComplete: "shipping postal-code",
     max: 40,
+  },
+  {
+    key: "email",
+    label: "联系邮箱",
+    placeholder: "name@example.com",
+    autoComplete: "email",
+    max: 254,
   },
 ] as const;
 type Contact = Record<(typeof baseContactFields)[number]["key"], string>;
@@ -235,11 +234,15 @@ export function apply(ctx: any) {
     const refresh = () => {
       if (document.visibilityState !== "hidden") views.refreshAll();
     };
+    const notifyPap = () =>
+      window.dispatchEvent(new Event("pap-connections-change"));
+    window.addEventListener("dsh-identity-change", notifyPap);
     window.addEventListener("dsh-identity-change", reset);
     window.addEventListener("focus", refresh);
     document.addEventListener("visibilitychange", refresh);
     return () => {
       window.removeEventListener("dsh-identity-change", reset);
+      window.removeEventListener("dsh-identity-change", notifyPap);
       window.removeEventListener("focus", refresh);
       document.removeEventListener("visibilitychange", refresh);
       views.clear();
@@ -328,7 +331,7 @@ export function apply(ctx: any) {
                 placeholder: "填写省、市、区及街道门牌号",
               }
             : field.key === "region"
-              ? { label: "省 / 自治区 / 直辖市", placeholder: "例如 浙江省" }
+              ? { label: "省份 / 地区", placeholder: "例如 浙江省" }
               : field.key === "city"
                 ? { placeholder: "例如 杭州市" }
                 : field.key === "postal_code"
@@ -569,13 +572,10 @@ export function apply(ctx: any) {
               <ShoppingBag aria-hidden />
             </div>
             <div className="fv-header-text">
-              <CardTitle>Frontvia</CardTitle>
-              <CardDescription>挑选好物，安心下单</CardDescription>
+              <CardTitle>商家购物</CardTitle>
             </div>
             <div className="fv-header-actions">
-              <Badge>
-                {data?.mockPayment ? "测试商店 · Mock" : "商家购物服务"}
-              </Badge>
+              {data?.mockPayment && <Badge>测试商店 · Mock</Badge>}
               <Button
                 variant="ghost"
                 size="icon"
@@ -611,8 +611,8 @@ export function apply(ctx: any) {
                   <Info aria-hidden />
                   <AlertDescription>
                     {data?.cartReady === false
-                      ? "当前连接仅支持浏览商品，尚未开通购物车和结算。个人账号已登录不代表购物能力已开通。"
-                      : "可以加入购物车。购买确认尚未就绪，请先完成购买服务配置。"}
+                      ? "当前店铺仅支持浏览，暂不可加购或结账。"
+                      : "可以加购，暂不可结账。"}
                   </AlertDescription>
                 </Alert>
               )}
@@ -728,10 +728,14 @@ export function apply(ctx: any) {
                                     p.price_range?.min ??
                                       p.price_range?.minimum,
                                   )}
+                                  {data.historicalCatalog && (
+                                    <span className="fv-reference-price">
+                                      参考价
+                                    </span>
+                                  )}
                                 </p>
                               </CardContent>
                               <CardFooter>
-                                <span className="fv-muted">查看可选规格</span>
                                 <Button
                                   variant="outline"
                                   size="sm"
@@ -754,11 +758,11 @@ export function apply(ctx: any) {
                       ) : (
                         <Empty>
                           <Search aria-hidden />
-                          <EmptyTitle>想买点什么？</EmptyTitle>
+                          <EmptyTitle>暂无商品</EmptyTitle>
                           <EmptyDescription>
                             {resume
                               ? "点击浏览商品，查看商家当前商品。"
-                              : "告诉 Agent 你想找的商品，搜索结果会出现在这里。"}
+                              : "告诉智能体你想找的商品。"}
                           </EmptyDescription>
                         </Empty>
                       )}
@@ -801,101 +805,108 @@ export function apply(ctx: any) {
                               : "美国 · USD"}
                           </Badge>
                         </div>
-                        <div className="fv-form-layout">
+                        <div className="fv-form-layout fv-chat-shipping">
                           <div className="fv-stack">
                             {locked ? (
                               <Address cart={data.cart} />
                             ) : (
-                              <form
-                                noValidate
-                                onSubmit={saveContact}
-                                aria-label="收货资料"
-                              >
-                                <FieldGroup>
-                                  {contactFields.map((f) => (
-                                    <Field
-                                      key={f.key}
-                                      className={
-                                        "wide" in f ? "fv-wide" : undefined
-                                      }
-                                      data-invalid={!!fieldErrors[f.key]}
-                                      data-disabled={!!busy || data.pending}
-                                    >
-                                      <FieldLabel
-                                        htmlFor={`${formId}-${f.key}`}
-                                      >
-                                        {f.label}
-                                      </FieldLabel>
-                                      <Input
-                                        id={`${formId}-${f.key}`}
-                                        name={f.key}
-                                        required={isRequiredContact(f.key)}
-                                        maxLength={f.max}
-                                        type={
-                                          f.key === "email" ? "email" : "text"
-                                        }
-                                        autoComplete={f.autoComplete}
-                                        placeholder={f.placeholder}
-                                        value={form[f.key]}
-                                        aria-invalid={!!fieldErrors[f.key]}
-                                        aria-describedby={
-                                          fieldErrors[f.key]
-                                            ? `${formId}-${f.key}-error`
-                                            : undefined
-                                        }
-                                        disabled={!!busy || data.pending}
-                                        onChange={(e) => {
-                                          dirtyForm.current = true;
-                                          setForm({
-                                            ...form,
-                                            [f.key]: e.target.value,
-                                          });
-                                          setFieldErrors({
-                                            ...fieldErrors,
-                                            [f.key]: undefined,
-                                          });
-                                        }}
-                                      />
-                                      {fieldErrors[f.key] && (
-                                        <FieldError
-                                          id={`${formId}-${f.key}-error`}
+                              <Card className="fv-contact-panel">
+                                <CardHeader>
+                                  <CardTitle>收货信息</CardTitle>
+                                </CardHeader>
+                                <form
+                                  noValidate
+                                  onSubmit={saveContact}
+                                  aria-label="收货资料"
+                                >
+                                  <CardContent>
+                                    <FieldGroup>
+                                      {contactFields.map((f) => (
+                                        <Field
+                                          key={f.key}
+                                          className={
+                                            "wide" in f ? "fv-wide" : undefined
+                                          }
+                                          data-invalid={!!fieldErrors[f.key]}
+                                          data-disabled={!!busy || data.pending}
                                         >
-                                          {fieldErrors[f.key]}
-                                        </FieldError>
-                                      )}
-                                    </Field>
-                                  ))}
-                                </FieldGroup>
-                                <div className="fv-form-actions">
-                                  <div className="fv-privacy">
-                                    <LockKeyhole aria-hidden />
-                                    <span>
-                                      收货资料仅用于配送，
-                                      <br />
-                                      不会发送给 AI 模型。
-                                    </span>
-                                  </div>
-                                  <Button
-                                    type="submit"
-                                    disabled={
-                                      !!busy ||
-                                      data.pending ||
-                                      (!dirty && contactReady)
-                                    }
-                                  >
-                                    {busy === "contact" ? (
-                                      <Spinner />
-                                    ) : contactReady && !dirty ? (
-                                      <Check data-icon="inline-start" />
-                                    ) : null}
-                                    {busy === "contact"
-                                      ? "正在保存…"
-                                      : contactReady && !dirty
-                                        ? "收货资料已保存"
-                                        : "保存收货资料"}
-                                  </Button>
-                                </div>
-                              </form>
+                                          <FieldLabel
+                                            htmlFor={`${formId}-${f.key}`}
+                                          >
+                                            {f.label}
+                                          </FieldLabel>
+                                          <Input
+                                            id={`${formId}-${f.key}`}
+                                            name={f.key}
+                                            required={isRequiredContact(f.key)}
+                                            maxLength={f.max}
+                                            type={
+                                              f.key === "email"
+                                                ? "email"
+                                                : "text"
+                                            }
+                                            autoComplete={f.autoComplete}
+                                            placeholder={f.placeholder}
+                                            value={form[f.key]}
+                                            aria-invalid={!!fieldErrors[f.key]}
+                                            aria-describedby={
+                                              fieldErrors[f.key]
+                                                ? `${formId}-${f.key}-error`
+                                                : undefined
+                                            }
+                                            disabled={!!busy || data.pending}
+                                            onChange={(e) => {
+                                              dirtyForm.current = true;
+                                              setForm({
+                                                ...form,
+                                                [f.key]: e.target.value,
+                                              });
+                                              setFieldErrors({
+                                                ...fieldErrors,
+                                                [f.key]: undefined,
+                                              });
+                                            }}
+                                          />
+                                          {fieldErrors[f.key] && (
+                                            <FieldError
+                                              id={`${formId}-${f.key}-error`}
+                                            >
+                                              {fieldErrors[f.key]}
+                                            </FieldError>
+                                          )}
+                                        </Field>
+                                      ))}
+                                    </FieldGroup>
+                                  </CardContent>
+                                  <CardFooter className="fv-contact-actions">
+                                    <div className="fv-privacy">
+                                      <LockKeyhole aria-hidden />
+                                      <span>
+                                        收货资料仅用于配送，不会发送给 AI 模型。
+                                      </span>
+                                    </div>
+                                    <Button
+                                      type="submit"
+                                      disabled={
+                                        !!busy ||
+                                        data.pending ||
+                                        (!dirty && contactReady)
+                                      }
+                                    >
+                                      {busy === "contact" ? (
+                                        <Spinner />
+                                      ) : contactReady && !dirty ? (
+                                        <Check data-icon="inline-start" />
+                                      ) : null}
+                                      {busy === "contact"
+                                        ? "正在保存…"
+                                        : contactReady && !dirty
+                                          ? "收货资料已保存"
+                                          : "保存收货资料"}
+                                    </Button>
+                                  </CardFooter>
+                                </form>
+                              </Card>
                             )}
                             {contactReady && !dirty && !locked && (
                               <>
@@ -1002,10 +1013,7 @@ export function apply(ctx: any) {
                     ) : (
                       <Empty>
                         <ShoppingCart aria-hidden />
-                        <EmptyTitle>购物车还是空的</EmptyTitle>
-                        <EmptyDescription>
-                          先选一件心仪的商品，再填写收货资料。
-                        </EmptyDescription>
+                        <EmptyTitle>购物车为空</EmptyTitle>
                         <Button
                           variant="outline"
                           size="sm"
@@ -1022,10 +1030,7 @@ export function apply(ctx: any) {
                       <div className="fv-stack">
                         <div className="fv-section-heading">
                           <div>
-                            <h4>确认你的订单</h4>
-                            <p className="fv-description">
-                              商品、收货信息和费用都在这里。
-                            </p>
+                            <h4>确认订单</h4>
                           </div>
                           <Badge
                             variant={quoteExpired ? "warning" : "secondary"}
@@ -1240,7 +1245,6 @@ export function apply(ctx: any) {
                         </Empty>
                       )}
                       <div className="fv-between">
-                        <span className="fv-muted">以商店当前记录为准</span>
                         <Button
                           variant="outline"
                           size="sm"
@@ -1261,24 +1265,14 @@ export function apply(ctx: any) {
               )}
             </CardContent>
           </Tabs>
-          <CardFooter>
-            <span className="fv-row">
-              <LockKeyhole aria-hidden />
-              由你确认购买
-            </span>
-            <span role="status" aria-live="polite">
-              {busy ? (
-                <span className="fv-row">
-                  <Spinner />
-                  正在处理…
-                </span>
-              ) : data?.mockPayment ? (
-                "测试环境 · Mock 支付"
-              ) : (
-                "支付方式和金额请以结算信息为准"
-              )}
-            </span>
-          </CardFooter>
+          {busy && (
+            <CardFooter>
+              <span className="fv-row" role="status" aria-live="polite">
+                <Spinner />
+                正在处理…
+              </span>
+            </CardFooter>
+          )}
         </Card>
       </section>
     );

@@ -17,7 +17,6 @@ import {
   Card,
   CardContent,
   CardDescription,
-  CardFooter,
   CardHeader,
   CardTitle,
   Empty,
@@ -151,9 +150,9 @@ export function ConsultationCard({
               ? "商家购物与咨询"
               : "商家咨询与知识"}
           </CardTitle>
-          <CardDescription>
-            {data?.capabilities?.agent?.name ?? "读取商家提供的答复与公开资料"}
-          </CardDescription>
+          {data?.capabilities?.agent?.name && (
+            <CardDescription>{data.capabilities.agent.name}</CardDescription>
+          )}
         </div>
         <Badge>
           {data?.capabilities?.shopping?.availability === "supported"
@@ -317,11 +316,6 @@ export function ConsultationCard({
           )}
         </div>
       </CardContent>
-      <CardFooter>
-        {data?.capabilities?.shopping?.availability === "supported"
-          ? "购买由你核对并确认，付款结果以原订单查询为准。"
-          : "咨询答复不会下单或付款，购买仍需单独核对并确认。"}
-      </CardFooter>
     </Card>
   );
 }

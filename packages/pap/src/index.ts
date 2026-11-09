@@ -1,4 +1,3 @@
-import type {} from "dsh-identity-client";
 import { Service, type Context } from "@deepseek-ai/cordis";
 import { credentialRef } from "@deepseek-ai/dsh-credentials";
 import {
@@ -15,19 +14,14 @@ import {
   fail,
   PapError,
   type PapConfig,
-  type AccountOnlyConfig,
+  type UnconfiguredClientConfig,
   type Secrets,
 } from "./core.js";
 export const name = "dsh-pap";
-export const inject = [
-  "credentials",
-  "connection",
-  "profileContext",
-  "identity",
-];
+export const inject = ["credentials", "connection", "profileContext"];
 export type Config = { configFile?: string };
 export class PapProvider extends Service {
-  readonly apiVersion = 1;
+  readonly apiVersion = 2;
   constructor(
     ctx: Context,
     private core: PapService,
@@ -58,8 +52,16 @@ export class PapProvider extends Service {
   identity(ref: string) {
     return this.core.identity(ref);
   }
-  hostedPayment(ref: string, link: string, checkoutId: string) {
-    return this.core.hostedPayment(ref, link, checkoutId);
+  registerAuthentication(
+    provider: Parameters<PapService["registerAuthentication"]>[0],
+  ) {
+    return this.core.registerAuthentication(provider);
+  }
+  registerStatement(...args: Parameters<PapService["registerStatement"]>) {
+    return this.core.registerStatement(...args);
+  }
+  requestBound(...args: Parameters<PapService["requestBound"]>) {
+    return this.core.requestBound(...args);
   }
   signResourceStatement(
     ref: string,
@@ -76,20 +78,6 @@ export class PapProvider extends Service {
   }
   clientStatus() {
     return this.core.clientStatus();
-  }
-  // Host-only account operations for the Frontvia owner UI. Keep the existing
-  // encrypted session owner so PAP grants and account switching share one fence.
-  personalStatus() {
-    return this.core.personal.refresh();
-  }
-  requestPersonalCode(phone: string) {
-    return this.core.personal.requestCode(phone);
-  }
-  verifyPersonalCode(code: string) {
-    return this.core.personal.verify(code);
-  }
-  logoutPersonal() {
-    return this.core.personal.logout();
   }
   inspect(input: unknown) {
     return this.core.inspect(input);
@@ -127,15 +115,14 @@ export async function apply(ctx: Context, config: Config = {}) {
       (await ctx.credentials.resolve(credentialRef(ref)))?.value,
     set: (ref, value) => ctx.credentials.set(credentialRef(ref), value),
   };
-  const c: (PapConfig | AccountOnlyConfig) & { storageKeyRef: string } =
+  const c: (PapConfig | UnconfiguredClientConfig) & { storageKeyRef: string } =
     config.configFile
       ? readProfileConfig<
-          (PapConfig | AccountOnlyConfig) & { storageKeyRef: string }
+          (PapConfig | UnconfiguredClientConfig) & { storageKeyRef: string }
         >(config.configFile)
       : {
           ...profileStorage(ctx.profileContext, "pap"),
           targets: [],
-          personal: ctx.identity.account.config,
         };
   if ("signingKeyRef" in c) {
     const key = await secrets.get(c.signingKeyRef);
@@ -147,17 +134,7 @@ export async function apply(ctx: Context, config: Config = {}) {
     secrets,
   );
   ctx.effect(() => () => vault.close());
-  const policy =
-    c.clientId === undefined
-      ? { ...c, deviceSigningKeyRef: c.storageKeyRef + "_DEVICE" }
-      : c;
-  const core = new PapService(
-    policy,
-    secrets,
-    vault,
-    undefined,
-    ctx.identity?.account,
-  );
+  const core = new PapService(c, secrets, vault);
   ctx.effect(() => () => core.close());
   const service = new PapProvider(ctx, core);
   for (const operation of [
@@ -193,19 +170,11 @@ export async function apply(ctx: Context, config: Config = {}) {
             const a = message.payload as any;
             let value: any;
             if (operation === "status") {
-              const personal = await core.personal.refresh();
               value = {
                 configured: true,
                 sites: service.sites(),
                 removedSites: service.removedSites(),
                 connections: service.status(),
-                personal: {
-                  configured: personal.configured,
-                  signedIn: personal.signedIn,
-                  phone: personal.phone,
-                  expiresAt: personal.expiresAt,
-                  logoutPending: personal.logoutPending,
-                },
                 client: await service.clientStatus(),
               };
             } else if (operation === "inspect")

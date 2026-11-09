@@ -4,7 +4,7 @@
 
 默认模式在首次连接商家时由 DSH 为当前 Profile 生成 ES256 密钥，向账号服务的 `/v1/personal/pap/devices` 提交公钥和持有证明，并保存返回的 HTTPS 客户端标识。再次连接复用已登记的设备身份，服务端轮换摘要密钥后客户端标识仍有效。本机签名密钥遗失时，下次连接生成独立密钥及商家连接。旧记录保留原引用；继续使用新身份时应新开聊天。旧服务端缺少此接口时仍可登录；商家连接显示服务端需更新。
 
-已有自管 PAP 身份的 Profile 可继续使用原配置：公开 CIMD、与私钥匹配的 ES256 JWKS 和声明的回调地址。支持公开接入的 Frontvia 服务自动校验客户端，无需商家逐客户端审批。个人账号配置见 [PAP README](../packages/pap/README.md)；登录入口在 Frontvia 插件，PAP 页面只展示身份和管理连接。插件不会启动公开注册服务或按邮箱绑定现有买方。
+已有自管 PAP 身份的 Profile 可继续使用原配置：公开 CIMD、与私钥匹配的 ES256 JWKS 和声明的回调地址。支持公开接入的 Frontvia 服务自动校验客户端，无需商家逐客户端审批。账号配置由独立账号插件负责；登录入口在账号或 Frontvia 页面，PAP 页面只管理服务连接，不展示 DSH 账号状态。PAP 单独使用见 [PAP README](../packages/pap/README.md)。插件不会启动公开注册服务或按邮箱绑定现有买方。
 
 个人购物要求 Frontvia Schema52 和 `frontvia.personal_purchase.v1`，使用资源连接的 ES256/DPoP 证明，无需独立 HMAC 确认密钥。旧 `frontvia.pap_subject_purchase.v1` 仍保留商家批准的主体购买策略和 HMAC 密钥。
 
@@ -21,12 +21,22 @@ PAP 配置（0600）：
   "storageKeyRef": "DSH_PAP_STORAGE_KEY",
   "dataDir": "/private/profile-frontvia/pap",
   "caFile": "/private/profile-frontvia/test-ca.pem",
-  "targets": [{"origin":"https://shop.example.test","address":"127.0.0.1","port":443}],
-  "sites": [{
-    "id":"test-shop", "label":"Test Shop", "domain":"shop.example.test",
-    "issuer":"https://shop.example.test/companies/a",
-    "resource":"https://shop.example.test/companies/a/commerce/v1/stores/store-a/rpc"
-  }]
+  "targets": [
+    {
+      "origin": "https://shop.example.test",
+      "address": "127.0.0.1",
+      "port": 443
+    }
+  ],
+  "sites": [
+    {
+      "id": "test-shop",
+      "label": "Test Shop",
+      "domain": "shop.example.test",
+      "issuer": "https://shop.example.test/companies/a",
+      "resource": "https://shop.example.test/companies/a/commerce/v1/stores/store-a/rpc"
+    }
+  ]
 }
 ```
 
@@ -36,11 +46,14 @@ Customer 配置（0600）：
 
 ```json
 {
-  "dataDir":"/private/profile-frontvia/customer",
-  "storageKeyRef":"DSH_CUSTOMER_STORAGE_KEY",
-  "sites":[{
-    "siteId":"test-shop", "storeId":"store-a"
-  }]
+  "dataDir": "/private/profile-frontvia/customer",
+  "storageKeyRef": "DSH_CUSTOMER_STORAGE_KEY",
+  "sites": [
+    {
+      "siteId": "test-shop",
+      "storeId": "store-a"
+    }
+  ]
 }
 ```
 
@@ -83,7 +96,7 @@ Customer 从导入配置的 `service.store_id` 和 Commerce 实际 capabilities 
 
 PAP 增加宿主接口 `inspect(configuration)`、`importResources(previewId, resources)` 和 `clientStatus()`；前两者只通过认证 owner 页面开放，不注册给模型。导入后显示“已发现”，PAP 连接后才可检查业务 capabilities。过期/未授权/未开放的方法均不视为可执行。
 
-每项服务右侧的删除按钮会先要求确认，再从可用列表移除该配置。删除会等待本机在途请求返回，清除该服务的本机会话令牌和未完成授权；不向商家撤销订单或远端授权。连接身份、购物进度、原请求键和订单引用仍保留。导入配置与文件预置配置都支持删除，文件原文不会被改写。页面底部“已删除配置”可在重启后恢复配置，恢复不会自动连接、续用旧令牌或重放购物操作。`removeSite(siteId, revision)` / `restoreSite(siteId, revision)` 只由认证 owner 页面调用，不注册为模型工具；配置已更新时必须刷新并重新确认。
+每项服务右侧的删除按钮会先要求确认，再从可用列表移除该配置。删除会等待本机在途请求返回，清除该服务的本机会话令牌和未完成授权；不向商家撤销订单或远端授权。连接身份、购物进度、原请求键和订单引用仍保留。导入配置与文件预置配置都支持删除，文件原文不会被改写。页面底部“已移除服务”可在重启后恢复配置，恢复不会自动连接、续用旧令牌或重放购物操作。`removeSite(siteId, revision)` / `restoreSite(siteId, revision)` 只由认证 owner 页面调用，不注册为模型工具；配置已更新时必须刷新并重新确认。
 
 ## 准备独立公网客户端
 
@@ -98,7 +111,6 @@ node scripts/prepare-public-client.mjs .local/my-public-client https://buyer.exa
 客户端签名私钥保留在本机。支持公开接入的商家读取并验证公开身份即可；只有旧主体购买需要额外登记确认密钥。首次启用时使用新的 Profile、数据目录和凭据引用，通过 DSH 凭据服务导入；不要改写已有连接的 clientId，也不要修改导出配置来伪造服务能力。
 
 商家仍控制对外服务的启用、发布和暂停；个人账号接入不会自动发布 Agent。服务端升级和两插件更新需协调进行，协议连接、商品查询、人工确认和支付验收分别记录。完整购买验收使用隔离 Mock 栈；ali 与本地安装的图片/加购验收另见 [个人购物验收](personal-commerce-acceptance.md#ali-与本地安装补充2026-11-04-复核)，不代表真实付款已验证。
-
 
 ## 咨询求助与知识原件
 

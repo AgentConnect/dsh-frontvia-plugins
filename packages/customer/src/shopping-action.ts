@@ -23,7 +23,7 @@ export const cardIntentSchema = z.discriminatedUnion("action", [
       productName: label,
     })
     .strict(),
-  addToCartIntentSchema.extend({ quantity: z.literal(1) }),
+  addToCartIntentSchema,
   z
     .object({
       action: z.literal("delivery"),
@@ -42,7 +42,6 @@ export const shoppingActionSchema = z
   .object({
     intent: z.union([
       cardIntentSchema,
-      addToCartIntentSchema,
       z
         .object({
           action: z.literal("product"),

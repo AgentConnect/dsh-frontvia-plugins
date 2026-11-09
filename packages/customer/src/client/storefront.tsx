@@ -46,6 +46,8 @@ import {
 import { items, money, Lines, Totals, Order } from "./commerce-display.js";
 import { OrderList } from "./order-list.js";
 import { storefrontOrders } from "./order-summary.js";
+import { ProductGallery } from "./product-gallery.js";
+import { StorefrontLoading } from "./storefront-loading.js";
 import { productImage } from "./product-image.js";
 import { PaymentCard, paymentState } from "./payment-card.js";
 import { isRequiredContact, cartContactReady } from "../contact-fields.js";
@@ -422,7 +424,6 @@ function StorefrontContent({
   const product = items(data?.products).find(
     (p: any) => p.id === data?.variantProductId,
   );
-  const image = productImage(product);
   const pendingLabel =
     (
       {
@@ -454,7 +455,7 @@ function StorefrontContent({
     <section
       className="fv-storefront fv-stack"
       aria-label="店铺商城"
-      aria-busy={busy}
+      aria-busy={busy || (!data && !error)}
     >
       {error && !data?.pending && (
         <Alert variant="destructive">
@@ -469,10 +470,9 @@ function StorefrontContent({
         </Alert>
       )}
       {!data ? (
-        <div role="status">
-          <Skeleton className="fv-skeleton-block" />
-          <p>正在读取店铺…</p>
-        </div>
+        !error || busy ? (
+          <StorefrontLoading />
+        ) : null
       ) : (
         <>
           {data.pending && !data.cartCreationPending && (
@@ -601,23 +601,14 @@ function StorefrontContent({
                       返回商品列表
                     </Button>
                     <div className="fv-product-detail">
-                      <div className="fv-detail-image">
-                        {image ? (
-                          <img
-                            src={image}
-                            alt={product?.title ?? "商品"}
-                            referrerPolicy="no-referrer"
-                          />
-                        ) : (
-                          <Package />
-                        )}
-                      </div>
-                      <div className="fv-stack">
-                        <p className="fv-eyebrow">商品详情</p>
+                      <ProductGallery product={product} />
+                      <div className="fv-stack fv-product-info">
                         <h3>{product?.title ?? "选择商品规格"}</h3>
-                        <p className="fv-product-description">
-                          {product?.description ?? "商家暂未提供商品介绍。"}
-                        </p>
+                        {product?.description?.trim() && (
+                          <p className="fv-product-description">
+                            {product.description}
+                          </p>
+                        )}
                         <Separator />
                         <h4>规格与库存</h4>
                         {items(data.variants).length ? (
@@ -640,7 +631,7 @@ function StorefrontContent({
                               quantity >= 1 &&
                               quantity <= maximum;
                             return (
-                              <Card key={v.id}>
+                              <Card key={v.id} className="fv-variant-card">
                                 <CardHeader>
                                   <CardTitle>
                                     {v.title === "Default"
@@ -801,9 +792,6 @@ function StorefrontContent({
                     <div className="fv-section-heading">
                       <div>
                         <h3>店内商品</h3>
-                        <p className="fv-description">
-                          发现喜欢的，选好规格再加入购物车。
-                        </p>
                       </div>
                       <form
                         className="fv-search-form"
@@ -1123,9 +1111,6 @@ function StorefrontContent({
                   <div className="fv-section-heading">
                     <div>
                       <h3>结账</h3>
-                      <p className="fv-description">
-                        核对本次购物信息，完成下单与支付。
-                      </p>
                     </div>
                     <Button
                       variant="ghost"
@@ -1476,11 +1461,6 @@ function StorefrontContent({
                 <div className="fv-section-heading">
                   <div>
                     <h3>{showOrderDetails ? "订单详情" : "我的订单"}</h3>
-                    <p className="fv-description">
-                      {showOrderDetails
-                        ? "查看这笔订单的商品、支付与配送信息。"
-                        : "选择一笔订单，查看商品、支付结果和配送进度。"}
-                    </p>
                   </div>
                   <Button
                     variant="outline"

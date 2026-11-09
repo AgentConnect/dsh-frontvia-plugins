@@ -15,7 +15,7 @@ export function cardDisplay(intent: CardIntent): string {
     case "variants":
       return `查看「${clean(intent.productName, "所选商品")}」的可购买规格和价格。`;
     case "add":
-      return `将「${clean(intent.productName, "所选商品")}」${intent.variantName === "Default" ? "默认规格" : clean(intent.variantName, "所选规格")}加购 1 件，并展示购物车。`;
+      return `将「${clean(intent.productName, "所选商品")}」${intent.variantName === "Default" ? "默认规格" : clean(intent.variantName, "所选规格")}加购 ${intent.quantity} 件，并展示购物车。`;
     case "delivery":
       return `选择「${clean(intent.optionName, "所选配送方式")}」配送并重新报价，供我确认。`;
     case "delivery-options":
@@ -32,7 +32,7 @@ function instruction(intent: CardIntent): string {
     case "variants":
       return `查看商品 ${intent.productId} 的可购买规格，展示规格和真实价格。`;
     case "add":
-      return `将规格 ${intent.variantId} 加购 1 件。已有购物车请先读取最新版本。完成后展示购物车卡片。`;
+      return `将规格 ${intent.variantId} 加购 ${intent.quantity} 件。已有购物车请先读取最新版本。完成后展示购物车卡片。`;
     case "delivery":
       return `选择配送组 ${intent.groupId} 的选项 ${intent.optionId}。先读取最新购物车版本，再选择配送、按新版本生成报价并 prepare；停在待我确认的卡片。`;
     case "delivery-options":

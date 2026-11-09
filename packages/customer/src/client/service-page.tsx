@@ -30,7 +30,6 @@ import {
   EmptyDescription,
   Skeleton,
   Spinner,
-  Separator,
 } from "./ui.js";
 type Props = {
   call: (op: string, payload?: any) => Promise<any>;
@@ -216,7 +215,6 @@ function AccountServicePage({
         <header className="fv-page-header">
           <div>
             <h2>Frontvia 服务</h2>
-            <p className="fv-page-description">选购商品，查看购物车和订单。</p>
           </div>
           <div className="fv-page-actions">
             <Button
@@ -375,10 +373,6 @@ function AccountServicePage({
             )}
           </>
         )}
-        <Separator />
-        <p className="fv-muted fv-market-footer">
-          每家店铺的商品、购物车和订单独立管理。
-        </p>
       </div>
     </div>
   );

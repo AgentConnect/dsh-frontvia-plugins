@@ -272,8 +272,6 @@ export const isPublicAddress = (address: string) =>
 // publicTransport checks the approved origin before resolving it. A proxy's
 // all-Fake-IP answer can be replaced with public DNS; private/mixed answers and
 // literal IPs must retain the normal rejection path. TLS still binds the host.
-const frontviaAccountHost = "frontvia-shop.agent-connect.cn";
-export const frontviaAccountOrigin = "https://" + frontviaAccountHost;
 /** Cache only the slow Fake-IP fallback. System DNS and destination validation
  * still run on every request, so a private/mixed answer cannot use an old pin. */
 export class PublicHostResolver {

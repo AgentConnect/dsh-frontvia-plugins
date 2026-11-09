@@ -45,6 +45,75 @@ const initial = () => ({
     },
   },
 });
+
+test("storefront loading ends on failure, retries explicitly, and does not replace loaded content during refresh", async () => {
+  let tree!: ReactTestRenderer;
+  let data: any;
+  let error = "";
+  let busy = false;
+  const calls: string[] = [];
+  const render = () =>
+    React.createElement(Storefront, {
+      draftScope: "loading-flow",
+      data,
+      error,
+      busy,
+      now: Date.now(),
+      action: async (operation) => {
+        calls.push(operation);
+        return true;
+      },
+    });
+  const loading = () =>
+    tree.root.findAllByProps({ className: "fv-store-loading" });
+  const storefront = () => tree.root.findByType("section");
+  try {
+    await act(async () => {
+      tree = create(render());
+    });
+    assert.equal(loading().length, 1);
+    assert.equal(storefront().props["aria-busy"], true);
+    assert.equal(tree.root.findAllByType("button").length, 0);
+    error = "暂时无法读取店铺，请重试。";
+    await act(async () => {
+      tree.update(render());
+    });
+    assert.equal(
+      loading().length,
+      0,
+      "a failed request must not look like an ongoing load",
+    );
+    assert.equal(storefront().props["aria-busy"], false);
+    assert.equal(tree.root.findAllByProps({ role: "alert" }).length, 1);
+    await click(tree, "重新加载");
+    assert.deepEqual(calls, ["view"]);
+    busy = true;
+    await act(async () => {
+      tree.update(render());
+    });
+    assert.equal(loading().length, 1);
+    data = initial();
+    error = "";
+    busy = false;
+    await act(async () => {
+      tree.update(render());
+    });
+    assert.equal(loading().length, 0);
+    assert.ok(tree.root.findAll((node) => node.children.includes("Mug")).length);
+    busy = true;
+    await act(async () => {
+      tree.update(render());
+    });
+    assert.equal(
+      loading().length,
+      0,
+      "background refresh keeps the current cart visible",
+    );
+    assert.ok(tree.root.findAll((node) => node.children.includes("Mug")).length);
+  } finally {
+    await act(async () => tree?.unmount());
+  }
+});
 const text = (value: any): string =>
   typeof value === "string"
     ? value
