@@ -534,6 +534,11 @@ export function apply(ctx: any) {
           }}
         >
           <Storefront
+            draftScope={JSON.stringify([
+              accountRevision,
+              ui.sessionId,
+              ui.flowId,
+            ])}
             data={data}
             busy={!!busy}
             error={

@@ -52,6 +52,7 @@ import { isRequiredContact, cartContactReady } from "../contact-fields.js";
 import type { ShoppingAction } from "../shopping-action.js";
 type Action = (operation: string, payload?: any) => Promise<boolean>;
 type Props = {
+  draftScope: string;
   data: any;
   busy: boolean;
   error: string;
@@ -91,17 +92,17 @@ function AddressForm({
   busy,
   action,
   next,
+  form,
+  setForm,
 }: {
+  form: Record<string, string>;
+  setForm: (value: Record<string, string>) => void;
   data: any;
   busy: boolean;
   action: Action;
   next: () => Promise<void>;
 }) {
   const id = useId();
-  const [form, setForm] = useState<Record<string, string>>(() => ({
-    ...data.cart.shipping_address,
-    email: data.cart.email ?? "",
-  }));
   const [saving, setSaving] = useState(false);
   const savingRef = useRef(false);
   return (
@@ -212,7 +213,11 @@ function Logistics({ order }: { order: any }) {
     </Card>
   );
 }
-export function Storefront({
+/** Drafts survive read failures, but never cross account/session/flow boundaries. */
+export function Storefront(props: Props) {
+  return <StorefrontContent key={props.draftScope} {...props} />;
+}
+function StorefrontContent({
   data,
   busy,
   error,
@@ -223,6 +228,15 @@ export function Storefront({
   addedQuantity,
   onViewChange,
 }: Props) {
+  const [addressDraft, setAddressDraft] = useState<{
+    cartId: string;
+    values: Record<string, string>;
+  }>();
+  useEffect(() => {
+    // A missing read result must not clear the local draft. A different cart must.
+    if (data?.cart?.id && addressDraft && addressDraft.cartId !== data.cart.id)
+      setAddressDraft(undefined);
+  }, [data?.cart?.id, addressDraft?.cartId]);
   const [tab, setTab] = useState("products");
   const [step, setStep] = useState<number>();
   const [query, setQuery] = useState("");
@@ -1168,9 +1182,22 @@ export function Storefront({
                           <AddressForm
                             key={data.cart.id}
                             data={data}
+                            form={
+                              addressDraft &&
+                              addressDraft.cartId === data.cart.id
+                                ? addressDraft.values
+                                : {
+                                    ...data.cart.shipping_address,
+                                    email: data.cart.email ?? "",
+                                  }
+                            }
+                            setForm={(values) =>
+                              setAddressDraft({ cartId: data.cart.id, values })
+                            }
                             busy={blocked}
                             action={action}
                             next={async () => {
+                              setAddressDraft(undefined);
                               setStep(1);
                             }}
                           />
