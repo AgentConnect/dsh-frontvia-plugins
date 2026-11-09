@@ -724,6 +724,11 @@ export function apply(ctx: any) {
                                     p.price_range?.min ??
                                       p.price_range?.minimum,
                                   )}
+                                  {data.historicalCatalog && (
+                                    <span className="fv-reference-price">
+                                      参考价
+                                    </span>
+                                  )}
                                 </p>
                               </CardContent>
                               <CardFooter>

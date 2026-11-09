@@ -250,8 +250,19 @@ test("a saved variant result replaces the full list with the selected product, e
         { id: "p2", title: "其他商品" },
       ],
     },
-    variants: { items: [variant] },
+    variants: {
+      items: [
+        {
+          ...variant,
+          selected_options: [
+            { name: "Default", value: "Default" },
+            ...variant.selected_options,
+          ],
+        },
+      ],
+    },
     cartReady: true,
+    historicalCatalog: true,
   });
   for (const text of [
     "桌面台灯",
@@ -259,12 +270,26 @@ test("a saved variant result replaces the full list with the selected product, e
     "尺寸：60cm",
     "LAMP-60-PRO",
     "CNY 289.90",
+    "参考价",
     "可购 99 件",
     "返回商品列表",
     "加购 1 件",
   ])
     assert(html.includes(text), text);
-  assert.doesNotMatch(html, /完整商品列表|其他商品/);
+  assert.doesNotMatch(html, /完整商品列表|其他商品|Default|历史商品与价格/);
+  const current = render({
+    variants: {
+      items: [
+        {
+          ...variant,
+          selected_options: [{ name: "Default", value: "Default" }],
+        },
+      ],
+    },
+    cartReady: true,
+  });
+  assert.match(current, /默认规格/);
+  assert.doesNotMatch(current, /Default|参考价/);
 });
 
 test("empty variant results stay on specifications; browsing shows only the catalog; unknown stock is not invented", () => {

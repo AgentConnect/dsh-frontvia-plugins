@@ -76,9 +76,6 @@ export function ProductSelection({
       <div className="fv-section-heading">
         <div>
           <h4>{selecting ? (product?.title ?? "选择商品规格") : "商品"}</h4>
-          {data.historicalCatalog && (
-            <p className="fv-description">历史商品与价格，请以最新报价为准。</p>
-          )}
         </div>
         {data.cart && (
           <Button variant="ghost" size="sm" onClick={onCart}>
@@ -97,6 +94,11 @@ export function ProductSelection({
                 aria-label="可购买规格"
               >
                 {variants.map((v: any) => {
+                  const options =
+                    v.selected_options?.filter(
+                      (o: any) =>
+                        !(o.name === "Default" && o.value === "Default"),
+                    ) ?? [];
                   const stock = v.availability;
                   const maximum =
                     typeof stock?.quantity_available === "number" &&
@@ -131,15 +133,20 @@ export function ProductSelection({
                             ? "默认规格"
                             : (v.title ?? "商品规格")}
                         </p>
-                        {v.selected_options?.length > 0 && (
+                        {options.length > 0 && (
                           <p>
-                            {v.selected_options
+                            {options
                               .map((o: any) => `${o.name}：${o.value}`)
                               .join(" · ")}
                           </p>
                         )}
                         {v.sku && <p className="fv-muted">SKU：{v.sku}</p>}
-                        <p className="fv-price">{formatPrice(v.unit_price)}</p>
+                        <p className="fv-price">
+                          {formatPrice(v.unit_price)}
+                          {data.historicalCatalog && (
+                            <span className="fv-reference-price">参考价</span>
+                          )}
+                        </p>
                         <span>
                           {availability[stock?.status] ?? "库存待核对"}
                           {Number.isInteger(stock?.quantity_available) &&
