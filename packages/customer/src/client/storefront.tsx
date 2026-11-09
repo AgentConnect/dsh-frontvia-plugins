@@ -602,7 +602,7 @@ function StorefrontContent({
                     </Button>
                     <div className="fv-product-detail">
                       <ProductGallery product={product} />
-                      <div className="fv-stack">
+                      <div className="fv-stack fv-product-info">
                         <h3>{product?.title ?? "选择商品规格"}</h3>
                         {product?.description?.trim() && (
                           <p className="fv-product-description">
@@ -631,7 +631,7 @@ function StorefrontContent({
                               quantity >= 1 &&
                               quantity <= maximum;
                             return (
-                              <Card key={v.id}>
+                              <Card key={v.id} className="fv-variant-card">
                                 <CardHeader>
                                   <CardTitle>
                                     {v.title === "Default"
