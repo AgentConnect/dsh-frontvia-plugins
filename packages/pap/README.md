@@ -2,6 +2,12 @@
 
 Generic PAP 0.2 client service for official DeepSeek Harness 0.2.1-rc.3. Exposes `ctx.pap` and a connection sidebar. No commerce or payment tools. Configure via a protected `configFile`; keys are DSH credential references, not package contents. See the repository README for local installation and validation boundaries.
 
+## 连接页面
+
+账号以单行展示，登录和管理入口跳转至独立的 DSH 账号页。商家按 issuer 与 store_id 分组；绑定信息不完整时保留独立服务，不按域名或名称合并。服务列表展示连接状态，接口数量、资源地址与客户端信息收在详情内。
+
+添加商家使用原生模态弹窗，默认填写服务链接，也可切换 JSON 配置。检查只生成预览，选择服务并确认后才导入；请求期间不可关闭，Esc 关闭后恢复入口焦点。断开、移除收在“更多”中，移除仍需确认并保留历史记录。“打开商城”仅在 Customer 已加载时显示，打开 Frontvia 服务页，不自动连接、购买或切换其已选店铺。
+
 ## 手机号个人账号
 
 默认安装会在当前 DSH Profile 中启用 Frontvia 个人登录。打开「Frontvia 服务」即可查看已登录账号或使用验证码登录。要指定其他账号环境，可在受保护的 `configFile` 中增加：

@@ -990,13 +990,37 @@
     transition: none !important;
   }
 }
-.pap .pap-identity {
-  display: grid;
-  gap: 8px;
-  padding: 20px 24px;
-  margin-bottom: 24px;
+/* Compact account summary, merchant names and consistent action columns. */
+.pap .pap-identity { display:flex; justify-content:space-between; align-items:center; gap:16px; padding:16px 0; margin-bottom:24px; border-bottom:1px solid var(--pap-border); color:var(--pap-muted); font-size:13px; }
+.pap .pap-identity > div { min-width:0; overflow-wrap:anywhere; }
+.pap .pap-identity .pap-description { font-size:12px; margin-top:4px; }
+.pap .pap-identity .pap-button { flex-shrink:0; }
+.pap .pap-page-header { margin-bottom:12px; }
+.pap .pap-overview { border:0; padding:0; margin-bottom:20px; gap:16px; }
+.pap .pap-merchant-name { flex:1; min-width:0; }
+.pap .pap-merchant-name h3 { color:var(--pap-text); font-size:15px; line-height:1.5; }
+.pap .pap-merchant-name p { font-size:12px; overflow-wrap:anywhere; }
+.pap .pap-group-header { align-items:center; margin:0 0 12px; gap:12px; }
+.pap .pap-group-header > svg { width:20px; height:20px; }
+.pap .pap-service-row { padding:16px; grid-template-columns:minmax(0,1fr) 76px 152px; gap:16px; }
+.pap .pap-service-actions > .pap-button:not([data-size=icon]) { min-width:104px; }
+.pap .pap-service-actions > .pap-button[data-size=icon] { width:32px; height:32px; }
+.pap .pap-more-actions { display:flex; justify-content:flex-end; flex-wrap:wrap; gap:8px; padding:0 16px 12px; }
+.pap .pap-remove-action { color:var(--pap-error); }
+.pap .pap-page-footer { margin-top:24px; }
+.pap dialog.pap-import-panel { color:var(--pap-text); background:var(--pap-bg); width:min(560px,calc(100vw - 32px)); max-height:calc(100dvh - 48px); margin:auto; padding:24px; overflow:auto; box-shadow:0 16px 60px #0003; }
+.pap dialog.pap-import-panel::backdrop { background:#0006; }
+.pap dialog.pap-import-panel:not([open]) { display:none; }
+.pap .pap-import-mode { justify-self:start; align-self:flex-start; padding-inline:0; }
+.pap .pap-import-actions { justify-content:flex-end; }
+@container (max-width:620px) {
+  .pap .pap-service-row { grid-template-columns:minmax(0,1fr) 76px; gap:12px; }
+  .pap .pap-service-toggle { grid-column:1; }
+  .pap .pap-status { grid-column:2; padding-left:0; }
+  .pap .pap-service-actions { grid-column:1/-1; }
 }
-.pap .pap-identity h3 {
-  font-size: 18px;
-  font-weight: 400;
+@container (max-width:480px) {
+  .pap .pap-identity { align-items:flex-start; gap:8px; }
+  .pap .pap-overview { gap:8px 16px; }
+  .pap dialog.pap-import-panel { padding:18px; }
 }

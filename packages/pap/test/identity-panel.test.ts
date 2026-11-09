@@ -18,3 +18,25 @@ test("PAP alone offers installation guidance and only shows the login button whe
     /打开 DSH 账号/,
   );
 });
+
+test("signed-in and pending-logout accounts keep an actionable account entry", () => {
+  const render = (identity: any) =>
+    renderToStaticMarkup(
+      createElement(IdentityPanel, { identity, openAccount() {} }),
+    );
+  const signedIn = render({
+    configured: true,
+    signedIn: true,
+    phone: "+86 •••• 1234",
+  });
+  assert.match(signedIn, /已登录 DSH 账号/);
+  assert.match(signedIn, /管理账号/);
+  assert.doesNotMatch(signedIn, /账号管理和退出登录请前往|undefined/);
+  const pending = render({
+    configured: true,
+    signedIn: false,
+    logoutPending: true,
+  });
+  assert.match(pending, /退出尚未完成/);
+  assert.match(pending, /管理账号/);
+});

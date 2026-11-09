@@ -1,3 +1,4 @@
+import { groupMerchants } from "./merchants.js";
 import { IdentityPanel, type PersonalIdentity } from "./identity-panel.js";
 import React, { useEffect, useId, useRef, useState } from "react";
 import {
@@ -9,9 +10,9 @@ import {
   Info,
   KeyRound,
   Link2,
-  LockKeyhole,
   RefreshCw,
   Plus,
+  Ellipsis,
   MessageCircle,
   ShoppingBag,
   Store,
@@ -46,6 +47,8 @@ type Site = {
   label: string;
   domain: string;
   resource?: string;
+  issuer?: string;
+  service?: { store_id?: string };
   clientAllowed?: boolean;
   description?: { methods: string[]; profile?: string };
 };
@@ -167,6 +170,7 @@ export function apply(ctx: any) {
     busy,
     run,
     now,
+    openStore,
   }: {
     site: Site;
     connection?: Connection;
@@ -174,6 +178,7 @@ export function apply(ctx: any) {
     busy: string;
     run: Run;
     now: number;
+    openStore?: () => void;
   }) {
     const id = useId();
     const [scopes, setScopes] = useState("");
@@ -181,6 +186,7 @@ export function apply(ctx: any) {
     const [authorization, setAuthorization] = useState("");
     const [open, setOpen] = useState(false);
     const [detailsOpen, setDetailsOpen] = useState(false);
+    const [moreOpen, setMoreOpen] = useState(false);
     const [deleteRevision, setDeleteRevision] = useState<string>();
     const deleteButton = useRef<HTMLButtonElement>(null);
     const cancelDelete = useRef<HTMLButtonElement>(null);
@@ -261,15 +267,11 @@ export function apply(ctx: any) {
             </span>
             <span className="pap-service-name">
               <span className="pap-service-title">{title}</span>
-              <span className="pap-service-caption">
-                {needsReview
-                  ? "旧连接信息需要核对"
-                  : needsApproval
-                    ? "旧配置限制了当前客户端"
-                    : site.description
-                      ? `${site.description.methods.length} 项已发布接口`
-                      : site.domain}
-              </span>
+              {(needsReview || needsApproval) && (
+                <span className="pap-service-caption">
+                  {needsReview ? "连接信息需更新" : "需要商家批准"}
+                </span>
+              )}
             </span>
             <ChevronDown className="pap-detail-chevron" aria-hidden />
           </button>
@@ -298,17 +300,12 @@ export function apply(ctx: any) {
                 {detailsOpen ? "收起详情" : "查看原因"}
               </Button>
             ) : connected ? (
-              <Button
-                variant="ghost"
-                size="sm"
-                disabled={!!busy}
-                onClick={() =>
-                  void runAction("disconnect", { connectionRef: ref })
-                }
-              >
-                {pending("disconnect") ? <Spinner /> : <Unplug aria-hidden />}
-                {pending("disconnect") ? "正在断开" : "断开"}
-              </Button>
+              openStore ? (
+                <Button variant="outline" size="sm" onClick={openStore}>
+                  打开商城
+                  <ArrowRight aria-hidden />
+                </Button>
+              ) : null
             ) : connection?.signedIn ? (
               <Button
                 variant="outline"
@@ -340,21 +337,58 @@ export function apply(ctx: any) {
               ref={deleteButton}
               variant="ghost"
               size="icon"
-              className="pap-delete-trigger"
               disabled={!!busy}
-              aria-label={`删除${title}配置`}
-              title="删除配置"
-              aria-expanded={!!deleteRevision}
-              aria-controls={`${id}-delete`}
+              aria-label={`${site.label}更多操作`}
+              aria-expanded={moreOpen}
+              aria-controls={`${id}-more`}
+              onClick={() => setMoreOpen((v) => !v)}
+            >
+              <Ellipsis aria-hidden />
+            </Button>
+          </div>
+        </div>
+        {moreOpen && (
+          <div
+            className="pap-more-actions"
+            id={`${id}-more`}
+            role="group"
+            aria-label={`${site.label}更多操作`}
+            onKeyDown={(e) => {
+              if (e.key === "Escape") {
+                setMoreOpen(false);
+                deleteButton.current?.focus();
+              }
+            }}
+          >
+            {connected && (
+              <Button
+                variant="ghost"
+                size="sm"
+                disabled={!!busy}
+                onClick={() =>
+                  void runAction("disconnect", { connectionRef: ref })
+                }
+              >
+                {pending("disconnect") ? <Spinner /> : <Unplug aria-hidden />}
+                {pending("disconnect") ? "正在断开" : "断开连接"}
+              </Button>
+            )}
+            <Button
+              variant="ghost"
+              size="sm"
+              disabled={!!busy}
+              className="pap-remove-action"
               onClick={() => {
                 setError("");
+                setMoreOpen(false);
                 setDeleteRevision(site.revision);
               }}
             >
               <Trash2 aria-hidden />
+              移除服务
             </Button>
           </div>
-        </div>
+        )}
         {retiredDevice && (
           <p className="pap-field-help" role="status">
             设备身份已更换。新连接使用当前密钥；旧订单和服务记录仍绑定原设备身份。
@@ -364,7 +398,7 @@ export function apply(ctx: any) {
           <section
             className="pap-delete-confirm"
             id={`${id}-delete`}
-            aria-label={`确认删除${title}配置`}
+            aria-label={`确认移除${title}`}
             onKeyDown={(e) => {
               if (e.key === "Escape" && !busy) {
                 e.stopPropagation();
@@ -373,9 +407,9 @@ export function apply(ctx: any) {
             }}
           >
             <div>
-              <h4>删除「{title}」配置？</h4>
+              <h4>移除「{title}」？</h4>
               <p>
-                该服务将从列表移除，并停止使用本机连接。购物和订单记录保留，已提交的订单不会取消。之后可在“已删除配置”中恢复，恢复后需重新连接。
+                该服务将从列表移除，并停止使用本机连接。购物和订单记录保留，已提交的订单不会取消。之后可在“已移除服务”中恢复，恢复后需重新连接。
               </p>
             </div>
             <div className="pap-delete-actions">
@@ -400,7 +434,7 @@ export function apply(ctx: any) {
                 }
               >
                 {pending("remove") ? <Spinner /> : <Trash2 aria-hidden />}
-                {pending("remove") ? "正在删除" : "确认删除"}
+                {pending("remove") ? "正在移除" : "确认移除"}
               </Button>
             </div>
           </section>
@@ -624,7 +658,19 @@ export function apply(ctx: any) {
         (entry: { options: { key?: string } }) =>
           entry.options.key === "dsh-identity",
       );
+  const hasStorefront = () =>
+    ctx.slots
+      .entries("main")
+      .some(
+        (entry: { options: { key?: string } }) =>
+          entry.options.key === "frontvia-customer",
+      );
   function Panel() {
+    const storefrontAvailable = React.useSyncExternalStore(
+      subscribeMain,
+      hasStorefront,
+      hasStorefront,
+    );
     const customerAvailable = React.useSyncExternalStore(
       subscribeMain,
       hasCustomer,
@@ -738,14 +784,7 @@ export function apply(ctx: any) {
           c.connected &&
           (c.expiresAt === undefined || c.expiresAt * 1000 > now),
       ).length ?? 0;
-    const groups = new Map<string, Site[]>();
-    for (const site of [...(data?.sites ?? [])].sort(
-      (a, b) => Number(!!b.description) - Number(!!a.description),
-    )) {
-      const group = groups.get(site.domain) ?? [];
-      group.push(site);
-      groups.set(site.domain, group);
-    }
+    const groups = groupMerchants(data?.sites ?? []);
     const attention =
       data?.sites.filter(
         (s) =>
@@ -768,11 +807,7 @@ export function apply(ctx: any) {
           <style>{styles}</style>
           <header className="pap-page-header">
             <div>
-              <p className="pap-eyebrow">连接管理</p>
               <h2>PAP 连接</h2>
-              <p className="pap-page-description">
-                管理 Agent 可使用的商家服务。
-              </p>
             </div>
             <div className="pap-page-actions">
               <Button
@@ -876,14 +911,16 @@ export function apply(ctx: any) {
           ) : (
             <>
               <div className="pap-overview" aria-label="连接概览">
-                <span>{data.sites.length} 项服务</span>
+                <span>
+                  {groups.length} 家商家 · {data.sites.length} 项服务
+                </span>
                 <span>
                   <i
                     className="pap-status-dot"
                     data-tone="success"
                     aria-hidden
                   />
-                  {connected} 已连接
+                  {connected} 项已连接
                 </span>
                 {attention > 0 && (
                   <span>
@@ -897,16 +934,29 @@ export function apply(ctx: any) {
                 )}
               </div>
               <main className="pap-service-groups" aria-label="商家服务">
-                {groups.size ? (
-                  [...groups].map(([domain, sites]) => (
+                {groups.length ? (
+                  groups.map(({ key, title, domain, storeId, sites }) => (
                     <section
                       className="pap-merchant-group"
-                      key={domain}
-                      aria-label={`${domain} 商家服务`}
+                      key={key}
+                      aria-label={`${title} 商家服务`}
                     >
                       <header className="pap-group-header">
                         <Store aria-hidden />
-                        <h3>{domain}</h3>
+                        <div className="pap-merchant-name">
+                          <h3>{title}</h3>
+                          <p>
+                            {domain}
+                            {groups.some(
+                              (g) =>
+                                g.key !== key &&
+                                g.title === title &&
+                                g.domain === domain,
+                            )
+                              ? ` · ${storeId ?? sites[0].id}`
+                              : ""}
+                          </p>
+                        </div>
                         <span>{sites.length} 项服务</span>
                       </header>
                       <div className="pap-service-list">
@@ -927,6 +977,19 @@ export function apply(ctx: any) {
                             busy={busy}
                             run={run}
                             now={now}
+                            openStore={
+                              storefrontAvailable &&
+                              site.description?.methods.some((m) =>
+                                m.startsWith("commerce."),
+                              )
+                                ? () => {
+                                    if (hasStorefront())
+                                      ctx.layout.selectPanel(
+                                        "frontvia-customer",
+                                      );
+                                  }
+                                : undefined
+                            }
                           />
                         ))}
                       </div>
@@ -961,7 +1024,7 @@ export function apply(ctx: any) {
                   <details className="pap-removed-configs">
                     <summary>
                       <Trash2 aria-hidden />
-                      已删除配置（{data.removedSites.length}）
+                      已移除服务（{data.removedSites.length}）
                       <ChevronDown aria-hidden />
                     </summary>
                     <p className="pap-field-help">
@@ -998,14 +1061,10 @@ export function apply(ctx: any) {
                     </div>
                   </details>
                 )}
-                <div className="pap-footer-note">
-                  <LockKeyhole aria-hidden />
-                  <p>凭据由宿主管理，各服务独立授权。购买时仍需你确认。</p>
-                </div>
                 {data.client && (
                   <details className="pap-client-details">
                     <summary>
-                      当前客户端
+                      技术信息
                       <ChevronDown aria-hidden />
                     </summary>
                     <dl className="pap-detail-facts">

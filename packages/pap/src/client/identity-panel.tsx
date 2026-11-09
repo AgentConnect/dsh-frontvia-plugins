@@ -1,5 +1,5 @@
 import React from "react";
-import { Button, Card } from "./ui.js";
+import { Button } from "./ui.js";
 
 export type PersonalIdentity = {
   configured: boolean;
@@ -18,31 +18,30 @@ export function IdentityPanel({
   openAccount?: () => void;
 }) {
   return (
-    <Card className="pap-identity" aria-label="当前身份">
-      <h3>当前身份</h3>
-      <p role="status">
-        {identity.signedIn
-          ? `DSH 个人账号 · ${identity.phone}`
-          : identity.logoutPending
-            ? "本机已退出，服务端退出待确认"
-            : "未登录 DSH 个人账号"}
-      </p>
-      <p className="pap-description">
-        {!openAccount
-          ? "请安装或启用 DSH 账号插件，以登录或管理个人账号。"
-          : identity.logoutPending
-            ? "请到 DSH 账号重试退出。"
-            : identity.signedIn
-              ? "账号管理和退出登录请前往 DSH 账号。"
-              : identity.configured
-                ? "请到 DSH 账号使用手机号登录或注册，再连接商家。"
-                : "在 DSH 账号配置个人账号后，即可使用手机号登录。"}
-      </p>
-      {openAccount && identity.configured && !identity.signedIn && (
-        <Button variant="outline" onClick={openAccount}>
-          打开 DSH 账号
+    <div className="pap-identity" aria-label="当前账号">
+      <div>
+        <p role="status">
+          {identity.signedIn
+            ? `已登录 DSH 账号${identity.phone ? ` · ${identity.phone}` : ""}`
+            : identity.logoutPending
+              ? "退出尚未完成"
+              : "未登录 DSH 账号"}
+        </p>
+        {(!openAccount || identity.logoutPending) && (
+          <p className="pap-description">
+            {!openAccount
+              ? "请安装或启用 DSH 账号插件。"
+              : "请到账号页面重试退出。"}
+          </p>
+        )}
+      </div>
+      {openAccount && (
+        <Button variant="ghost" size="sm" onClick={openAccount}>
+          {identity.signedIn || identity.logoutPending
+            ? "管理账号"
+            : "打开 DSH 账号"}
         </Button>
       )}
-    </Card>
+    </div>
   );
 }

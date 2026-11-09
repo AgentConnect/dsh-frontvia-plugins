@@ -14,6 +14,7 @@ import {
   Button,
   Field,
   FieldLabel,
+  Input,
   Spinner,
 } from "./ui.js";
 
@@ -29,23 +30,40 @@ export function ImportPanel({
   onClose: () => void;
 }) {
   const id = useId(),
-    input = useRef<HTMLTextAreaElement>(null);
+    input = useRef<HTMLInputElement>(null),
+    jsonInput = useRef<HTMLTextAreaElement>(null),
+    dialog = useRef<HTMLDialogElement>(null),
+    previewHeading = useRef<HTMLHeadingElement>(null);
+  const [advanced, setAdvanced] = useState(false);
+  const [json, setJson] = useState("");
   const [text, setText] = useState(""),
     [preview, setPreview] = useState<any>();
   const [selected, setSelected] = useState<string[]>([]),
     [busy, setBusy] = useState("");
   const [error, setError] = useState("");
   useEffect(() => {
-    if (open && !preview) input.current?.focus();
-  }, [open, !!preview]);
+    if (open && !dialog.current?.open) dialog.current?.showModal();
+    else if (!open && dialog.current?.open) dialog.current.close();
+  }, [open]);
+  useEffect(() => {
+    if (!open) return;
+    if (preview) previewHeading.current?.focus();
+    else (advanced ? jsonInput : input).current?.focus();
+  }, [open, !!preview, advanced]);
   async function inspect(e: React.FormEvent) {
     e.preventDefault();
     setBusy("inspect");
     setError("");
     setPreview(undefined);
     try {
-      if (text.length > 64000) throw new Error("INVALID_CONNECTION_CONFIG");
-      const result = await call("inspect", { configuration: text.trim().startsWith("{") ? JSON.parse(text) : text.trim() });
+      const configuration = advanced ? json : text;
+      if (configuration.length > 64000)
+        throw new Error("INVALID_CONNECTION_CONFIG");
+      const result = await call("inspect", {
+        configuration: advanced
+          ? JSON.parse(configuration)
+          : configuration.trim(),
+      });
       setPreview(result);
       setSelected(result.sites.map((s: any) => s.resource));
     } catch (e: any) {
@@ -79,6 +97,8 @@ export function ImportPanel({
       await onImported();
       setPreview(undefined);
       setText("");
+      setJson("");
+      setAdvanced(false);
       onClose();
     } catch (e: any) {
       setError(
@@ -91,22 +111,19 @@ export function ImportPanel({
     }
   }
   return (
-    <section
+    <dialog
+      ref={dialog}
       className="pap-import-panel"
       id="pap-import-form"
-      hidden={!open}
-      aria-label="添加商家配置"
-      onKeyDown={(e) => {
-        if (e.key === "Escape" && !busy) {
-          e.stopPropagation();
-          onClose();
-        }
+      aria-labelledby={`${id}-title`}
+      onCancel={(e) => {
+        e.preventDefault();
+        if (!busy) onClose();
       }}
     >
       <header className="pap-import-header">
         <div>
-          <h3>添加商家</h3>
-          <p>粘贴商家提供的 PAP 链接，检查后添加服务。</p>
+          <h3 id={`${id}-title`}>添加商家</h3>
         </div>
         <Button
           variant="ghost"
@@ -130,29 +147,58 @@ export function ImportPanel({
       {!preview ? (
         <form onSubmit={inspect}>
           <Field>
-            <FieldLabel htmlFor={id}>PAP 服务链接或 JSON</FieldLabel>
-            <textarea
-              ref={input}
-              id={id}
-              className="pap-input pap-json"
-              value={text}
-              onChange={(e) => {
-                setText(e.target.value);
+            <FieldLabel htmlFor={id}>
+              {advanced ? "JSON 配置" : "商家服务链接"}
+            </FieldLabel>
+            {advanced ? (
+              <textarea
+                ref={jsonInput}
+                id={id}
+                className="pap-input pap-json"
+                value={json}
+                onChange={(e) => {
+                  setJson(e.target.value);
+                  setError("");
+                }}
+                placeholder="粘贴商家提供的完整 JSON 配置"
+                spellCheck={false}
+                autoComplete="off"
+                disabled={!!busy}
+                maxLength={64000}
+                aria-invalid={!!error}
+                aria-describedby={error ? `${id}-error` : undefined}
+              />
+            ) : (
+              <Input
+                ref={input}
+                id={id}
+                type="url"
+                value={text}
+                onChange={(e) => {
+                  setText(e.target.value);
+                  setError("");
+                }}
+                placeholder="https://…"
+                spellCheck={false}
+                autoComplete="off"
+                disabled={!!busy}
+                maxLength={2048}
+                aria-invalid={!!error}
+                aria-describedby={error ? `${id}-error` : undefined}
+              />
+            )}
+            <Button
+              variant="ghost"
+              size="sm"
+              className="pap-import-mode"
+              disabled={!!busy}
+              onClick={() => {
+                setAdvanced((v) => !v);
                 setError("");
               }}
-              placeholder={
-                'https://…/.well-known/poppy.json#resource=…'
-              }
-              spellCheck={false}
-              autoComplete="off"
-              disabled={!!busy}
-              maxLength={64000}
-              aria-invalid={!!error}
-              aria-describedby={error ? `${id}-error` : `${id}-hint`}
-            />
-            <p id={`${id}-hint`} className="pap-field-help">
-              支持一条 PAP 服务链接，也兼容原来的完整 JSON 配置。无需填写密钥或令牌。
-            </p>
+            >
+              {advanced ? "使用服务链接" : "使用 JSON 配置"}
+            </Button>
           </Field>
           {error && (
             <Alert variant="destructive">
@@ -161,8 +207,10 @@ export function ImportPanel({
             </Alert>
           )}
           <div className="pap-import-actions">
-            <span className="pap-field-help">先检查服务，再确认添加。</span>
-            <Button type="submit" disabled={!!busy || !text.trim()}>
+            <Button
+              type="submit"
+              disabled={!!busy || !(advanced ? json : text).trim()}
+            >
               {busy === "inspect" ? <Spinner /> : <ArrowRight aria-hidden />}
               {busy === "inspect" ? "正在检查" : "检查服务"}
             </Button>
@@ -171,7 +219,9 @@ export function ImportPanel({
       ) : (
         <div className="pap-discovered">
           <div className="pap-discovered-heading">
-            <h4>选择要添加的服务</h4>
+            <h4 ref={previewHeading} tabIndex={-1}>
+              选择要添加的服务
+            </h4>
             <span>
               已选择 {selected.length} / {preview.sites.length}
             </span>
@@ -207,20 +257,14 @@ export function ImportPanel({
                   <span>
                     <span className="pap-resource-title">{title}</span>
                     <span className="pap-resource-domain">{site.domain}</span>
-                    <span className="pap-resource-meta">
-                      {site.description.methods.length} 项已发布接口
-                      {site.clientAllowed === false
-                        ? " · 当前客户端待批准"
-                        : " · 连接时核验权限"}
-                    </span>
+                    {site.clientAllowed === false && (
+                      <span className="pap-resource-meta">需要商家批准</span>
+                    )}
                   </span>
                 </label>
               );
             })}
           </div>
-          <p className="pap-field-help">
-            发现成功代表服务已发布，访问和购买权限仍由商家核验。
-          </p>
           <details className="pap-import-identity">
             <summary>
               <FileJson aria-hidden />
@@ -273,6 +317,6 @@ export function ImportPanel({
           </div>
         </div>
       )}
-    </section>
+    </dialog>
   );
 }
