@@ -3,20 +3,25 @@ import spawn from "cross-spawn";
 import { fileURLToPath } from "node:url";
 import { dirname, resolve } from "node:path";
 import { createHash } from "node:crypto";
+import { assertBundleInputs } from "./package-inputs.mjs";
 const root = resolve("."),
   out = resolve(".local/packages");
-await mkdir(out, { recursive: true });
-const artifacts = [];
-for (const [folder, name] of [
-  [
-    dirname(
-      fileURLToPath(import.meta.resolve("dsh-identity-client/package.json")),
-    ),
-    "dsh-identity-client",
-  ],
+let identityFolder;
+try {
+  identityFolder = dirname(fileURLToPath(import.meta.resolve("dsh-identity-client/package.json")));
+} catch {
+  throw new Error("缺少同级 dsh-identity/client；先按 README 克隆 pap-server 为 dsh-identity 并安装两个仓库的依赖。");
+}
+const bundles = [
+  [identityFolder, "dsh-identity-client"],
   ["packages/pap", "dsh-pap"],
   ["packages/customer", "dsh-frontvia-customer"],
-]) {
+];
+// Validate every dependency before packing or publishing a new manifest.
+for (const [folder, name] of bundles) await assertBundleInputs(folder, name);
+await mkdir(out, { recursive: true });
+const artifacts = [];
+for (const [folder, name] of bundles) {
   const result = spawn.sync(
     "pnpm",
     ["--dir", folder, "pack", "--pack-destination", out],
