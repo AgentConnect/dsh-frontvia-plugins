@@ -602,7 +602,8 @@ export class CustomerService {
     this.views.clear();
     if (
       name === "frontvia_consultation" &&
-      ["ask", "answer_accept"].includes(args.action)
+      ["ask", "answer_accept"].includes(args.action) &&
+      !this.consultation.canAsk(sessionId, id.parse(args.flowId))
     )
       fail("DIRECT_COMMERCE_REQUIRED");
     if (name === "frontvia_consultation" || name === "frontvia_knowledge")

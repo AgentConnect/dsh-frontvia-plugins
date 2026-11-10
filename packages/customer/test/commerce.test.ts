@@ -1216,13 +1216,13 @@ test("opaque API pagination cursors remain intact through model output and tool 
     );
   }
 });
-test("DSH tool registration exposes provider-compatible direct commerce and knowledge tools, never purchase confirm", () => {
+test("DSH tool registration exposes direct commerce, advice and knowledge, never purchase confirm", () => {
   const f = fixture();
   try {
     const definitions = tools(f.service);
     assert.deepEqual(
       definitions.map((t) => t.name),
-      Object.keys(schemas).filter((n) => n !== "frontvia_consultation"),
+      Object.keys(schemas),
     );
     for (const t of definitions) {
       assert.equal(t.parameters.type, "object");

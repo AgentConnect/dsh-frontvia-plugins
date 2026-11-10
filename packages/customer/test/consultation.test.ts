@@ -5,6 +5,7 @@ import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { randomBytes, createHash } from "node:crypto";
 import { Vault, PapError } from "dsh-pap/core";
+import { PROFILE } from "dsh-identity-client/core";
 import { CustomerService, type PapPort } from "../src/core.js";
 import { schemas, tools } from "../src/tools.js";
 import {
@@ -397,6 +398,7 @@ function fixture(cache = false) {
     calls: [] as any[],
     allowed: true,
     personalAccess: true,
+    independent: false,
     knowledge: true,
     current: true,
     lose: false,
@@ -442,6 +444,7 @@ function fixture(cache = false) {
       issuer: "issuer",
       resource: "resource",
       signedIn: false,
+      ...(remote.independent ? { personalSignedIn: true, authenticationProvider: PROFILE } : {}),
     }),
     status: () => [],
     connect: async () => ({ connectionRef: "consult-connection" }),
@@ -1100,11 +1103,11 @@ test("exact source metadata carries explicit original availability to its own UI
   }
 });
 
-test("new model tool surface rejects Agent purchase conversations while legacy records remain readable", async () => {
+test("consultation tools retain legacy purchase rejection and historical reading", async () => {
   const f = fixture();
   try {
     const flowId = await f.flow();
-    assert(!tools(f.service).some((t) => t.name === "frontvia_consultation"));
+    assert(tools(f.service).some((t) => t.name === "frontvia_consultation"));
     await assert.rejects(
       f.service.tool(
         "session",
@@ -1119,6 +1122,29 @@ test("new model tool surface rejects Agent purchase conversations while legacy r
       (await f.service.consultation.view("session", flowId)).flowId,
       flowId,
     );
+  } finally {
+    f.close();
+  }
+});
+
+test("independent identity can ask and read advice without consultation purchase authority", async () => {
+  const f = fixture();
+  try {
+    f.remote.independent = true;
+    f.remote.shoppingCapability = true;
+    const flowId = await f.flow();
+    const result = await f.service.tool("session", "frontvia_consultation",
+      { flowId, action: "ask", text: "Does a service require a shipping address?" }, "advice");
+    assert.equal(f.remote.submits, 1);
+    assert.equal(result.flowId, flowId);
+    assert.equal((await f.service.consultation.view("session", flowId)).capabilities.shopping.availability, "unavailable");
+    await assert.rejects(f.service.tool("session", "frontvia_consultation",
+      { flowId, action: "ask", text: "确认购买 ABCDEF0123456789" }, "purchase"), /PURCHASE_OWNER_CONFIRMATION_REQUIRED/);
+    assert.equal(f.remote.submits, 1);
+    f.remote.personalAccess = false;
+    await assert.rejects(f.service.tool("session", "frontvia_consultation",
+      { flowId, action: "ask", text: "Try after logout" }, "logged-out"), /PERSONAL_ACCOUNT_CHANGED/);
+    assert.equal(f.remote.submits, 1);
   } finally {
     f.close();
   }

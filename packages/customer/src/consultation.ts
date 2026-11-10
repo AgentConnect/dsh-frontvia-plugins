@@ -1,6 +1,7 @@
 import { ReadCache, SharedReads } from "./read-cache.js";
 import { createHash, randomUUID } from "node:crypto";
 import { Vault, Serial, fail, canonical } from "dsh-pap/core";
+import { PROFILE } from "dsh-identity-client/core";
 import { modelData, type PapPort } from "./core.js";
 import {
   shoppingSupported,
@@ -66,6 +67,13 @@ export class ConsultationService {
   owns(flowId: string) {
     return !!this.vault.get(`consultation:${flowId}`);
   }
+  private independentIdentity(f: Flow) {
+    const identity = this.pap.identity(f.connectionRef);
+    return identity.personalSignedIn === true && identity.authenticationProvider === PROFILE;
+  }
+  canAsk(sessionId: string, flowId: string) {
+    return this.independentIdentity(this.flow(sessionId, flowId));
+  }
   list(sessionId?: string) {
     return this.vault
       .keys("consultation:")
@@ -119,9 +127,13 @@ export class ConsultationService {
       !Array.isArray(cap.methods)
     )
       fail("CONSULTATION_UNAVAILABLE");
-    f.capabilities = cap;
+    // Frontvia grants external identities consultation without Agent purchase
+    // authority. Keep legacy order reading, but never offer a new purchase here.
+    f.capabilities = this.independentIdentity(f)
+      ? { ...cap, shopping: { availability: "unavailable" } }
+      : cap;
     this.save(f);
-    return cap;
+    return f.capabilities;
   }
   private allowed(f: Flow, method: string) {
     const site = this.pap.sites().find((s) => s.id === f.siteId);
