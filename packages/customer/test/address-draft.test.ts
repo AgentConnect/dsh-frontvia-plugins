@@ -99,7 +99,9 @@ test("storefront loading ends on failure, retries explicitly, and does not repla
       tree.update(render());
     });
     assert.equal(loading().length, 0);
-    assert.ok(tree.root.findAll((node) => node.children.includes("Mug")).length);
+    assert.ok(
+      tree.root.findAll((node) => node.children.includes("Mug")).length,
+    );
     busy = true;
     await act(async () => {
       tree.update(render());
@@ -109,7 +111,9 @@ test("storefront loading ends on failure, retries explicitly, and does not repla
       0,
       "background refresh keeps the current cart visible",
     );
-    assert.ok(tree.root.findAll((node) => node.children.includes("Mug")).length);
+    assert.ok(
+      tree.root.findAll((node) => node.children.includes("Mug")).length,
+    );
   } finally {
     await act(async () => tree?.unmount());
   }
@@ -151,6 +155,104 @@ const submit = async (tree: ReactTestRenderer) => {
     await tree.root.findByType("form").props.onSubmit({ preventDefault() {} });
   });
 };
+
+test("manual zero-price checkout never asks for an address or payment selection, but still requires owner confirmation", async () => {
+  let tree!: ReactTestRenderer;
+  const now = Date.now(),
+    expires = now + 60000;
+  const calls: string[] = [];
+  let data: any = initial();
+  delete data.cart.shipping_address;
+  data.cart.fulfillment_kind = "manual";
+  data.cart.lines[0].catalog = null;
+  data.delivery = {
+    cart_id: "cart",
+    cart_version: "v1",
+    delivery_groups: [],
+    requirements: [],
+  };
+  const total = { currency: "CNY", amount_minor: "0" };
+  const render = () =>
+    React.createElement(Storefront, {
+      draftScope: "manual-zero",
+      data,
+      busy: false,
+      error: "",
+      now,
+      action: async (operation, payload) => {
+        const action =
+          operation === "shopping" ? payload.intent.action : operation;
+        calls.push(action);
+        if (action === "quote")
+          data = {
+            ...data,
+            quote: {
+              lines: data.cart.lines,
+              expires_at: new Date(expires).toISOString(),
+              totals: { grand_total: total },
+            },
+          };
+        if (action === "prepare")
+          data = { ...data, checkout: { id: "checkout" } };
+        if (action === "review")
+          data = { ...data, intent: { id: "intent", expiresAt: expires } };
+        if (action === "confirm")
+          data = {
+            ...data,
+            order: {
+              id: "manual-order",
+              status: "open",
+              fulfillment_kind: "manual",
+              fulfillment_status: "unfulfilled",
+              payment: { status: "not_required" },
+              payment_required: false,
+              lines: data.cart.lines,
+              totals: { grand_total: total },
+              manual_deliveries: { items: [] },
+            },
+          };
+        tree.update(render());
+        return true;
+      },
+    });
+  try {
+    await act(async () => {
+      tree = create(render());
+    });
+    await click(tree, "去结账");
+    assert.equal(address(tree), undefined);
+    assert.ok(calls.includes("prepare-delivery"));
+    assert.equal(button(tree, "核对订单信息").props.disabled, false);
+    await click(tree, "返回修改");
+    await click(tree, "去结账");
+    assert.equal(
+      address(tree),
+      undefined,
+      "back navigation must not enter physical address fields",
+    );
+    await click(tree, "核对订单信息");
+    await click(tree, "返回修改");
+    assert.equal(address(tree), undefined);
+    await click(tree, "核对订单信息");
+    await click(tree, "核对并继续");
+    assert.equal(tree.root.findAllByProps({ type: "radio" }).length, 0);
+    assert.equal(button(tree, "确认下单 · CNY 0.00").props.disabled, false);
+    assert.equal(
+      calls.includes("confirm"),
+      false,
+      "zero value must not auto-submit an order",
+    );
+    await click(tree, "确认下单 · CNY 0.00");
+    assert.equal(calls.filter((value) => value === "confirm").length, 1);
+    assert.equal(calls.includes("payment-start"), false);
+    assert.equal(calls.includes("contact"), false);
+    const rendered = JSON.stringify(tree.toJSON());
+    assert.ok(rendered.includes("交付进度"));
+    assert.equal(rendered.includes("暂无运单信息"), false);
+  } finally {
+    await act(async () => tree?.unmount());
+  }
+});
 
 test("address B survives save timeout, FlowViews clearing value on refresh failure, and later network recovery", async () => {
   let remote = initial();

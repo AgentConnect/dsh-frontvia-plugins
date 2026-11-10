@@ -53,7 +53,8 @@ test("empty delivery groups are ready only for current complete manual cart", ()
   const cart = {
     id: "a",
     version: "v1",
-    lines: [{ catalog: { public_snapshot: { fulfillment_kind: "manual" } } }],
+    fulfillment_kind: "manual",
+    lines: [{ catalog: null }],
   };
   const delivery = {
     cart_id: "a",
@@ -68,7 +69,10 @@ test("empty delivery groups are ready only for current complete manual cart", ()
   ])
     assert.equal(deliveryReady(cart, value), false);
   assert.equal(deliveryReady({ ...cart, lines: [] }, delivery), false);
-  assert.equal(deliveryReady({ ...cart, lines: [{}] }, delivery), false);
+  assert.equal(
+    deliveryReady({ ...cart, fulfillment_kind: "mixed" }, delivery),
+    false,
+  );
 });
 test("orders display preserved promises, delivery records and logistics without current catalog reads", () => {
   const order = {

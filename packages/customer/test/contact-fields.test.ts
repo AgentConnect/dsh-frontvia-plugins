@@ -58,15 +58,32 @@ test("checkout address readiness uses CN and US required fields, not address-obj
     );
 });
 
-test("manual carts skip addresses only with complete current snapshots", () => {
-  const line = { catalog: { public_snapshot: { fulfillment_kind: "manual" } } };
-  const cart = { id: "cart", version: "v1", lines: [line] };
+test("manual carts skip addresses from the current public cart, without quote-only snapshots", () => {
+  const cart = {
+    id: "cart",
+    version: "v1",
+    fulfillment_kind: "manual",
+    lines: [{ catalog: null }],
+  };
   assert.equal(cartContactReady(cart, "CN"), true);
-  for (const lines of [
-    [],
-    [{}],
-    [line, {}],
-    [line, { catalog: { public_snapshot: { fulfillment_kind: "physical" } } }],
-  ])
-    assert.equal(cartContactReady({ ...cart, lines }, "CN"), false);
+  assert.equal(cartContactReady({ ...cart, lines: [] }, "CN"), false);
+  for (const kind of [undefined, null, "mixed", "physical", "unknown"])
+    assert.equal(
+      cartContactReady({ ...cart, fulfillment_kind: kind }, "CN"),
+      false,
+    );
+  // Old quote terms must never override the current cart classification.
+  assert.equal(
+    cartContactReady(
+      {
+        ...cart,
+        fulfillment_kind: "physical",
+        lines: [
+          { catalog: { public_snapshot: { fulfillment_kind: "manual" } } },
+        ],
+      },
+      "CN",
+    ),
+    false,
+  );
 });

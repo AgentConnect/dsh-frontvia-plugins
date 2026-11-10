@@ -67,15 +67,12 @@ export function cartContactReady(
   );
 }
 
-/** Missing, mixed, or empty snapshots never waive a shipping requirement. */
+/** The current cart classification is authoritative; mutable lines have no frozen catalog terms. */
 export function manualCart(cart: any): boolean {
   return (
-    Array.isArray(cart?.lines) &&
-    cart.lines.length > 0 &&
-    cart.lines.every(
-      (line: any) =>
-        line.catalog?.public_snapshot?.fulfillment_kind === "manual",
-    )
+    cart?.fulfillment_kind === "manual" &&
+    Array.isArray(cart.lines) &&
+    cart.lines.length > 0
   );
 }
 

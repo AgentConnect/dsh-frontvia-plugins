@@ -50,6 +50,23 @@ type Command = {
   waitEnded?: boolean;
   result?: any;
 };
+// A terminal cart edit can leave a changed cart. Read its authoritative state
+// before allowing a new edit; never treat checkout/payment uncertainty this way.
+function settledCartFailure(command: Command, operation: any) {
+  return (
+    operation?.status === "failed" &&
+    ["partial", "applied"].includes(operation.effects) &&
+    [
+      "commerce.carts.lines.add",
+      "commerce.carts.lines.update",
+      "commerce.carts.lines.remove",
+      "commerce.carts.update",
+      "commerce.carts.delivery_option.select",
+    ].includes(command.method) &&
+    typeof command.params.cart_id === "string" &&
+    operation.result_ref?.id === command.params.cart_id
+  );
+}
 type Intent = {
   id: string;
   expiresAt: number;
@@ -548,7 +565,7 @@ export class CustomerService {
     );
     return this.finishWrite(f, command, response);
   }
-  private finishWrite(f: Flow, command: Command, response: any) {
+  private async finishWrite(f: Flow, command: Command, response: any) {
     const method = command.method;
     if (response.error) {
       if (
@@ -571,8 +588,17 @@ export class CustomerService {
     }
     const data = response.result?.data;
     if (!data?.operation) fail("INVALID_OPERATION_RESPONSE");
+    const cartFailure = settledCartFailure(command, data.operation);
+    if (cartFailure) {
+      data.resource = await this.read(f, "carts.get", {
+        cart_id: command.params.cart_id,
+      });
+      if (data.resource?.id !== command.params.cart_id)
+        fail("ORIGINAL_RESULT_UNKNOWN");
+    }
     this.apply(f, method, data);
     if (
+      cartFailure ||
       data.operation.status === "succeeded" ||
       (data.operation.status === "failed" && data.operation.effects === "none")
     ) {
@@ -1415,7 +1441,7 @@ export class CustomerService {
             c.method,
             c.params,
           );
-          this.finishWrite(f, c, response);
+          await this.finishWrite(f, c, response);
           return this.refresh(f);
         }
         fail("ORIGINAL_RESULT_UNKNOWN");
@@ -1423,7 +1449,9 @@ export class CustomerService {
       const op = r.result?.data;
       if (!op?.id) fail("ORIGINAL_RESULT_UNKNOWN");
       f.operation = op;
+      const cartFailure = settledCartFailure(c, op);
       if (
+        cartFailure ||
         op.status === "succeeded" ||
         (op.status === "failed" && op.effects === "none")
       ) {
@@ -1439,6 +1467,8 @@ export class CustomerService {
             [`${kind.slice(0, -1)}_id`]: ref.id,
           });
         }
+        if (cartFailure && resource?.id !== c.params.cart_id)
+          fail("ORIGINAL_RESULT_UNKNOWN");
         if (
           c.method === "commerce.carts.create" &&
           op.status === "succeeded" &&
