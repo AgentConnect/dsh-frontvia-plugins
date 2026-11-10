@@ -1,4 +1,4 @@
-import { fail, type PapService } from "dsh-pap/core";
+import { fail, type PapService } from "dsh-frontvia-pap/core";
 export async function hostedPayment(
   pap: Pick<PapService, "identity" | "requestBound">,
   ref: string,

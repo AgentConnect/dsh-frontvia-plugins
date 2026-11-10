@@ -1,4 +1,4 @@
-import { fail } from "dsh-pap/core";
+import { fail } from "dsh-frontvia-pap/core";
 
 export const shoppingProfile = "frontvia.conversation_purchase.v1";
 export const shoppingSupported = (cap: any) =>

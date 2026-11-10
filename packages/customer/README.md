@@ -1,6 +1,6 @@
 # dsh-frontvia-customer
 
-Frontvia shopping tools and native chat cards for official DeepSeek Harness 0.2.1-rc.3. Requires an activated dsh-pap bundle. Five Agent tool groups prepare shopping and query results; purchase confirmation is only on the owner UI route. Phone personal accounts support consultation and US/USD shopping without per-client merchant approval. See the repository README for server prerequisites and Mock-payment acceptance boundaries.
+Frontvia shopping tools and native chat cards for official DeepSeek Harness 0.2.2-rc.1. Requires an activated dsh-frontvia-pap bundle. Five Agent tool groups prepare shopping and query results; purchase confirmation is only on the owner UI route. Phone personal accounts support consultation and US/USD shopping without per-client merchant approval. See the repository README for server prerequisites and Mock-payment acceptance boundaries.
 
 人民币对话购物的收货地址与服务端一致：国家为 CN，姓名、电话和完整地址必填；省、市、邮编及补充地址是可选字符串。插件保留商家返回的地址原文，不要求把完整地址拆成省、市，也不自动补造这些字段。订单金额、确认摘要和付款链接仍单独校验。
 

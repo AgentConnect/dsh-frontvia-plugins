@@ -1,9 +1,7 @@
 import { build } from "esbuild";
+import { pluginPackages } from "./plugin-packages.mjs";
 import { mkdir, writeFile } from "node:fs/promises";
-for (const [folder, name] of [
-  ["pap", "dsh-pap"],
-  ["customer", "dsh-frontvia-customer"],
-]) {
+for (const { folder, name } of pluginPackages) {
   const root = `packages/${folder}`;
   await mkdir(`${root}/dist`, { recursive: true });
   for (const entry of ["core", "index"])

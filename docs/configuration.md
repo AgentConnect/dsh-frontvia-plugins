@@ -1,6 +1,6 @@
 # 当前配置入口
 
-账号登录只在“DSH 账号”，由同级 `pap-server/client` 中的账号插件提供；不再使用商家个人账号登录接口。PAP API 为 v2。新购买只走 Commerce，旧主体和咨询购买说明仅供历史恢复参考。
+账号登录只在“Frontvia 账号”，由本仓库 `packages/client` 的 `dsh-frontvia-client` 提供；不再使用商家个人账号登录接口。PAP API 为 v2。新购买只走 Commerce，旧主体和咨询购买说明仅供历史恢复参考。
 
 身份配置示例（占位域名，需由环境维护者确认）：
 
@@ -16,7 +16,7 @@
 
 独立账号的安装、登录和配置以本文开头及 README 为准。以下自管身份只用于兼容已有连接，不能替代独立账号的新购买。
 
-已有自管 PAP 身份的 Profile 可继续使用原配置：公开 CIMD、与私钥匹配的 ES256 JWKS 和声明的回调地址。支持公开接入的 Frontvia 服务自动校验客户端，无需商家逐客户端审批。账号配置由独立账号插件负责；独立账号登录入口在“DSH 账号”，PAP 页面只管理服务连接，不展示 DSH 账号状态。PAP 单独使用见 [PAP README](../packages/pap/README.md)。插件不会启动公开注册服务或按邮箱绑定现有买方。
+已有自管 PAP 身份的 Profile 可继续使用原配置：公开 CIMD、与私钥匹配的 ES256 JWKS 和声明的回调地址。支持公开接入的 Frontvia 服务自动校验客户端，无需商家逐客户端审批。账号配置由独立账号插件负责；独立账号登录入口在“Frontvia 账号”，PAP 页面只管理服务连接，不展示 DSH 账号状态。PAP 单独使用见 [PAP README](../packages/pap/README.md)。插件不会启动公开注册服务或按邮箱绑定现有买方。
 
 个人购物要求 Frontvia Schema52 和 `frontvia.personal_purchase.v1`，使用资源连接的 ES256/DPoP 证明，无需独立 HMAC 确认密钥。旧 `frontvia.pap_subject_purchase.v1` 仍保留商家批准的主体购买策略和 HMAC 密钥。
 

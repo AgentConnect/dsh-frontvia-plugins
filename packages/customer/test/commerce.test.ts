@@ -11,7 +11,7 @@ import {
   createPublicKey,
   verify,
 } from "node:crypto";
-import { Vault, PapError, jwt } from "dsh-pap/core";
+import { Vault, PapError, jwt } from "dsh-frontvia-pap/core";
 import { CustomerService, modelData, type PapPort } from "../src/core.js";
 import { schemas, tools } from "../src/tools.js";
 import { uiSchemas } from "../src/ui-contract.js";

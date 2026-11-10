@@ -7,7 +7,7 @@ import {
   canonical,
   type PapService,
   type Secrets,
-} from "dsh-pap/core";
+} from "dsh-frontvia-pap/core";
 import { ReadCache, SharedReads } from "./read-cache.js";
 import { z } from "zod";
 import {

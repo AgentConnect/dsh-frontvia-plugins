@@ -1,5 +1,5 @@
 import { attachFrontvia } from "../src/pap-integration.js";
-import { AccountClient, type PersonalConfig } from "dsh-identity-client/core";
+import { AccountClient, type PersonalConfig } from "dsh-frontvia-client/core";
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { mkdtempSync, readFileSync } from "node:fs";

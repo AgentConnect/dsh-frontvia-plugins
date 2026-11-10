@@ -239,14 +239,14 @@ export function apply(ctx: any) {
       if (document.visibilityState !== "hidden") views.refreshAll();
     };
     const notifyPap = () =>
-      window.dispatchEvent(new Event("pap-connections-change"));
-    window.addEventListener("dsh-identity-change", notifyPap);
-    window.addEventListener("dsh-identity-change", reset);
+      window.dispatchEvent(new Event("frontvia-pap-connections-change"));
+    window.addEventListener("frontvia-identity-change", notifyPap);
+    window.addEventListener("frontvia-identity-change", reset);
     window.addEventListener("focus", refresh);
     document.addEventListener("visibilitychange", refresh);
     return () => {
-      window.removeEventListener("dsh-identity-change", reset);
-      window.removeEventListener("dsh-identity-change", notifyPap);
+      window.removeEventListener("frontvia-identity-change", reset);
+      window.removeEventListener("frontvia-identity-change", notifyPap);
       window.removeEventListener("focus", refresh);
       document.removeEventListener("visibilitychange", refresh);
       views.clear();
@@ -1288,9 +1288,9 @@ export function apply(ctx: any) {
       <>
         <style>{styles}</style>
         <ServicePage
-          openAccount={() => ctx.layout.selectPanel("dsh-identity")}
+          openAccount={() => ctx.layout.selectPanel("dsh-frontvia-client")}
           call={call}
-          openConnections={() => ctx.layout.selectPanel("pap-connections")}
+          openConnections={() => ctx.layout.selectPanel("frontvia-pap-connections")}
           renderFlow={(ui, startShopping, addedQuantity, initialError) => (
             <FlowCard
               key={ui.flowId}

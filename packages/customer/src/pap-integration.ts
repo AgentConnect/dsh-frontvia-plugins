@@ -1,6 +1,6 @@
 import { hostedPayment } from "./hosted-payment.js";
-import { GRANT, PROFILE, type AccountClient } from "dsh-identity-client/core";
-import { fail, type PapService } from "dsh-pap/core";
+import { GRANT, PROFILE, type AccountClient } from "dsh-frontvia-client/core";
+import { fail, type PapService } from "dsh-frontvia-pap/core";
 
 export type IntegrationHost = Pick<
   PapService,

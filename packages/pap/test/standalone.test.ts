@@ -36,6 +36,13 @@ test("PAP activates alone with an empty profile and exposes only owner connectio
       },
     },
   };
+  const genericPap = { kind: "generic-pap" };
+  ctx.pap = genericPap;
+  Object.defineProperty(ctx, "frontviaIdentity", {
+    get() {
+      throw new Error("Frontvia PAP must not access an account");
+    },
+  });
   // Accidental account access fails immediately, rather than silently succeeding with a mock login.
   Object.defineProperty(ctx, "identity", {
     get() {
@@ -43,13 +50,13 @@ test("PAP activates alone with an empty profile and exposes only owner connectio
     },
   });
   const status = () =>
-    routes.get("/api/pap/status").fetch(
-      new Request("https://host.test/api/pap/status", {
+    routes.get("/api/frontvia-pap/status").fetch(
+      new Request("https://host.test/api/frontvia-pap/status", {
         method: "POST",
         body: JSON.stringify({
           type: "client-request",
           rpcId: "status",
-          method: "pap/status",
+          method: "frontvia-pap/status",
           payload: {},
         }),
       }),
@@ -57,14 +64,21 @@ test("PAP activates alone with an empty profile and exposes only owner connectio
   try {
     await apply(ctx);
     assert(!inject.includes("identity"));
+    assert(!inject.includes("frontviaIdentity"));
+    assert.equal(ctx.pap, genericPap);
+    assert.notEqual(ctx.frontviaPap, genericPap);
+    assert(
+      [...routes.keys()].every((path) => path.startsWith("/api/frontvia-pap/")),
+    );
+    assert(!routes.has("/api/pap/status"));
     const result = (await (await status()).json()).result;
     assert.equal(result.ok, true);
     assert.deepEqual(result.value.sites, []);
     assert.deepEqual(result.value.connections, []);
     assert.equal(result.value.client.signingKeyConfigured, false);
     assert.equal("personal" in result.value, false);
-    assert.equal("personalStatus" in ctx.pap, false);
-    assert.equal("hostedPayment" in ctx.pap, false);
+    assert.equal("personalStatus" in ctx.frontviaPap, false);
+    assert.equal("hostedPayment" in ctx.frontviaPap, false);
     assert.equal(keys.size, 1);
     ctx.connection.browserPeer.principal.kind = "guest";
     assert.equal((await status()).status, 403);
@@ -143,11 +157,11 @@ test("the built standalone entry and core have no account or commerce runtime im
       new URL(`../dist/${file}.js`, import.meta.url),
       "utf8",
     );
-    assert(!source.includes("dsh-identity-client"));
+    assert(!source.includes("dsh-frontvia-client"));
     assert(!source.includes("frontvia-personal-purchase+jwt"));
     assert(!source.includes("hosted-payer/rpc"));
     if (file === "client") {
-      assert(!source.includes("dsh-identity-change"));
+      assert(!source.includes("frontvia-identity-change"));
       assert(!source.includes("打开商城"));
       assert(!source.includes("DSH 账号"));
     }

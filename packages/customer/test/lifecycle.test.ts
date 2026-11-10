@@ -1,11 +1,11 @@
-import { AccountClient } from "dsh-identity-client/core";
+import { AccountClient } from "dsh-frontvia-client/core";
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { mkdtempSync, writeFileSync, readFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { randomBytes } from "node:crypto";
-import { Vault } from "dsh-pap/core";
+import { Vault } from "dsh-frontvia-pap/core";
 import { evaluatePluginCompatibility } from "@deepseek-ai/dsh-app-boot";
 import { serverResponseSchema } from "@deepseek-ai/dsh-client-connection";
 import { apply, inject } from "../src/index.js";
@@ -120,7 +120,7 @@ test("built PAP and Customer bundles preserve connection errors through tools an
   };
   const accountVault = new Vault(join(dir, "identity.sqlite"), key);
   cleanups.push(() => accountVault.close());
-  ctx.identity = {
+  ctx.frontviaIdentity = {
     account: new AccountClient(
       {
         origin: "https://identity.test",
@@ -144,7 +144,7 @@ test("built PAP and Customer bundles preserve connection errors through tools an
       "personal-verify",
       "personal-logout",
     ]) {
-      assert.equal(routes.has(`/api/pap/${operation}`), false);
+      assert.equal(routes.has(`/api/frontvia-pap/${operation}`), false);
       assert.equal(routes.has(`/api/frontvia-customer/${operation}`), true);
     }
     const tool = await definitions
@@ -185,24 +185,24 @@ test("built PAP and Customer bundles preserve connection errors through tools an
         }),
       );
     };
-    const status = (await (await call("pap/status")).json()).result.value;
+    const status = (await (await call("frontvia-pap/status")).json()).result.value;
     assert.equal("personal" in status, false);
     assert(!JSON.stringify(status).includes("host-only-otp-challenge"));
     const site = status.sites[0];
     ctx.connection.browserPeer.principal.kind = "guest";
     assert.equal(
-      (await call("pap/remove", { siteId: site.id, revision: site.revision }))
+      (await call("frontvia-pap/remove", { siteId: site.id, revision: site.revision }))
         .status,
       403,
     );
     assert.equal(
-      (await call("pap/restore", { siteId: site.id, revision: site.revision }))
+      (await call("frontvia-pap/restore", { siteId: site.id, revision: site.revision }))
         .status,
       403,
     );
     ctx.connection.browserPeer.principal.kind = "owner";
     const invalid = await (
-      await call("pap/remove", {
+      await call("frontvia-pap/remove", {
         siteId: site.id,
         revision: site.revision,
         extra: "not allowed",
@@ -212,12 +212,12 @@ test("built PAP and Customer bundles preserve connection errors through tools an
     assert.equal(
       (
         await (
-          await call("pap/remove", { siteId: site.id, revision: site.revision })
+          await call("frontvia-pap/remove", { siteId: site.id, revision: site.revision })
         ).json()
       ).result.ok,
       true,
     );
-    const deleted = (await (await call("pap/status")).json()).result.value;
+    const deleted = (await (await call("frontvia-pap/status")).json()).result.value;
     assert.equal(deleted.sites.length, 0);
     assert.equal(deleted.connections[0].connectionRef, "legacy");
     const history = (await (await call("frontvia-customer/list")).json()).result
@@ -227,7 +227,7 @@ test("built PAP and Customer bundles preserve connection errors through tools an
     assert.equal(
       (
         await (
-          await call("pap/restore", {
+          await call("frontvia-pap/restore", {
             siteId: site.id,
             revision: deleted.removedSites[0].revision,
           })
@@ -236,7 +236,7 @@ test("built PAP and Customer bundles preserve connection errors through tools an
       true,
     );
     assert.equal(
-      ctx.pap.status("legacy").bindingError,
+      ctx.frontviaPap.status("legacy").bindingError,
       "CONNECTION_BINDING_REQUIRED",
     );
   } finally {
@@ -256,7 +256,7 @@ test("Customer activation fails closed before registering routes or tools on inc
     tools: unknown[] = [],
     routes: unknown[] = [];
   const ctx = {
-    pap: { apiVersion: 1 },
+    frontviaPap: { apiVersion: 1 },
     credentials: {
       resolve: async () => ({ value: randomBytes(32).toString("base64url") }),
       set: async () => {},
@@ -274,13 +274,13 @@ test("Customer activation fails closed before registering routes or tools on inc
     );
     assert.deepEqual(tools, []);
     assert.deepEqual(routes, []);
-    assert.ok(inject.includes("pap"));
+    assert.ok(inject.includes("frontviaPap"));
   } finally {
     cleanups.forEach((f) => f());
   }
 });
-test("both bundles are accepted only on the approved DSH baseline without an exemption", () => {
-  for (const name of ["pap", "customer"]) {
+test("all three bundles are accepted only on the approved DSH baseline without an exemption", () => {
+  for (const name of ["client", "pap", "customer"]) {
     const manifest = JSON.parse(
       readFileSync(
         new URL(`../../${name}/package.json`, import.meta.url),
@@ -307,8 +307,8 @@ test("owner UI route preserves a business failure in the actual DSH response con
   const cleanups: (() => void)[] = [];
   const routes = new Map<string, any>();
   const ctx = {
-    identity: { account: { device: {} } },
-    pap: {
+    frontviaIdentity: { account: { device: {} } },
+    frontviaPap: {
       apiVersion: 2,
       registerAuthentication: () => () => {},
       registerStatement: () => () => {},

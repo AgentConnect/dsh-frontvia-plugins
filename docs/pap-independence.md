@@ -1,3 +1,5 @@
+> 当前 Frontvia 包名为 `dsh-frontvia-pap` / `dsh-frontvia-client` / `dsh-frontvia-customer`。PAP 包专供 Frontvia，不作为通用 PAP 插件发布。下文原名称与独立化记录仅保留其历史演进含义；当前构建/安装以仓库 README 为准。
+
 # PAP 独立连接管理
 
 PAP 可在未启用 DSH 账号与 Frontvia Customer 时启动。无客户端身份也能检查/导入服务，但建立连接需要服务接受的正式客户端身份。此变更不发布版本、不修改服务方或身份服务器。

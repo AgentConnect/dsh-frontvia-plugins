@@ -3,8 +3,8 @@ async (page) => {
   const state={configured:true,sites:[{id:'frontvia',label:'Frontvia Test Shop',domain:'frontvia.example.test'},{id:'second',label:'Northwind Store',domain:'northwind.example.test'}],connections:[],requests:[],delay:0,fail:'',failStatus:false,invalidUrl:false};
   const connection=(s)=>({connectionRef:`connection-${s.id}`,siteId:s.id,label:s.label,domain:s.domain,issuer:`https://${s.domain}/auth`,resource:`https://${s.domain}/commerce`,signedIn:false,connected:true,expiresAt:Math.floor(Date.now()/1000)+3600});
   state.connections=state.sites.map(connection);
-  await page.unroute('**/api/pap/*');
-  await page.route('**/api/pap/*',async route=>{
+  await page.unroute('**/api/frontvia-pap/*');
+  await page.route('**/api/frontvia-pap/*',async route=>{
     const b=route.request().postDataJSON(),op=b.method.split('/').at(-1);
     Object.assign(state,await page.evaluate(()=>window.__papTestControl||{}));
     await page.evaluate(()=>window.__papTestControl={});
@@ -23,7 +23,7 @@ async (page) => {
     await page.evaluate(s=>window.__papTestState=s,state);
     await route.fulfill({json:{type:'server-response',rpcId:b.rpcId,result:error?{ok:false,error}:{ok:true,value}}});
   });
-  await page.reload();await page.getByRole('button',{name:'PAP 连接',exact:true}).click();
+  await page.reload();await page.getByRole('button',{name:'Frontvia PAP 连接',exact:true}).click();
   await page.getByRole('region',{name:'PAP 连接管理'}).getByRole('heading',{name:'Frontvia Test Shop'}).waitFor();
   return {synthetic:true,merchants:state.sites.length};
 }

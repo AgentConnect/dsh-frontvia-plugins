@@ -1,4 +1,4 @@
-import type {} from "dsh-identity-client";
+import type {} from "dsh-frontvia-client";
 import { attachFrontvia } from "./pap-integration.js";
 import type { Context } from "@deepseek-ai/cordis";
 import { credentialRef } from "@deepseek-ai/dsh-credentials";
@@ -6,7 +6,7 @@ import {
   clientRequestSchema,
   type ConnectionRpcResult,
 } from "@deepseek-ai/dsh-client-connection";
-import type {} from "dsh-pap";
+import type {} from "dsh-frontvia-pap";
 import {
   PapError,
   fail,
@@ -14,7 +14,7 @@ import {
   profileStorage,
   readProfileConfig,
   type Secrets,
-} from "dsh-pap/core";
+} from "dsh-frontvia-pap/core";
 import type {} from "@deepseek-ai/dsh-app-boot";
 import { join } from "node:path";
 import { CustomerService, type CustomerConfig } from "./core.js";
@@ -22,8 +22,8 @@ import { tools, guidance } from "./tools.js";
 import { uiSchemas } from "./ui-contract.js";
 export const name = "dsh-frontvia-customer";
 export const inject = [
-  "pap",
-  "identity",
+  "frontviaPap",
+  "frontviaIdentity",
   "profileContext",
   "tools",
   "credentials",
@@ -54,20 +54,20 @@ export async function apply(
     secrets,
   );
   ctx.effect(() => () => vault.close());
-  if (ctx.pap.apiVersion !== 2) fail("PAP_VERSION_UNSUPPORTED");
-  const integration = attachFrontvia(ctx.pap, ctx.identity.account);
+  if (ctx.frontviaPap.apiVersion !== 2) fail("PAP_VERSION_UNSUPPORTED");
+  const integration = attachFrontvia(ctx.frontviaPap, ctx.frontviaIdentity.account);
   ctx.effect(() => () => integration.dispose());
   // Preserve the PAP service receiver; business-only operations belong to this adapter.
   const pap = {
     apiVersion: 2 as const,
-    sites: () => ctx.pap.sites(),
-    status: (ref?: string) => ctx.pap.status(ref),
-    connect: (site: string) => ctx.pap.connect(site),
-    identity: (ref: string) => ctx.pap.identity(ref),
-    request: (...args: Parameters<typeof ctx.pap.request>) =>
-      ctx.pap.request(...args),
-    canAccess: (ref: string) => ctx.pap.canAccess(ref),
-    capabilityCacheKey: (ref: string) => ctx.pap.capabilityCacheKey(ref),
+    sites: () => ctx.frontviaPap.sites(),
+    status: (ref?: string) => ctx.frontviaPap.status(ref),
+    connect: (site: string) => ctx.frontviaPap.connect(site),
+    identity: (ref: string) => ctx.frontviaPap.identity(ref),
+    request: (...args: Parameters<typeof ctx.frontviaPap.request>) =>
+      ctx.frontviaPap.request(...args),
+    canAccess: (ref: string) => ctx.frontviaPap.canAccess(ref),
+    capabilityCacheKey: (ref: string) => ctx.frontviaPap.capabilityCacheKey(ref),
     signResourceStatement: integration.signResourceStatement,
     hostedPayment: integration.hostedPayment,
   };
@@ -103,15 +103,15 @@ export async function apply(
             const a = uiSchemas[operation].parse(message.payload) as any;
             let value: any;
             if (operation === "personal-status")
-              value = await ctx.identity.account.refresh();
+              value = await ctx.frontviaIdentity.account.refresh();
             if (operation === "personal-code")
-              value = await ctx.identity.account.requestCode(a.phone);
+              value = await ctx.frontviaIdentity.account.requestCode(a.phone);
             if (operation === "personal-verify")
-              value = await ctx.identity.account.verify(a.code);
+              value = await ctx.frontviaIdentity.account.verify(a.code);
             if (operation === "personal-logout")
-              value = await ctx.identity.account.logout();
+              value = await ctx.frontviaIdentity.account.logout();
             if (operation === "list")
-              value = { flows: service.list(), sites: ctx.pap.sites() };
+              value = { flows: service.list(), sites: ctx.frontviaPap.sites() };
             if (operation === "open-store")
               value = await service.openStore(a.siteId, a.actionId);
             if (operation === "view")

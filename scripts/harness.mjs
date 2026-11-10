@@ -1,6 +1,7 @@
 import { spawnSync, spawn } from "node:child_process";
 import { access, readFile } from "node:fs/promises";
 import { resolve } from "node:path";
+import { pluginPackages } from "./plugin-packages.mjs";
 const root = resolve("."),
   home = resolve(process.env.DSH_FRONTVIA_HOME ?? ".local/dsh-home"),
   profile = "frontvia";
@@ -25,7 +26,7 @@ if (process.argv.includes("--install")) {
   const manifest = JSON.parse(
     await readFile(resolve(".local/packages/manifest.json"), "utf8"),
   );
-  for (const name of ["dsh-pap", "dsh-frontvia-customer"]) {
+  for (const { name, folder } of pluginPackages) {
     run([
       "plugin",
       "--profile",
@@ -33,7 +34,6 @@ if (process.argv.includes("--install")) {
       "add",
       manifest.artifacts.find((a) => a.name === name).path,
     ]);
-    const folder = name === "dsh-pap" ? "pap" : "customer";
     for (const f of ["index.js", "core.js", "client.js"]) {
       const built = await readFile(resolve(`packages/${folder}/dist/${f}`)),
         installed = await readFile(
