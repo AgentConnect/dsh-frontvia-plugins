@@ -48,6 +48,7 @@ import { items, money, Lines, Totals, Order } from "./commerce-display.js";
 import { OrderList } from "./order-list.js";
 import { storefrontOrders } from "./order-summary.js";
 import { ProductGallery } from "./product-gallery.js";
+import { ProductDescription } from "./product-description.js";
 import { StorefrontLoading } from "./storefront-loading.js";
 import { productImage } from "./product-image.js";
 import { PaymentCard, paymentState } from "./payment-card.js";
@@ -71,7 +72,7 @@ type Props = {
   addedQuantity?: number;
   onViewChange?: (scope: ViewScope, refresh?: boolean) => void;
 };
-const steps = [
+const defaultSteps = [
   "填写收货地址",
   "选择配送方式",
   "核对订单信息",
@@ -370,11 +371,25 @@ function StorefrontContent({
     }
   }, [tab, data, now]);
   const contactReady = cartContactReady(data?.cart, data?.pricing?.country);
+  const manualDelivery = manualCart(data?.cart);
+  const freeOrder = data?.quote?.totals?.grand_total?.amount_minor === "0";
+  const steps = defaultSteps.map((label, index) =>
+    manualDelivery && index === 1
+      ? "核对交付方式"
+      : freeOrder && index === 3
+        ? "确认零元订单"
+        : freeOrder && index === 4
+          ? "订单结果"
+          : label,
+  );
   const checkoutStep = locked
     ? 4
     : !contactReady
       ? 0
-      : (step ?? (data?.intent ? 3 : data?.quote ? 2 : 1));
+      : Math.max(
+          manualDelivery ? 1 : 0,
+          step ?? (data?.intent ? 3 : data?.quote ? 2 : 1),
+        );
   const deliveryRequested = useRef(false);
   const [preparingDelivery, setPreparingDelivery] = useState(false);
   const prepareDelivery = async () => {
@@ -609,11 +624,7 @@ function StorefrontContent({
                       <ProductGallery product={product} />
                       <div className="fv-stack fv-product-info">
                         <h3>{product?.title ?? "选择商品规格"}</h3>
-                        {product?.description?.trim() && (
-                          <p className="fv-product-description">
-                            {product.description}
-                          </p>
-                        )}
+                        <ProductDescription product={product} />
                         <Separator />
                         <CatalogTerms terms={product} />
                         <h4>规格与库存</h4>
@@ -1059,10 +1070,14 @@ function StorefrontContent({
                               disabled={blocked || !data.purchaseReady}
                               onClick={() => {
                                 setTab("checkout");
-                                // New checkout always starts with reviewing the
-                                // address, even if the merchant prefilled it.
+                                // Physical checkout reviews even a prefilled
+                                // address. Manual delivery never asks for one.
                                 setStep(
-                                  data.quote || data.checkout ? undefined : 0,
+                                  data.quote || data.checkout
+                                    ? undefined
+                                    : manualDelivery
+                                      ? 1
+                                      : 0,
                                 );
                               }}
                             >
@@ -1138,20 +1153,26 @@ function StorefrontContent({
                     </Button>
                   </div>
                   <ol className="fv-checkout-steps" aria-label="结账进度">
-                    {steps.map((label, index) => (
-                      <li
-                        key={label}
-                        aria-current={
-                          checkoutStep === index ? "step" : undefined
-                        }
-                        data-complete={index < checkoutStep}
-                      >
-                        <span>
-                          {index < checkoutStep ? <Check /> : index + 1}
-                        </span>
-                        {label}
-                      </li>
-                    ))}
+                    {steps.map((label, index) =>
+                      manualDelivery && index === 0 ? null : (
+                        <li
+                          key={label}
+                          aria-current={
+                            checkoutStep === index ? "step" : undefined
+                          }
+                          data-complete={index < checkoutStep}
+                        >
+                          <span>
+                            {index < checkoutStep ? (
+                              <Check />
+                            ) : (
+                              index + (manualDelivery ? 0 : 1)
+                            )}
+                          </span>
+                          {label}
+                        </li>
+                      ),
+                    )}
                   </ol>
                   {cartLines.length || locked ? (
                     <div className="fv-checkout-layout">
@@ -1165,6 +1186,8 @@ function StorefrontContent({
                                 disabled={blocked}
                                 onClick={() => {
                                   if (data.checkout) void edit();
+                                  else if (manualDelivery && checkoutStep === 1)
+                                    setTab("cart");
                                   else setStep(checkoutStep - 1);
                                 }}
                               >
@@ -1285,7 +1308,9 @@ function StorefrontContent({
                               </Card>
                             ))}
                             <p className="fv-muted">
-                              下一步核对商品、收货地址与最终费用。
+                              {manualDelivery
+                                ? "下一步核对商品、交付约定与最终费用。"
+                                : "下一步核对商品、收货地址与最终费用。"}
                             </p>
                             <Button
                               disabled={
@@ -1304,23 +1329,29 @@ function StorefrontContent({
                           <>
                             <Lines lines={data.quote?.lines ?? cartLines} />
                             <Separator />
-                            <div className="fv-stack">
-                              <h4>送至</h4>
-                              <p>
-                                {data.cart.shipping_address?.recipient} ·{" "}
-                                {data.cart.shipping_address?.phone}
+                            {manualDelivery ? (
+                              <p className="fv-muted">
+                                由商家按商品约定人工交付，无需填写收货地址。
                               </p>
-                              <p>
-                                {[
-                                  data.cart.shipping_address?.region,
-                                  data.cart.shipping_address?.city,
-                                  data.cart.shipping_address?.line1,
-                                  data.cart.shipping_address?.postal_code,
-                                ]
-                                  .filter(Boolean)
-                                  .join(" ")}
-                              </p>
-                            </div>
+                            ) : (
+                              <div className="fv-stack">
+                                <h4>送至</h4>
+                                <p>
+                                  {data.cart.shipping_address?.recipient} ·{" "}
+                                  {data.cart.shipping_address?.phone}
+                                </p>
+                                <p>
+                                  {[
+                                    data.cart.shipping_address?.region,
+                                    data.cart.shipping_address?.city,
+                                    data.cart.shipping_address?.line1,
+                                    data.cart.shipping_address?.postal_code,
+                                  ]
+                                    .filter(Boolean)
+                                    .join(" ")}
+                                </p>
+                              </div>
+                            )}
                             {quoteExpired && (
                               <Alert variant="warning">
                                 <AlertDescription>
@@ -1354,35 +1385,43 @@ function StorefrontContent({
                           <>
                             <Card>
                               <CardHeader>
-                                <CardTitle>商家收银台</CardTitle>
+                                <CardTitle>
+                                  {freeOrder ? "无需付款" : "商家收银台"}
+                                </CardTitle>
                                 <CardDescription>
-                                  确认订单后选择支付方式。
+                                  {freeOrder
+                                    ? "本次订单总额为零，确认后直接生成订单，不会发起付款。"
+                                    : "确认订单后选择支付方式。"}
                                 </CardDescription>
                               </CardHeader>
-                              <CardContent>
-                                <FieldSet className="fv-payment-method">
-                                  <FieldLegend>支付方式</FieldLegend>
-                                  <label>
-                                    <input
-                                      type="radio"
-                                      name="payment-method"
-                                      checked={paymentSelected}
-                                      onChange={() => setPaymentSelected(true)}
-                                      disabled={blocked}
-                                    />
-                                    <CreditCard />
-                                    商家提供的支付方式
-                                  </label>
-                                  <p className="fv-muted">
-                                    {data.pricing.currency === "CNY"
-                                      ? "商家提供支付宝扫码时，将在下一步显示二维码。"
-                                      : "可用的支付渠道在商家付款页中选择。"}
-                                  </p>
-                                </FieldSet>
-                              </CardContent>
+                              {!freeOrder && (
+                                <CardContent>
+                                  <FieldSet className="fv-payment-method">
+                                    <FieldLegend>支付方式</FieldLegend>
+                                    <label>
+                                      <input
+                                        type="radio"
+                                        name="payment-method"
+                                        checked={paymentSelected}
+                                        onChange={() =>
+                                          setPaymentSelected(true)
+                                        }
+                                        disabled={blocked}
+                                      />
+                                      <CreditCard />
+                                      商家提供的支付方式
+                                    </label>
+                                    <p className="fv-muted">
+                                      {data.pricing.currency === "CNY"
+                                        ? "商家提供支付宝扫码时，将在下一步显示二维码。"
+                                        : "可用的支付渠道在商家付款页中选择。"}
+                                    </p>
+                                  </FieldSet>
+                                </CardContent>
+                              )}
                             </Card>
                             <p>
-                              确认以上商品、收货信息及应付金额后，点击下方按钮提交订单。
+                              确认以上商品、交付约定及应付金额后，点击下方按钮提交订单。
                             </p>
                             {intentExpired || quoteExpired ? (
                               <Button
@@ -1395,7 +1434,7 @@ function StorefrontContent({
                               <Button
                                 disabled={
                                   blocked ||
-                                  !paymentSelected ||
+                                  (!freeOrder && !paymentSelected) ||
                                   !data.purchaseReady
                                 }
                                 onClick={async () => {
@@ -1407,7 +1446,7 @@ function StorefrontContent({
                                     setStep(4);
                                 }}
                               >
-                                确认购买 ·{" "}
+                                {freeOrder ? "确认下单" : "确认购买"} ·{" "}
                                 {money(data.quote?.totals?.grand_total)}
                               </Button>
                             )}

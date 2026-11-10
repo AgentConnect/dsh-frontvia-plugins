@@ -101,9 +101,15 @@ importers:
       dsh-identity-client:
         specifier: link:../../../dsh-identity/client
         version: link:../../../dsh-identity/client
+      entities:
+        specifier: 8.1.0
+        version: 8.1.0
       lucide-react:
         specifier: 1.66.0
         version: 1.66.0(@types/react@18.3.26)(react@18.3.1)
+      marked:
+        specifier: 18.1.2
+        version: 18.1.2
       react:
         specifier: ^18.3.1
         version: 18.3.1
@@ -3907,6 +3913,10 @@ packages:
     resolution: {integrity: sha512-Ev/hIyePLZtpL98x562lvPtenrUfGr0lfaf44HFZ+hDEwso7ccV9QAZrEVLg0hxNAzygaAFxy2dYaAKKM0G06A==}
     engines: {node: '>= 0.8'}
 
+  entities@8.1.0:
+    resolution: {integrity: sha512-kxL7msIffSuh9aaFAMD7rxAIuTRMAHMeBtgHW2yUdWw732ZNh4MehkF2gdjvtdmikkaIP9bFDDJOPlsvm7avrA==}
+    engines: {node: '>=20.19.0'}
+
   esbuild@0.25.12:
     resolution: {integrity: sha512-bbPBYYrtZbkt6Os6FiTLCTFxvq4tt3JKall1vRwshA3fdVztsLAatFaZobhkBC8/BrPetoa0oksYoKXoG4ryJg==}
     engines: {node: '>=18'}
@@ -4133,6 +4143,11 @@ packages:
     peerDependenciesMeta:
       '@types/react':
         optional: true
+
+  marked@18.1.2:
+    resolution: {integrity: sha512-DfOnvLAQ6WYeWxWO1u4RyFOeqyHup6dks5PPqnoFiooU7ipRvidO/2j8plhAHIiZg574E9ZlzSjUiPMLAzFkgg==}
+    engines: {node: '>= 20'}
+    hasBin: true
 
   mime-db@1.54.0:
     resolution: {integrity: sha512-aU5EJuIN2WDemCcAp2vFBfp/m4EAhWJnUNSSw0ixs7/kXbd6Pg64EmwJkNdFhB8aWt1sH2CTXrLxo/iAGV3oPQ==}
@@ -9232,6 +9247,8 @@ snapshots:
 
   encodeurl@2.0.1: {}
 
+  entities@8.1.0: {}
+
   esbuild@0.25.12:
     optionalDependencies:
       '@esbuild/aix-ppc64': 0.25.12
@@ -9522,6 +9539,8 @@ snapshots:
       react: 18.3.1
     optionalDependencies:
       '@types/react': 18.3.26
+
+  marked@18.1.2: {}
 
   mime-db@1.54.0: {}
 
