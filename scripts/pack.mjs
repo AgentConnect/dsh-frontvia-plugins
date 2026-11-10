@@ -10,7 +10,7 @@ let identityFolder;
 try {
   identityFolder = dirname(fileURLToPath(import.meta.resolve("dsh-identity-client/package.json")));
 } catch {
-  throw new Error("缺少同级 dsh-identity/client；先按 README 克隆 pap-server 为 dsh-identity 并安装两个仓库的依赖。");
+  throw new Error("缺少同级 pap-server/client；先按 README 克隆 pap-server 并安装两个仓库的依赖。");
 }
 const bundles = [
   [identityFolder, "dsh-identity-client"],

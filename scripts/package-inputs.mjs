@@ -9,6 +9,6 @@ export async function assertBundleInputs(folder, name) {
       if (!info.isFile() || !info.size) throw new Error('missing build output');
     }
   } catch {
-    throw new Error(`构建产物不完整：${name}。先构建同级 dsh-identity（pnpm build），再构建插件；不会安装不完整的包。`);
+    throw new Error(`构建产物不完整：${name}。先构建同级 pap-server（pnpm build），再构建插件；不会安装不完整的包。`);
   }
 }
