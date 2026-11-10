@@ -19,6 +19,12 @@ export function paymentState(data: any, now: number) {
   );
   if (data.cancelPending) return "canceling";
   if (data.pending) return "unknown";
+  if (
+    status === "not_required" &&
+    data.order?.payment_required === false &&
+    data.order?.totals?.grand_total?.amount_minor === "0"
+  )
+    return "not_required";
   if (status === "refunded") return "refunded";
   if (status === "partially_refunded") return "partially_refunded";
   if (["paid", "captured"].includes(status)) return "paid";
@@ -70,6 +76,7 @@ const labels = {
     "部分付款",
     "已收到部分款项，剩余应付金额请在原订单付款页核对。",
   ],
+  not_required: ["无需付款", "免费订单已建立，交付进度见下方订单。"],
   paid: ["已支付", "商家已确认收款，配送进度见下方订单。"],
   processing: ["支付处理中", "正在等待支付渠道确认，请刷新原订单结果。"],
   expired: [

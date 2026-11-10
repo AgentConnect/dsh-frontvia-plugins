@@ -175,3 +175,16 @@ test("only host-authorized cancellation renders an owner confirmation entry", ()
   );
   assert.doesNotMatch(disabled, /取消订单/);
 });
+
+test("free orders never show payment links or claim captured money", () => {
+  const data = view("not_required");
+  Object.assign(data.order, {
+    payment_required: false,
+    totals: { grand_total: { currency: "CNY", amount_minor: "0" } },
+  });
+  assert.equal(paymentState(data, now), "not_required");
+  assert.match(render(data), /无需付款/);
+  assert.doesNotMatch(render(data), /去付款|已支付|href=|支付二维码/);
+  data.order.totals.grand_total.amount_minor = "1";
+  assert.equal(paymentState(data, now), "unknown");
+});

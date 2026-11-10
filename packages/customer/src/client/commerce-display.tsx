@@ -1,3 +1,4 @@
+import { CatalogTerms } from "./catalog-terms.js";
 import React from "react";
 import {
   Package,
@@ -41,6 +42,10 @@ export function Lines({ lines = [] }: { lines?: any[] }) {
                 ? ` · ${l.variant_title}`
                 : ""}
             </p>
+            {l.buyer_note && (
+              <p className="fv-muted">购买备注：{l.buyer_note}</p>
+            )}
+            <CatalogTerms terms={l.catalog?.public_snapshot} compact />
           </div>
           <span className="fv-line-price">
             {money(l.totals?.grand_total ?? l.total ?? l.unit_price)}
@@ -105,6 +110,7 @@ export function Order({ order }: { order: any }) {
   const summary = orderStatus(order);
   const payment: Record<string, string> = {
     paid: "已付款",
+    not_required: "无需付款",
     unpaid: "未付款",
     partially_paid: "部分付款",
     partially_refunded: "部分退款",
@@ -168,6 +174,57 @@ export function Order({ order }: { order: any }) {
         </div>
       </dl>
       <Lines lines={order.lines} />
+      {order.manual_deliveries?.items?.map((record: any) => (
+        <section key={record.record_id} className="fv-stack">
+          <h4>{record.kind === "correction" ? "交付更正" : "商家交付"}</h4>
+          <p className="fv-product-description">{record.content}</p>
+          {record.links
+            ?.filter((url: string) => /^https:\/\//.test(url))
+            .map((url: string) => (
+              <a
+                key={url}
+                href={url}
+                target="_blank"
+                rel="noopener noreferrer"
+                referrerPolicy="no-referrer"
+              >
+                打开交付资料
+              </a>
+            ))}
+          <p className="fv-muted">{record.created_at}</p>
+        </section>
+      ))}
+      {order.shipments?.map((shipment: any) => (
+        <section key={shipment.id} className="fv-stack">
+          <h4>物流配送</h4>
+          {shipment.tracking?.map((tracking: any, i: number) => (
+            <p key={i}>
+              {tracking.carrier} {tracking.tracking_number}
+            </p>
+          ))}
+          {shipment.logistics?.snapshot ? (
+            <>
+              <p>物流状态：{shipment.logistics.snapshot.status}</p>
+              <ol>
+                {shipment.logistics.snapshot.events?.map(
+                  (event: any, i: number) => (
+                    <li key={i}>
+                      <time>{event.time}</time> · {event.description}
+                    </li>
+                  ),
+                )}
+              </ol>
+            </>
+          ) : (
+            <p className="fv-muted">暂无物流轨迹</p>
+          )}
+          {shipment.logistics?.query?.state === "failed" && (
+            <p className="fv-muted">
+              最新物流查询未成功，已保留上次轨迹。请稍后刷新。
+            </p>
+          )}
+        </section>
+      ))}
       <Separator />
       <div className="fv-total">
         <span>订单合计</span>

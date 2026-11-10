@@ -104,7 +104,7 @@ export function httpsTransport(
     if (
       !Number.isSafeInteger(maxResponseBytes) ||
       maxResponseBytes < 1 ||
-      maxResponseBytes > 2 * 1024 * 1024
+      maxResponseBytes > 8 * 1024 * 1024
     )
       fail("INVALID_RESPONSE_LIMIT");
     const url = new URL(raw),

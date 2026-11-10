@@ -1,3 +1,4 @@
+import { CatalogTerms, Attributes } from "./catalog-terms.js";
 import type { StartShopping } from "./storefront-cart.js";
 import type { ViewScope } from "../view-scope.js";
 import React, { useEffect, useId, useRef, useState } from "react";
@@ -50,7 +51,12 @@ import { ProductGallery } from "./product-gallery.js";
 import { StorefrontLoading } from "./storefront-loading.js";
 import { productImage } from "./product-image.js";
 import { PaymentCard, paymentState } from "./payment-card.js";
-import { isRequiredContact, cartContactReady } from "../contact-fields.js";
+import {
+  isRequiredContact,
+  cartContactReady,
+  deliveryReady as currentDeliveryReady,
+  manualCart,
+} from "../contact-fields.js";
 import type { ShoppingAction } from "../shopping-action.js";
 type Action = (operation: string, payload?: any) => Promise<boolean>;
 type Props = {
@@ -350,9 +356,13 @@ function StorefrontContent({
   useEffect(() => {
     if (tab !== "checkout" || !data?.order) return;
     if (
-      ["paid", "closed", "refunded", "partially_refunded"].includes(
-        paymentState(data, now),
-      )
+      [
+        "paid",
+        "not_required",
+        "closed",
+        "refunded",
+        "partially_refunded",
+      ].includes(paymentState(data, now))
     ) {
       setOrderDetail(false);
       setShowOrderDetails(true);
@@ -392,12 +402,7 @@ function StorefrontContent({
   const deliveryGroups = deliveryCurrent
     ? (data.delivery.delivery_groups ?? [])
     : [];
-  const deliveryReady =
-    deliveryGroups.length > 0 &&
-    !data.delivery.requirements?.some((r: any) => r.blocking) &&
-    deliveryGroups.every((g: any) =>
-      g.options.some((o: any) => o.id === g.selected_option_id),
-    );
+  const deliveryReady = currentDeliveryReady(data?.cart, data?.delivery);
   const quoteExpired = !data?.quote || Date.parse(data.quote.expires_at) <= now;
   const intentExpired = !data?.intent || data.intent.expiresAt <= now;
   const cartLines = locked ? [] : (data?.cart?.lines ?? []);
@@ -610,13 +615,17 @@ function StorefrontContent({
                           </p>
                         )}
                         <Separator />
+                        <CatalogTerms terms={product} />
                         <h4>规格与库存</h4>
                         {items(data.variants).length ? (
                           items(data.variants).map((v: any) => {
                             const unavailable =
+                              v.buyable === false ||
+                              v.sale_status === "paused" ||
                               ["out_of_stock", "unavailable"].includes(
                                 v.availability?.status,
-                              ) || v.availability?.quantity_available === 0;
+                              ) ||
+                              v.availability?.quantity_available === 0;
                             const quantityText = quantities[v.id] ?? "1";
                             const quantity = Number(quantityText);
                             const stock = v.availability?.quantity_available;
@@ -652,6 +661,7 @@ function StorefrontContent({
                                   </CardDescription>
                                 </CardHeader>
                                 <CardContent>
+                                  <Attributes terms={v} />
                                   <p className="fv-price">
                                     {money(v.unit_price)}
                                   </p>
@@ -1197,7 +1207,9 @@ function StorefrontContent({
                               <div className="fv-section-heading">
                                 <p className="fv-muted">
                                   {deliveryReady
-                                    ? "已选好配送方式，可按需更换。"
+                                    ? manualCart(data?.cart)
+                                      ? "由商家交付，无需物流配送。"
+                                      : "已选好配送方式，可按需更换。"
                                     : deliveryGroups.some(
                                           (g: any) => g.options.length,
                                         )

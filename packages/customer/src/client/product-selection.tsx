@@ -1,3 +1,4 @@
+import { CatalogTerms, Attributes } from "./catalog-terms.js";
 import React, { useEffect, useState } from "react";
 import { ArrowLeft, ShoppingCart } from "lucide-react";
 import {
@@ -87,7 +88,12 @@ export function ProductSelection({
       {selecting ? (
         <>
           <div className="fv-chat-product-detail" data-has-product={!!product}>
-            {product && <ProductGallery product={product} />}
+            {product && (
+              <div className="fv-stack">
+                <ProductGallery product={product} />
+                <CatalogTerms terms={product} />
+              </div>
+            )}
             {variants.length ? (
               <div
                 className="fv-stack fv-chat-variants"
@@ -109,6 +115,8 @@ export function ProductSelection({
                         )
                       : 100;
                   const unavailable =
+                    v.buyable === false ||
+                    v.sale_status === "paused" ||
                     ["out_of_stock", "unavailable"].includes(stock?.status) ||
                     maximum === 0;
                   const quantityKey = JSON.stringify([
@@ -141,6 +149,7 @@ export function ProductSelection({
                           </p>
                         )}
                         {v.sku && <p className="fv-muted">SKU：{v.sku}</p>}
+                        <Attributes terms={v} />
                         <p className="fv-price">
                           {formatPrice(v.unit_price)}
                           {data.historicalCatalog && (

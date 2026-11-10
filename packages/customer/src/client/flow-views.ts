@@ -37,7 +37,11 @@ export function pollCadence(data: any, scopes: ViewScope[]): number {
       payment === "refunded"
     )
       return 0;
-    if (["paid", "captured", "partially_refunded"].includes(payment))
+    if (
+      ["paid", "captured", "not_required", "partially_refunded"].includes(
+        payment,
+      )
+    )
       return ["delivered"].includes(order.fulfillment_status) ||
         order.status === "completed"
         ? 0

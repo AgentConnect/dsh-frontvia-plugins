@@ -214,7 +214,7 @@ export class CustomerService {
     const site = this.pap.sites().find((s) => s.id === f.siteId);
     if (
       site?.description?.methods.includes("commerce.capabilities.get") &&
-      site.service?.store_id === f.storeId
+      (site.service?.store_id ?? f.capabilities?.store_id) === f.storeId
     )
       return { siteId: f.siteId, storeId: f.storeId };
     return fail("SITE_NOT_APPROVED");
@@ -235,6 +235,9 @@ export class CustomerService {
           `commerce.${method}`,
           params,
           signal,
+          /^(products|variants|carts|quotes|orders)\./.test(method)
+            ? { maxResponseBytes: 8 * 1024 * 1024 }
+            : undefined,
         );
         if (r.error)
           fail(
@@ -289,7 +292,7 @@ export class CustomerService {
     )
       fail("METHOD_UNAVAILABLE");
   }
-  private async currentCapabilities(f: Flow, fresh = false) {
+  private async currentCapabilities(f: Flow, fresh = false, bindStore = false) {
     if (fresh) this.catalogCache.clear();
     const key = this.pap.capabilityCacheKey?.(f.connectionRef);
     const cap = await this.capabilitiesCache.get(
@@ -297,7 +300,13 @@ export class CustomerService {
       () => this.read(f, "capabilities.get"),
       fresh,
     );
-    if (cap.store_id !== f.storeId || !Array.isArray(cap.methods))
+    if (
+      bindStore &&
+      typeof cap.store_id === "string" &&
+      /^[A-Za-z0-9_-]{1,128}$/.test(cap.store_id)
+    )
+      f.storeId = cap.store_id;
+    if (!f.storeId || cap.store_id !== f.storeId || !Array.isArray(cap.methods))
       fail("STORE_BINDING_MISMATCH");
     f.capabilities = cap;
     f.purchaseReady = await this.purchaseReady(f);
@@ -375,9 +384,8 @@ export class CustomerService {
     return this.serial.run(`connect:${sessionId}:${siteId}`, async () => {
       const policy =
         this.config.sites.find((s) => s.siteId === siteId) ??
-        (site?.description?.methods.includes("commerce.capabilities.get") &&
-        site.service?.store_id
-          ? { siteId, storeId: site.service.store_id }
+        (site?.description?.methods.includes("commerce.capabilities.get")
+          ? { siteId, storeId: site.service?.store_id ?? "" }
           : fail("SITE_NOT_APPROVED"));
       const existing = this.list(sessionId).find((f) => f.siteId === siteId),
         flowId = existing?.flowId ?? randomUUID();
@@ -396,9 +404,10 @@ export class CustomerService {
               updatedAt: "",
             };
         if (f.connectionRef !== c.connectionRef) fail("IDENTITY_CHANGED");
-        await this.currentCapabilities(f);
+        await this.currentCapabilities(f, false, !existing && !policy.storeId);
         const cap = f.capabilities;
-        if (cap.store_id !== policy.storeId) fail("STORE_BINDING_MISMATCH");
+        if (policy.storeId && cap.store_id !== policy.storeId)
+          fail("STORE_BINDING_MISMATCH");
         f.capabilities = cap;
         const connections = cap.methods?.some(
           (m: any) =>
@@ -901,10 +910,7 @@ export class CustomerService {
           }
         : {}),
       cartVersion: f.cart?.version,
-      contactReady: contactSchema.safeParse({
-        ...(f.cart?.email ? { email: f.cart.email } : {}),
-        shipping_address: f.cart?.shipping_address,
-      }).success,
+      contactReady: cartContactReady(f.cart, pricing(f).country),
       pending: !!f.pending,
     });
   }

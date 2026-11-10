@@ -12,6 +12,18 @@ test("checkout address readiness uses CN and US required fields, not address-obj
     },
   };
   assert.equal(cartContactReady(cn, "CN"), true);
+  assert.equal(
+    cartContactReady(
+      {
+        shipping_address: {
+          ...cn.shipping_address,
+          phone: "021-12345678 转 123",
+        },
+      },
+      "CN",
+    ),
+    true,
+  );
   for (const address of [
     undefined,
     null,
@@ -19,7 +31,7 @@ test("checkout address readiness uses CN and US required fields, not address-obj
     { country: "CN" },
     { ...cn.shipping_address, recipient: " " },
     { ...cn.shipping_address, line1: "" },
-    { ...cn.shipping_address, phone: "123" },
+    { ...cn.shipping_address, phone: " " },
   ])
     assert.equal(cartContactReady({ shipping_address: address }, "CN"), false);
   const us = {
@@ -44,4 +56,17 @@ test("checkout address readiness uses CN and US required fields, not address-obj
       ),
       false,
     );
+});
+
+test("manual carts skip addresses only with complete current snapshots", () => {
+  const line = { catalog: { public_snapshot: { fulfillment_kind: "manual" } } };
+  const cart = { id: "cart", version: "v1", lines: [line] };
+  assert.equal(cartContactReady(cart, "CN"), true);
+  for (const lines of [
+    [],
+    [{}],
+    [line, {}],
+    [line, { catalog: { public_snapshot: { fulfillment_kind: "physical" } } }],
+  ])
+    assert.equal(cartContactReady({ ...cart, lines }, "CN"), false);
 });
