@@ -104,7 +104,7 @@ function AccountServicePage({
         if (active) setData(value);
       })
       .catch(() => {
-        if (active) setError("暂时无法读取商家，请重试。");
+        if (active) setError("暂时无法读取服务入口，请重试。");
       })
       .finally(() => {
         if (active) setLoading(false);
@@ -220,7 +220,7 @@ function AccountServicePage({
             <Button
               variant="ghost"
               size="icon"
-              aria-label="刷新商家"
+              aria-label="刷新服务"
               disabled={loading || opening}
               onClick={() => setRefresh((n) => n + 1)}
             >
@@ -228,7 +228,7 @@ function AccountServicePage({
             </Button>
             <Button variant="outline" onClick={openConnections}>
               <Link2 data-icon="inline-start" />
-              管理商家连接
+              管理服务连接
             </Button>
           </div>
         </header>
@@ -250,11 +250,11 @@ function AccountServicePage({
         ) : !merchants.length ? (
           <Empty>
             <Store />
-            <EmptyTitle>连接你的第一家店铺</EmptyTitle>
+            <EmptyTitle>添加第一个服务入口</EmptyTitle>
             <EmptyDescription>
-              添加商家服务后，即可浏览商品、下单和查看订单。
+              添加商家的购物或咨询服务后，即可使用对应能力。
             </EmptyDescription>
-            <Button onClick={openConnections}>连接商家</Button>
+            <Button onClick={openConnections}>添加服务</Button>
           </Empty>
         ) : (
           <>
@@ -267,7 +267,7 @@ function AccountServicePage({
               />
             ) : (
               <>
-                <nav aria-label="店铺导航" className="fv-store-breadcrumb">
+                <nav aria-label="服务导航" className="fv-store-breadcrumb">
                   <Button
                     variant="ghost"
                     size="sm"
@@ -275,7 +275,7 @@ function AccountServicePage({
                     onClick={() => setChoosing(true)}
                   >
                     <ArrowLeft data-icon="inline-start" />
-                    全部店铺（{merchants.length}）
+                    全部服务（{merchants.length}）
                   </Button>
                   <span aria-current="page">{merchant.title}</span>
                 </nav>

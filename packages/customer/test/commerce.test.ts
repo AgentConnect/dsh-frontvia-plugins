@@ -435,6 +435,7 @@ function fixture(cache = false, cny = false, language?: string) {
     );
   return {
     remote,
+    pap,
     country,
     currency,
     db,
@@ -1215,13 +1216,13 @@ test("opaque API pagination cursors remain intact through model output and tool 
     );
   }
 });
-test("DSH tool registration exposes provider-compatible direct commerce and knowledge tools, never purchase confirm", () => {
+test("DSH tool registration exposes direct commerce, advice and knowledge, never purchase confirm", () => {
   const f = fixture();
   try {
     const definitions = tools(f.service);
     assert.deepEqual(
       definitions.map((t) => t.name),
-      Object.keys(schemas).filter((n) => n !== "frontvia_consultation"),
+      Object.keys(schemas),
     );
     for (const t of definitions) {
       assert.equal(t.parameters.type, "object");
@@ -4028,5 +4029,40 @@ test("first-create recovery keeps its key when a success receipt lacks a cart re
     } finally {
       f.close();
     }
+  }
+});
+
+// Imported links have no private operator config or exported service.store_id.
+test("Commerce resource links bind their first flow to authenticated capabilities", async () => {
+  const f = fixture(false, true);
+  try {
+    f.service.config.sites = [];
+    const original = f.pap.sites()[0];
+    f.pap.sites = () => [
+      {
+        ...original,
+        description: {
+          methods: ["commerce.capabilities.get", "commerce.products.search", "commerce.connections.list"],
+        } as any,
+      },
+    ];
+    const ui = await f.service.openStore("a", randomUUID());
+    assert.equal(f.vault.get<any>("flow:" + ui.flowId).storeId, "store");
+    f.restart();
+    assert.equal(f.service.list().length, 1);
+    const request = f.pap.request;
+    f.pap.request = async (...args: Parameters<typeof request>) => {
+      const result = await request(...args);
+      if (args[1] === "commerce.capabilities.get")
+        result.result.data.store_id = "other-store";
+      return result;
+    };
+    await assert.rejects(
+      f.service.connect(ui.sessionId, "a"),
+      /STORE_BINDING_MISMATCH/,
+    );
+    assert.equal(f.vault.get<any>("flow:" + ui.flowId).storeId, "store");
+  } finally {
+    f.close();
   }
 });

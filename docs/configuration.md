@@ -1,10 +1,22 @@
-# 配置说明
+# 当前配置入口
 
-安装后直接进入「Frontvia 服务」使用手机号登录。默认使用公开的 Frontvia 个人账号服务，账号与服务记录分别存入当前 DSH Profile 的加密数据库。再次启动会向账号服务验证已保存的会话；过期或被撤销时可重新登录。临时网络故障保留会话，可重试。
+账号登录只在“DSH 账号”，由同级 `dsh-identity` 仓库提供；不再使用商家个人账号登录接口。PAP API 为 v2。新购买只走 Commerce，旧主体和咨询购买说明仅供历史恢复参考。
 
-默认模式在首次连接商家时由 DSH 为当前 Profile 生成 ES256 密钥，向账号服务的 `/v1/personal/pap/devices` 提交公钥和持有证明，并保存返回的 HTTPS 客户端标识。再次连接复用已登记的设备身份，服务端轮换摘要密钥后客户端标识仍有效。本机签名密钥遗失时，下次连接生成独立密钥及商家连接。旧记录保留原引用；继续使用新身份时应新开聊天。旧服务端缺少此接口时仍可登录；商家连接显示服务端需更新。
+身份配置示例（占位域名，需由环境维护者确认）：
 
-已有自管 PAP 身份的 Profile 可继续使用原配置：公开 CIMD、与私钥匹配的 ES256 JWKS 和声明的回调地址。支持公开接入的 Frontvia 服务自动校验客户端，无需商家逐客户端审批。账号配置由独立账号插件负责；登录入口在账号或 Frontvia 页面，PAP 页面只管理服务连接，不展示 DSH 账号状态。PAP 单独使用见 [PAP README](../packages/pap/README.md)。插件不会启动公开注册服务或按邮箱绑定现有买方。
+```json
+{"origin":"https://identity.example.test","requestOrigin":"https://dsh.example.test","audiences":["https://shop.example.test/companies/a"]}
+```
+
+存入当前 desktop Profile 的 `identity-config.json`，权限0600，文件属于当前用户且不能为符号链接。不在此文件保存手机号、OTP、Bearer或签名私钥；这些由宿主凭据服务管理。不要从商家导入配置推导身份服务地址。
+
+以下旧配置段落为历史自管身份／原交易恢复说明；当前安装与新购买以 README 为准。
+
+# 历史配置说明
+
+独立账号的安装、登录和配置以本文开头及 README 为准。以下自管身份只用于兼容已有连接，不能替代独立账号的新购买。
+
+已有自管 PAP 身份的 Profile 可继续使用原配置：公开 CIMD、与私钥匹配的 ES256 JWKS 和声明的回调地址。支持公开接入的 Frontvia 服务自动校验客户端，无需商家逐客户端审批。账号配置由独立账号插件负责；独立账号登录入口在“DSH 账号”，PAP 页面只管理服务连接，不展示 DSH 账号状态。PAP 单独使用见 [PAP README](../packages/pap/README.md)。插件不会启动公开注册服务或按邮箱绑定现有买方。
 
 个人购物要求 Frontvia Schema52 和 `frontvia.personal_purchase.v1`，使用资源连接的 ES256/DPoP 证明，无需独立 HMAC 确认密钥。旧 `frontvia.pap_subject_purchase.v1` 仍保留商家批准的主体购买策略和 HMAC 密钥。
 
@@ -59,7 +71,7 @@ Customer 配置（0600）：
 
 `signingKeyRef` 对应 ES256 PKCS8 PEM；两个 `storageKeyRef` 对应独立的 32 字节 base64url 密钥。仅旧主体购买需要在 site 中增加 `confirmationKeyRef` 和 `confirmationKid`，对应另一份独立的 32 字节密钥和服务端批准策略。首次导入通过宿主凭据服务或受保护启动环境完成，插件将解析后的密钥保存到 DSH 凭据存储。不要把密钥放到命令行、聊天或 Git。
 
-Profile patch 使用 rc.3 的按 ID 配置语法：
+Profile patch 使用当前宿主的按 ID 配置语法：
 
 ```yaml
 - id: dsh-pap
@@ -70,9 +82,9 @@ Profile patch 使用 rc.3 的按 ID 配置语法：
     configFile: /private/profile-frontvia/customer.json
 ```
 
-两个 bundle 必须已经安装并启用；patch 不能替代安装。用 `scripts/run-configured.mjs` 生成的验收 Profile 提供五组购物工具和咨询、知识两组服务工具，关闭通用 shell、文件、委派和插件管理工具，避免模型读取本机密钥文件。宿主、其他本地插件和当前 OS 用户属于受信任边界。
+PAP 和 Customer bundle 必须已经安装并启用；Customer 还依赖独立账号插件；patch 不能替代安装。用 `scripts/run-configured.mjs` 生成的验收 Profile 提供五组购物工具和咨询、知识两组服务工具，关闭通用 shell、文件、委派和插件管理工具，避免模型读取本机密钥文件。宿主、其他本地插件和当前 OS 用户属于受信任边界。
 
-`ctx.pap` API v1：`sites()`、`discover(siteId)`、`connect(siteId)`、`status(connectionRef?)`、`authorize(connectionRef, scopes)`、`callback(connectionRef, url)`、`disconnect(connectionRef)`、`request(connectionRef, method, params, signal?)`。`identity` 为宿主消费方进行确认绑定使用，不得转发到模型。连接引用不含秘密。
+`ctx.pap` API v2：`sites()`、`discover(siteId)`、`connect(siteId)`、`status(connectionRef?)`、`authorize(connectionRef, scopes)`、`callback(connectionRef, url)`、`disconnect(connectionRef)`、`request(connectionRef, method, params, signal?)`。`identity` 为宿主消费方进行确认绑定使用，不得转发到模型。连接引用不含秘密。
 
 连接首次创建时会在加密存储中固定 `clientId`、`callback`、商家 `domain`、`issuer` 和 `resource`。同一 siteId 的任一绑定字段发生变化后，旧连接返回 `CONNECTION_BINDING_CHANGED`，不会发送旧 Token、签名断言或撤销请求；恢复原配置后可以继续使用原身份。仅修改展示名称不影响连接。要接入不同商家，应配置独立 siteId 和对应的 Customer 商家策略。
 

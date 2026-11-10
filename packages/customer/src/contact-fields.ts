@@ -19,7 +19,12 @@ const address = z
     city: z.string().trim().max(100).optional(),
     region: z.string().trim().max(100).optional(),
     postal_code: z.string().trim().max(40).optional(),
-    phone: z.string().trim().max(40).optional(),
+    phone: z
+      .string()
+      .trim()
+      .max(40)
+      .refine((v) => !v.includes("\0"))
+      .optional(),
   })
   .strict();
 export const contactSchema = z
@@ -27,7 +32,7 @@ export const contactSchema = z
   .strict()
   .superRefine((v, ctx) => {
     const a = v.shipping_address;
-    if (a.country === "CN" && (!a.phone || !/^\+?[0-9 -]{6,40}$/.test(a.phone)))
+    if (a.country === "CN" && !a.phone)
       ctx.addIssue({
         code: "custom",
         path: ["shipping_address", "phone"],
@@ -51,6 +56,7 @@ export function cartContactReady(
   cart: any,
   country: string | undefined,
 ): boolean {
+  if (manualCart(cart)) return true;
   return (
     !!country &&
     cart?.shipping_address?.country === country &&
@@ -58,5 +64,32 @@ export function cartContactReady(
       ...(cart?.email ? { email: cart.email } : {}),
       shipping_address: cart?.shipping_address,
     }).success
+  );
+}
+
+/** Missing, mixed, or empty snapshots never waive a shipping requirement. */
+export function manualCart(cart: any): boolean {
+  return (
+    Array.isArray(cart?.lines) &&
+    cart.lines.length > 0 &&
+    cart.lines.every(
+      (line: any) =>
+        line.catalog?.public_snapshot?.fulfillment_kind === "manual",
+    )
+  );
+}
+
+export function deliveryReady(cart: any, delivery: any): boolean {
+  return (
+    !!cart &&
+    !!delivery &&
+    delivery.cart_id === cart.id &&
+    delivery.cart_version === cart.version &&
+    Array.isArray(delivery.delivery_groups) &&
+    !delivery.requirements?.some((r: any) => r.blocking) &&
+    (delivery.delivery_groups.length > 0 || manualCart(cart)) &&
+    delivery.delivery_groups.every((g: any) =>
+      g.options?.some((o: any) => o.id === g.selected_option_id),
+    )
   );
 }

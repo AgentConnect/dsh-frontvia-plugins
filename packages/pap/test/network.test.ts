@@ -171,7 +171,7 @@ test("pinned HTTPS verifies host certificate, preserves RPC business errors and 
       wire({ ...original, maxResponseBytes }),
       /RESPONSE_LIMIT/,
     );
-    for (const limit of [Infinity, NaN, -1, 0, 2 * 1024 * 1024 + 1])
+    for (const limit of [Infinity, NaN, -1, 0, 8 * 1024 * 1024 + 1])
       await assert.rejects(
         wire({ ...original, maxResponseBytes: limit }),
         /INVALID_RESPONSE_LIMIT/,

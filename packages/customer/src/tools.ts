@@ -140,7 +140,7 @@ export const schemas = {
 };
 const descriptions: Record<string, string> = {
   frontvia_consultation:
-    "使用已连接的商家咨询服务：ask 仅发送本次用户问题和最多3个商品引用；续问先 get 并传回当前 expected_version。get 查询回答/原会话；help 仅在用户要求时申请人工帮助；recover 用原请求键核对丢失回执。answer_accept/get 使用 get 返回的 answerRef，表示接受/读取商家答复，不是购买确认。",
+    "使用已连接的商家咨询服务：独立 DSH 身份的 ask 仅发送本次用户问题和最多3个商品引用；续问先 get 并传回当前 expected_version。get 查询回答/原会话；help 仅在用户要求时申请人工帮助；recover 用原请求键核对丢失回执。answer_accept/get 使用 get 返回的 answerRef，表示接受/读取商家答复，不是购买确认。咨询不能备单或购买，购物必须使用 Commerce 工具和用户确认。",
   frontvia_knowledge:
     "读取商家开放的公开知识：优先 lookup 获取精确来源，search 检索，source 使用返回的 sourceRef 读取原文，original 准备源文件供用户下载，access 核对本流程已有证据。失败或来源过期时不得把旧内容当作当前政策；无命中时缩短关键词后再查。",
   frontvia_connection:
@@ -156,7 +156,6 @@ const descriptions: Record<string, string> = {
 };
 export function tools(service: CustomerService) {
   return Object.entries(schemas)
-    .filter(([name]) => name !== "frontvia_consultation")
     .map(([name, schema]) => {
       const definition = defineTool({
         name,

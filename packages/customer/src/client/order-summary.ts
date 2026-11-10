@@ -34,6 +34,8 @@ export function orderStatus(order: any): {
     return { label: "已发货", variant: "secondary" };
   if (["paid", "captured"].includes(payment))
     return { label: "已付款", variant: "success" };
+  if (payment === "not_required" && order.payment_required === false)
+    return { label: "无需付款 · 待交付", variant: "secondary" };
   if (payment === "authorized")
     return { label: "支付已授权", variant: "secondary" };
   return { label: "状态待查看", variant: "secondary" };

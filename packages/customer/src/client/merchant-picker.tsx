@@ -37,21 +37,21 @@ export function MerchantPicker({
   const searchId = useId();
   const visible = filterServiceMerchants(merchants, query);
   return (
-    <section aria-label="选择店铺" className="fv-store-directory">
+    <section aria-label="选择服务" className="fv-store-directory">
       <div className="fv-directory-toolbar">
         <div className="fv-stack">
           <div className="fv-row">
-            <h3>我的店铺</h3>
-            <Badge>{merchants.length} 家</Badge>
+            <h3>服务入口</h3>
+            <Badge>{merchants.length} 项</Badge>
           </div>
         </div>
         {merchants.length > 1 && (
           <Field className="fv-merchant-search">
-            <FieldLabel htmlFor={searchId}>搜索店铺</FieldLabel>
+            <FieldLabel htmlFor={searchId}>搜索服务</FieldLabel>
             <Input
               id={searchId}
               type="search"
-              placeholder="店名或域名"
+              placeholder="服务名称、店名或域名"
               value={query}
               onChange={(event) => setQuery(event.target.value)}
             />
@@ -60,7 +60,7 @@ export function MerchantPicker({
       </div>
       {query.trim() && (
         <p className="fv-muted" role="status">
-          找到 {visible.length} 家店铺
+          找到 {visible.length} 项服务
         </p>
       )}
       {visible.length ? (
@@ -148,9 +148,9 @@ export function MerchantPicker({
         </div>
       ) : (
         <Empty>
-          <EmptyTitle>没有找到匹配的店铺</EmptyTitle>
+          <EmptyTitle>没有找到匹配的服务</EmptyTitle>
           <EmptyDescription>
-            试试其他店名或域名，也可以清除搜索查看全部店铺。
+            试试服务名称、店名或域名，也可以清除搜索查看全部服务。
           </EmptyDescription>
           <Button variant="outline" onClick={() => setQuery("")}>
             清除搜索

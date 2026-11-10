@@ -1657,3 +1657,29 @@
   .fv .fv-contact-panel .fv-contact-actions { flex-direction:column; align-items:stretch; }
   .fv .fv-contact-actions > .fv-button { width:100%; }
 }
+
+.fv-catalog-attributes {
+  display: grid;
+  gap: 8px;
+  margin: 0;
+}
+.fv-catalog-attributes > div {
+  display: grid;
+  grid-template-columns: minmax(5em, 25%) minmax(0, 1fr);
+  gap: 12px;
+}
+.fv-catalog-attributes dd {
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+.fv-catalog-terms p {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+.fv-catalog-terms details > div,
+.fv-line-terms > div {
+  padding-top: 12px;
+}
+.fv-line-terms {
+  margin-top: 8px;
+}

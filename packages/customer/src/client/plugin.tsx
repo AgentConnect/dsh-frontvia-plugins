@@ -26,7 +26,11 @@ import {
 import { FlowViews } from "./flow-views.js";
 import { PaymentCard } from "./payment-card.js";
 import { shoppingStep } from "./shopping-progress.js";
-import { isRequiredContact as contactFieldRequired } from "../contact-fields.js";
+import {
+  cartContactReady,
+  manualCart,
+  isRequiredContact as contactFieldRequired,
+} from "../contact-fields.js";
 import React, { useCallback, useEffect, useId, useRef, useState } from "react";
 import {
   ArrowRight,
@@ -496,9 +500,7 @@ export function apply(ctx: any) {
     const dirty = contactFields.some(
       ({ key }) => form[key] !== contactFrom(data)[key],
     );
-    const contactReady = contactFields.every(
-      ({ key }) => !isRequiredContact(key) || !!contactFrom(data)[key].trim(),
-    );
+    const contactReady = cartContactReady(data?.cart, data?.pricing?.country);
     const locked = !!data?.intent?.submitted || !!data?.order;
     const saveContact = async (e: React.FormEvent<HTMLFormElement>) => {
       e.preventDefault();
@@ -807,7 +809,11 @@ export function apply(ctx: any) {
                         </div>
                         <div className="fv-form-layout fv-chat-shipping">
                           <div className="fv-stack">
-                            {locked ? (
+                            {manualCart(data.cart) ? (
+                              <p className="fv-muted">
+                                由商家交付，无需填写收货地址。
+                              </p>
+                            ) : locked ? (
                               <Address cart={data.cart} />
                             ) : (
                               <Card className="fv-contact-panel">
