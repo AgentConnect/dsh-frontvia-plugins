@@ -4042,7 +4042,11 @@ test("Commerce resource links bind their first flow to authenticated capabilitie
       {
         ...original,
         description: {
-          methods: ["commerce.capabilities.get", "commerce.products.search", "commerce.connections.list"],
+          methods: [
+            "commerce.capabilities.get",
+            "commerce.products.search",
+            "commerce.connections.list",
+          ],
         } as any,
       },
     ];
@@ -4064,5 +4068,153 @@ test("Commerce resource links bind their first flow to authenticated capabilitie
     assert.equal(f.vault.get<any>("flow:" + ui.flowId).storeId, "store");
   } finally {
     f.close();
+  }
+});
+
+test("a terminal partial cart edit reloads the same cart and releases only that pending command", async () => {
+  for (const lostReceipt of [false, true]) {
+    const f = fixture();
+    try {
+      const flow = await f.flow();
+      await f.service.tool(
+        "session-a",
+        "frontvia_cart",
+        {
+          flowId: flow,
+          action: "add",
+          variant_id: "variant",
+          quantity: 1,
+        },
+        "add",
+      );
+      const request = f.pap.request.bind(f.pap);
+      let key = "";
+      f.pap.request = async (ref, method, params: any, signal) => {
+        if (method !== "commerce.carts.delivery_option.select")
+          return request(ref, method, params, signal);
+        key = params.meta.idempotency_key;
+        f.remote.cart.version = "v3";
+        const data = {
+          operation: {
+            id: "failed-delivery",
+            status: "failed",
+            effects: "partial",
+            result_ref: { id: "cart", type: "cart", version: "v3" },
+          },
+          resource: { id: "cart", version: "v2" },
+        };
+        f.remote.ops.set(key, data);
+        if (lostReceipt) throw new PapError("NETWORK_UNCERTAIN");
+        return { result: { data } };
+      };
+      const select = () =>
+        f.service.tool(
+          "session-a",
+          "frontvia_cart",
+          {
+            flowId: flow,
+            action: "delivery_select",
+            expected_version: "v1",
+            group_id: "group",
+            option_id: "standard",
+          },
+          "failed-delivery",
+        );
+      if (lostReceipt) {
+        await assert.rejects(select, /NETWORK_UNCERTAIN/);
+        f.restart();
+        await f.service.tool(
+          "session-a",
+          "frontvia_orders",
+          {
+            flowId: flow,
+            action: "recover",
+          },
+          "recover-delivery",
+        );
+      } else await select();
+      const saved = f.service.flow("session-a", flow);
+      assert.equal(saved.pending, undefined);
+      assert.equal(saved.cart.version, "v3");
+      assert.equal(saved.commands[key].status, "done");
+      assert.equal(saved.commands[key].result.operation.status, "failed");
+      assert.equal(f.remote.confirms, 0);
+      f.pap.request = request;
+      await f.service
+        .shopping("session-a", flow, {
+          intent: { action: "prepare-delivery" },
+          expected_version: "v3",
+          actionId: randomUUID(),
+        })
+        .catch((error) => assert.match(error.message, /CONTACT_REQUIRED/));
+    } finally {
+      f.close();
+    }
+  }
+});
+
+test("cart recovery retains uncertainty or mismatched resource evidence", async () => {
+  for (const scenario of [
+    "unknown-effects",
+    "different-reference",
+    "different-resource",
+  ]) {
+    const f = fixture();
+    try {
+      const flow = await f.flow();
+      await f.service.tool(
+        "session-a",
+        "frontvia_cart",
+        {
+          flowId: flow,
+          action: "add",
+          variant_id: "variant",
+          quantity: 1,
+        },
+        "add",
+      );
+      f.remote.lose = "commerce.carts.delivery_option.select";
+      await assert.rejects(
+        f.service.tool(
+          "session-a",
+          "frontvia_cart",
+          {
+            flowId: flow,
+            action: "delivery_select",
+            expected_version: "v1",
+            group_id: "group",
+            option_id: "standard",
+          },
+          "delivery",
+        ),
+        /NETWORK_UNCERTAIN/,
+      );
+      const key = f.service.flow("session-a", flow).pending!;
+      f.remote.ops.get(key).operation = {
+        id: "delivery",
+        status: "failed",
+        effects: scenario === "unknown-effects" ? "unknown" : "partial",
+        result_ref: {
+          id: scenario === "different-reference" ? "other-cart" : "cart",
+        },
+      };
+      if (scenario === "different-resource") f.remote.cart.id = "other-cart";
+      const recover = f.service.tool(
+        "session-a",
+        "frontvia_orders",
+        {
+          flowId: flow,
+          action: "recover",
+        },
+        "lookup",
+      );
+      if (scenario === "different-resource")
+        await assert.rejects(recover, /ORIGINAL_RESULT_UNKNOWN/);
+      else await recover;
+      assert.equal(f.service.flow("session-a", flow).pending, key);
+      assert.equal(f.remote.confirms, 0);
+    } finally {
+      f.close();
+    }
   }
 });

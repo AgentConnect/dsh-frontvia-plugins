@@ -196,6 +196,21 @@ test("manual zero-price checkout never asks for an address or payment selection,
           data = { ...data, checkout: { id: "checkout" } };
         if (action === "review")
           data = { ...data, intent: { id: "intent", expiresAt: expires } };
+        if (action === "confirm")
+          data = {
+            ...data,
+            order: {
+              id: "manual-order",
+              status: "open",
+              fulfillment_kind: "manual",
+              fulfillment_status: "unfulfilled",
+              payment: { status: "not_required" },
+              payment_required: false,
+              lines: data.cart.lines,
+              totals: { grand_total: total },
+              manual_deliveries: { items: [] },
+            },
+          };
         tree.update(render());
         return true;
       },
@@ -231,6 +246,9 @@ test("manual zero-price checkout never asks for an address or payment selection,
     assert.equal(calls.filter((value) => value === "confirm").length, 1);
     assert.equal(calls.includes("payment-start"), false);
     assert.equal(calls.includes("contact"), false);
+    const rendered = JSON.stringify(tree.toJSON());
+    assert.ok(rendered.includes("交付进度"));
+    assert.equal(rendered.includes("暂无运单信息"), false);
   } finally {
     await act(async () => tree?.unmount());
   }

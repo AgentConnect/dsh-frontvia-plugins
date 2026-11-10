@@ -105,6 +105,7 @@ export function Totals({ totals }: { totals: any }) {
   );
 }
 export function Order({ order }: { order: any }) {
+  const manual = order.fulfillment_kind === "manual";
   const status = order.payment?.status;
   const paid = status === "paid" || status === "captured";
   const summary = orderStatus(order);
@@ -124,11 +125,13 @@ export function Order({ order }: { order: any }) {
     voided: "付款已关闭",
   };
   const fulfillment: Record<string, string> = {
-    unfulfilled: "待履约",
-    partially_fulfilled: "部分履约",
-    fulfilled: "已履约",
+    unfulfilled: manual ? "待交付" : "待履约",
+    partially_fulfilled: manual ? "部分交付" : "部分履约",
+    fulfilled: manual ? "已交付" : "已履约",
+    partially_shipped: "部分发货",
     shipped: "已发货",
-    delivered: "已送达",
+    partially_delivered: manual ? "部分交付" : "部分送达",
+    delivered: manual ? "已交付" : "已送达",
   };
   return (
     <article className="fv-order">
@@ -160,7 +163,7 @@ export function Order({ order }: { order: any }) {
           </dd>
         </div>
         <div>
-          <dt>配送进度</dt>
+          <dt>{manual ? "交付进度" : "配送进度"}</dt>
           <dd>
             <Badge>
               <Truck aria-hidden />

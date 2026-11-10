@@ -1572,9 +1572,10 @@ function StorefrontContent({
                               cancel={() => action("order-cancel")}
                             />
                           )}
-                          {selectedOrder.status !== "canceled" && (
-                            <Logistics order={selectedOrder} />
-                          )}
+                          {selectedOrder.status !== "canceled" &&
+                            selectedOrder.fulfillment_kind !== "manual" && (
+                              <Logistics order={selectedOrder} />
+                            )}
                         </div>
                       </div>
                     )}
