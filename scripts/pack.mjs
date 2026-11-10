@@ -1,22 +1,15 @@
 import { mkdir, readFile, writeFile, cp } from "node:fs/promises";
 import spawn from "cross-spawn";
-import { fileURLToPath } from "node:url";
-import { dirname, resolve } from "node:path";
+import { resolve } from "node:path";
 import { createHash } from "node:crypto";
+import { pluginPackages } from "./plugin-packages.mjs";
 import { assertBundleInputs } from "./package-inputs.mjs";
 const root = resolve("."),
   out = resolve(".local/packages");
-let identityFolder;
-try {
-  identityFolder = dirname(fileURLToPath(import.meta.resolve("dsh-identity-client/package.json")));
-} catch {
-  throw new Error("缺少同级 pap-server/client；先按 README 克隆 pap-server 并安装两个仓库的依赖。");
-}
-const bundles = [
-  [identityFolder, "dsh-identity-client"],
-  ["packages/pap", "dsh-pap"],
-  ["packages/customer", "dsh-frontvia-customer"],
-];
+const bundles = pluginPackages.map(({ folder, name }) => [
+  `packages/${folder}`,
+  name,
+]);
 // Validate every dependency before packing or publishing a new manifest.
 for (const [folder, name] of bundles) await assertBundleInputs(folder, name);
 await mkdir(out, { recursive: true });
@@ -41,7 +34,12 @@ for (const [folder, name] of bundles) {
 await writeFile(
   resolve(out, "manifest.json"),
   JSON.stringify(
-    { runtime: JSON.parse(await readFile(resolve("package.json"), "utf8")).devDependencies["@deepseek-ai/dsh"], publication: "local-only", artifacts },
+    {
+      runtime: JSON.parse(await readFile(resolve("package.json"), "utf8"))
+        .devDependencies["@deepseek-ai/dsh"],
+      publication: "local-only",
+      artifacts,
+    },
     null,
     2,
   ) + "\n",

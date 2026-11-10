@@ -1,4 +1,2 @@
 packages:
   - packages/*
-overrides:
-  dsh-identity-client: link:../pap-server/client

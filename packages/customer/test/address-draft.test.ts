@@ -444,7 +444,7 @@ test("identity change events clear the active draft on logout and account switch
       await click(tree, "去结账");
       await edit(tree, `Private ${transition} address`);
       await act(async () => {
-        events.dispatchEvent(new Event("dsh-identity-change"));
+        events.dispatchEvent(new Event("frontvia-identity-change"));
       });
       await click(tree, "去结账");
       assert.equal(address(tree).props.value, "Address A");

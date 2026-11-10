@@ -142,7 +142,7 @@ function sessionExpiry(connection?: Connection) {
 
 export function apply(ctx: any) {
   const call = async (op: string, payload: unknown = {}) => {
-    const result = await ctx.connection.rpc.call("/api", `pap/${op}`, payload);
+    const result = await ctx.connection.rpc.call("/api", `frontvia-pap/${op}`, payload);
     if (!result.ok) throw new Error(result.error.code);
     return result.value;
   };
@@ -231,34 +231,34 @@ export function apply(ctx: any) {
           : "未连接";
     return (
       <article
-        className="pap-service"
+        className="frontvia-pap-service"
         aria-label={`${site.label} 连接`}
         data-expanded={detailsOpen}
       >
-        <div className="pap-service-row">
+        <div className="frontvia-pap-service-row">
           <button
-            className="pap-service-toggle"
+            className="frontvia-pap-service-toggle"
             type="button"
             aria-label={`查看${title}详情`}
             aria-expanded={detailsOpen}
             aria-controls={`${id}-details`}
             onClick={() => setDetailsOpen((v) => !v)}
           >
-            <span className="pap-service-icon">
+            <span className="frontvia-pap-service-icon">
               <Icon aria-hidden />
             </span>
-            <span className="pap-service-name">
-              <span className="pap-service-title">{title}</span>
+            <span className="frontvia-pap-service-name">
+              <span className="frontvia-pap-service-title">{title}</span>
               {(needsReview || needsApproval) && (
-                <span className="pap-service-caption">
+                <span className="frontvia-pap-service-caption">
                   {needsReview ? "连接信息需更新" : "需要服务方批准"}
                 </span>
               )}
             </span>
-            <ChevronDown className="pap-detail-chevron" aria-hidden />
+            <ChevronDown className="frontvia-pap-detail-chevron" aria-hidden />
           </button>
           <span
-            className="pap-status"
+            className="frontvia-pap-status"
             data-tone={
               needsReview || needsApproval
                 ? "warning"
@@ -267,10 +267,10 @@ export function apply(ctx: any) {
                   : "neutral"
             }
           >
-            <span className="pap-status-dot" aria-hidden />
+            <span className="frontvia-pap-status-dot" aria-hidden />
             {status}
           </span>
-          <div className="pap-service-actions">
+          <div className="frontvia-pap-service-actions">
             {needsReview || needsApproval ? (
               <Button
                 variant="outline"
@@ -324,7 +324,7 @@ export function apply(ctx: any) {
         </div>
         {moreOpen && (
           <div
-            className="pap-more-actions"
+            className="frontvia-pap-more-actions"
             id={`${id}-more`}
             role="group"
             aria-label={`${site.label}更多操作`}
@@ -352,7 +352,7 @@ export function apply(ctx: any) {
               variant="ghost"
               size="sm"
               disabled={!!busy}
-              className="pap-remove-action"
+              className="frontvia-pap-remove-action"
               onClick={() => {
                 setError("");
                 setMoreOpen(false);
@@ -365,13 +365,13 @@ export function apply(ctx: any) {
           </div>
         )}
         {retiredDevice && (
-          <p className="pap-field-help" role="status">
+          <p className="frontvia-pap-field-help" role="status">
             设备身份已更换。新连接使用当前密钥；旧连接仍绑定原设备身份。
           </p>
         )}
         {deleteRevision && (
           <section
-            className="pap-delete-confirm"
+            className="frontvia-pap-delete-confirm"
             id={`${id}-delete`}
             aria-label={`确认移除${title}`}
             onKeyDown={(e) => {
@@ -387,7 +387,7 @@ export function apply(ctx: any) {
                 该服务将从列表移除，并停止使用本机连接。已有记录保留。之后可在“已移除服务”中恢复，恢复后需重新连接。
               </p>
             </div>
-            <div className="pap-delete-actions">
+            <div className="frontvia-pap-delete-actions">
               <Button
                 ref={cancelDelete}
                 variant="outline"
@@ -398,7 +398,7 @@ export function apply(ctx: any) {
                 取消
               </Button>
               <Button
-                className="pap-delete-confirm-button"
+                className="frontvia-pap-delete-confirm-button"
                 size="sm"
                 disabled={!!busy}
                 onClick={() =>
@@ -415,7 +415,7 @@ export function apply(ctx: any) {
           </section>
         )}
         {error && (
-          <div className="pap-row-feedback">
+          <div className="frontvia-pap-row-feedback">
             <Alert variant="destructive">
               <CircleAlert aria-hidden />
               <AlertDescription>{error}</AlertDescription>
@@ -423,13 +423,13 @@ export function apply(ctx: any) {
           </div>
         )}
         {notice && (
-          <p className="pap-row-notice" role="status">
+          <p className="frontvia-pap-row-notice" role="status">
             <Check aria-hidden />
             {notice}
           </p>
         )}
         <div
-          className="pap-service-detail"
+          className="frontvia-pap-service-detail"
           id={`${id}-details`}
           hidden={!detailsOpen}
         >
@@ -443,7 +443,7 @@ export function apply(ctx: any) {
               </AlertDescription>
             </Alert>
           )}
-          <dl className="pap-detail-facts">
+          <dl className="frontvia-pap-detail-facts">
             <div>
               <dt>服务名称</dt>
               <dd>{site.label}</dd>
@@ -474,7 +474,7 @@ export function apply(ctx: any) {
               </div>
             )}
             {site.resource && (
-              <div className="pap-detail-address">
+              <div className="frontvia-pap-detail-address">
                 <dt>资源地址</dt>
                 <dd>{site.resource}</dd>
               </div>
@@ -482,7 +482,7 @@ export function apply(ctx: any) {
           </dl>
           {ref && !connection?.bindingError && (
             <details
-              className="pap-auth"
+              className="frontvia-pap-auth"
               open={open}
               onToggle={(e) => setOpen(e.currentTarget.open)}
             >
@@ -490,13 +490,13 @@ export function apply(ctx: any) {
                 <KeyRound aria-hidden />
                 <span>
                   账户授权
-                  <span className="pap-summary-hint">按需连接服务方账户</span>
+                  <span className="frontvia-pap-summary-hint">按需连接服务方账户</span>
                 </span>
                 <Badge>可选</Badge>
-                <ChevronDown className="pap-chevron" aria-hidden />
+                <ChevronDown className="frontvia-pap-chevron" aria-hidden />
               </summary>
-              <div className="pap-auth-content">
-                <p className="pap-muted">
+              <div className="frontvia-pap-auth-content">
+                <p className="frontvia-pap-muted">
                   独立 PAP
                   身份可直接使用服务方开放的服务。仅在需要访问账户专属资源时，才需要额外授权。
                 </p>
@@ -510,7 +510,7 @@ export function apply(ctx: any) {
                     });
                   }}
                 >
-                  <div className="pap-step-title">
+                  <div className="frontvia-pap-step-title">
                     <span>1</span>创建授权链接
                   </div>
                   <FieldGroup>
@@ -526,12 +526,12 @@ export function apply(ctx: any) {
                         disabled={!!busy}
                         aria-describedby={`${id}-scopes-help`}
                       />
-                      <p id={`${id}-scopes-help`} className="pap-field-help">
+                      <p id={`${id}-scopes-help`} className="frontvia-pap-field-help">
                         多个范围用空格分隔，具体权限由服务方确认。
                       </p>
                     </Field>
                   </FieldGroup>
-                  <div className="pap-form-actions">
+                  <div className="frontvia-pap-form-actions">
                     <Button type="submit" variant="outline" disabled={!!busy}>
                       {pending("authorize") ? (
                         <Spinner />
@@ -542,7 +542,7 @@ export function apply(ctx: any) {
                     </Button>
                     {authorization && (
                       <a
-                        className="pap-button"
+                        className="frontvia-pap-button"
                         href={authorization}
                         target="_blank"
                         rel="noopener noreferrer"
@@ -553,7 +553,7 @@ export function apply(ctx: any) {
                     )}
                   </div>
                   {authorization && (
-                    <p className="pap-field-help" role="status">
+                    <p className="frontvia-pap-field-help" role="status">
                       链接已创建。在新窗口完成授权后，将回调地址粘贴到下方。
                     </p>
                   )}
@@ -573,7 +573,7 @@ export function apply(ctx: any) {
                     });
                   }}
                 >
-                  <div className="pap-step-title">
+                  <div className="frontvia-pap-step-title">
                     <span>2</span>完成账户授权
                   </div>
                   <FieldGroup>
@@ -597,7 +597,7 @@ export function apply(ctx: any) {
                         aria-invalid={invalid || undefined}
                         aria-describedby={`${id}-callback-help`}
                       />
-                      <p id={`${id}-callback-help`} className="pap-field-help">
+                      <p id={`${id}-callback-help`} className="frontvia-pap-field-help">
                         此地址仅用于当前服务方的授权校验，不会发送给聊天模型。
                       </p>
                       {invalid && (
@@ -605,7 +605,7 @@ export function apply(ctx: any) {
                       )}
                     </Field>
                   </FieldGroup>
-                  <div className="pap-form-actions">
+                  <div className="frontvia-pap-form-actions">
                     <Button type="submit" disabled={!!busy || !callback.trim()}>
                       {pending("callback") ? (
                         <Spinner />
@@ -678,12 +678,12 @@ export function apply(ctx: any) {
         setError("");
         void refresh();
       };
-      window.addEventListener("pap-connections-change", changed);
+      window.addEventListener("frontvia-pap-connections-change", changed);
       void refresh();
       const timer = setInterval(() => setNow(Date.now()), 15000);
       return () => {
         clearInterval(timer);
-        window.removeEventListener("pap-connections-change", changed);
+        window.removeEventListener("frontvia-pap-connections-change", changed);
       };
     }, []);
     const run: Run = async (operation, payload) => {
@@ -747,18 +747,18 @@ export function apply(ctx: any) {
       ).length ?? 0;
     return (
       <div
-        className="pap-viewport"
+        className="frontvia-pap-viewport"
         role="region"
         aria-label="PAP 页面滚动区域"
         tabIndex={0}
       >
-        <section className="pap" aria-label="PAP 连接管理">
+        <section className="frontvia-pap" aria-label="Frontvia PAP 连接管理">
           <style>{styles}</style>
-          <header className="pap-page-header">
+          <header className="frontvia-pap-page-header">
             <div>
-              <h2>PAP 连接</h2>
+              <h2>Frontvia PAP 连接</h2>
             </div>
-            <div className="pap-page-actions">
+            <div className="frontvia-pap-page-actions">
               <Button
                 ref={refreshButton}
                 variant="ghost"
@@ -778,7 +778,7 @@ export function apply(ctx: any) {
                     setNotice("");
                   }}
                   aria-expanded={importOpen}
-                  aria-controls="pap-import-form"
+                  aria-controls="frontvia-pap-import-form"
                 >
                   <Plus aria-hidden />
                   添加服务
@@ -801,7 +801,7 @@ export function apply(ctx: any) {
             </Alert>
           )}
           {notice && (
-            <p className="pap-notice" role="status">
+            <p className="frontvia-pap-notice" role="status">
               <Check aria-hidden />
               {notice}
             </p>
@@ -820,19 +820,19 @@ export function apply(ctx: any) {
           {!data ? (
             !error && (
               <div
-                className="pap-loading"
+                className="frontvia-pap-loading"
                 role="status"
                 aria-label="正在读取连接"
               >
-                <Skeleton className="pap-loading-heading" />
-                <Skeleton className="pap-loading-card" />
-                <span className="pap-muted">正在读取连接…</span>
+                <Skeleton className="frontvia-pap-loading-heading" />
+                <Skeleton className="frontvia-pap-loading-card" />
+                <span className="frontvia-pap-muted">正在读取连接…</span>
               </div>
             )
           ) : !data.configured ? (
             <Card>
               <Empty>
-                <div className="pap-empty-icon">
+                <div className="frontvia-pap-empty-icon">
                   <KeyRound aria-hidden />
                 </div>
                 <EmptyTitle>先配置你的 PAP 客户端</EmptyTitle>
@@ -840,18 +840,18 @@ export function apply(ctx: any) {
                   当前 Profile
                   尚未配置客户端身份。完成配置并重启后，即可在这里添加和连接服务方。
                 </EmptyDescription>
-                <p className="pap-field-help">
+                <p className="frontvia-pap-field-help">
                   配置步骤请参阅 PAP 插件 README。
                 </p>
               </Empty>
             </Card>
           ) : (
             <>
-              <div className="pap-overview" aria-label="连接概览">
+              <div className="frontvia-pap-overview" aria-label="连接概览">
                 <span>{data.sites.length} 项服务</span>
                 <span>
                   <i
-                    className="pap-status-dot"
+                    className="frontvia-pap-status-dot"
                     data-tone="success"
                     aria-hidden
                   />
@@ -860,7 +860,7 @@ export function apply(ctx: any) {
                 {attention > 0 && (
                   <span>
                     <i
-                      className="pap-status-dot"
+                      className="frontvia-pap-status-dot"
                       data-tone="warning"
                       aria-hidden
                     />
@@ -868,17 +868,17 @@ export function apply(ctx: any) {
                   </span>
                 )}
               </div>
-              <main className="pap-service-groups" aria-label="服务列表">
+              <main className="frontvia-pap-service-groups" aria-label="服务列表">
                 {groups.length ? (
                   groups.map(({ key, title, domain, sites }) => (
                     <section
-                      className="pap-merchant-group"
+                      className="frontvia-pap-merchant-group"
                       key={key}
                       aria-label={`${title} 服务列表`}
                     >
-                      <header className="pap-group-header">
+                      <header className="frontvia-pap-group-header">
                         <Link2 aria-hidden />
-                        <div className="pap-merchant-name">
+                        <div className="frontvia-pap-merchant-name">
                           <h3>{title}</h3>
                           <p>
                             {domain}
@@ -894,7 +894,7 @@ export function apply(ctx: any) {
                         </div>
                         <span>{sites.length} 项服务</span>
                       </header>
-                      <div className="pap-service-list">
+                      <div className="frontvia-pap-service-list">
                         {sites.map((site) => (
                           <ServiceConnection
                             key={site.id}
@@ -920,7 +920,7 @@ export function apply(ctx: any) {
                 ) : (
                   <Card>
                     <Empty>
-                      <div className="pap-empty-icon">
+                      <div className="frontvia-pap-empty-icon">
                         <Link2 aria-hidden />
                       </div>
                       <EmptyTitle>
@@ -941,20 +941,20 @@ export function apply(ctx: any) {
                   </Card>
                 )}
               </main>
-              <footer className="pap-page-footer">
+              <footer className="frontvia-pap-page-footer">
                 {!!data.removedSites?.length && (
-                  <details className="pap-removed-configs">
+                  <details className="frontvia-pap-removed-configs">
                     <summary>
                       <Trash2 aria-hidden />
                       已移除服务（{data.removedSites.length}）
                       <ChevronDown aria-hidden />
                     </summary>
-                    <p className="pap-field-help">
+                    <p className="frontvia-pap-field-help">
                       恢复只重新显示配置，不会自动连接。
                     </p>
-                    <div className="pap-removed-list">
+                    <div className="frontvia-pap-removed-list">
                       {data.removedSites.map((site) => (
-                        <div className="pap-removed-row" key={site.id}>
+                        <div className="frontvia-pap-removed-row" key={site.id}>
                           <div>
                             <p>{site.label}</p>
                             <span>{site.domain}</span>
@@ -984,13 +984,13 @@ export function apply(ctx: any) {
                   </details>
                 )}
                 {data.client && (
-                  <details className="pap-client-details">
+                  <details className="frontvia-pap-client-details">
                     <summary>
                       技术信息
                       <ChevronDown aria-hidden />
                     </summary>
-                    <dl className="pap-detail-facts">
-                      <div className="pap-detail-address">
+                    <dl className="frontvia-pap-detail-facts">
+                      <div className="frontvia-pap-detail-address">
                         <dt>客户端标识</dt>
                         <dd>
                           {data.client.clientId ??
@@ -1021,15 +1021,15 @@ export function apply(ctx: any) {
   }
 
   ctx.slots.inject("main", () =>
-    ctx.slots.register({ name: "main", key: "pap-connections" }, Panel),
+    ctx.slots.register({ name: "main", key: "frontvia-pap-connections" }, Panel),
   );
   ctx.slots.inject("sidebar.panellist", () =>
     ctx.slots.register(
       {
         name: "sidebar.panellist",
-        id: "pap-connections",
+        id: "frontvia-pap-connections",
         order: 30,
-        label: () => "PAP 连接",
+        label: () => "Frontvia PAP 连接",
       },
       () => <Link2 size={18} strokeWidth={1.7} aria-hidden />,
     ),

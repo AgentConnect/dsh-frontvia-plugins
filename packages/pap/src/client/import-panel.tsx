@@ -114,15 +114,15 @@ export function ImportPanel({
   return (
     <dialog
       ref={dialog}
-      className="pap-import-panel"
-      id="pap-import-form"
+      className="frontvia-pap-import-panel"
+      id="frontvia-pap-import-form"
       aria-labelledby={`${id}-title`}
       onCancel={(e) => {
         e.preventDefault();
         if (!busy) onClose();
       }}
     >
-      <header className="pap-import-header">
+      <header className="frontvia-pap-import-header">
         <div>
           <h3 id={`${id}-title`}>添加服务</h3>
         </div>
@@ -136,11 +136,11 @@ export function ImportPanel({
           <X aria-hidden />
         </Button>
       </header>
-      <ol className="pap-import-steps" aria-label="添加步骤">
+      <ol className="frontvia-pap-import-steps" aria-label="添加步骤">
         <li data-active={!preview} aria-current={!preview ? "step" : undefined}>
           <span>{preview ? <Check aria-hidden /> : "1"}</span>粘贴链接
         </li>
-        <li className="pap-step-line" aria-hidden />
+        <li className="frontvia-pap-step-line" aria-hidden />
         <li data-active={!!preview} aria-current={preview ? "step" : undefined}>
           <span>2</span>选择服务
         </li>
@@ -155,7 +155,7 @@ export function ImportPanel({
               <textarea
                 ref={jsonInput}
                 id={id}
-                className="pap-input pap-json"
+                className="frontvia-pap-input frontvia-pap-json"
                 value={json}
                 onChange={(e) => {
                   setJson(e.target.value);
@@ -191,7 +191,7 @@ export function ImportPanel({
             <Button
               variant="ghost"
               size="sm"
-              className="pap-import-mode"
+              className="frontvia-pap-import-mode"
               disabled={!!busy}
               onClick={() => {
                 setAdvanced((v) => !v);
@@ -207,7 +207,7 @@ export function ImportPanel({
               <AlertDescription id={`${id}-error`}>{error}</AlertDescription>
             </Alert>
           )}
-          <div className="pap-import-actions">
+          <div className="frontvia-pap-import-actions">
             <Button
               type="submit"
               disabled={!!busy || !(advanced ? json : text).trim()}
@@ -218,8 +218,8 @@ export function ImportPanel({
           </div>
         </form>
       ) : (
-        <div className="pap-discovered">
-          <div className="pap-discovered-heading">
+        <div className="frontvia-pap-discovered">
+          <div className="frontvia-pap-discovered-heading">
             <h4 ref={previewHeading} tabIndex={-1}>
               选择要添加的服务
             </h4>
@@ -227,12 +227,12 @@ export function ImportPanel({
               已选择 {selected.length} / {preview.sites.length}
             </span>
           </div>
-          <div className="pap-resource-list">
+          <div className="frontvia-pap-resource-list">
             {preview.sites.map((site: any) => {
               const title = site.label;
               return (
                 <label
-                  className="pap-resource-option"
+                  className="frontvia-pap-resource-option"
                   key={site.resource}
                   data-selected={selected.includes(site.resource)}
                 >
@@ -249,34 +249,34 @@ export function ImportPanel({
                     }
                   />
                   <span>
-                    <span className="pap-resource-title">{title}</span>
-                    <span className="pap-resource-domain">{site.domain}</span>
+                    <span className="frontvia-pap-resource-title">{title}</span>
+                    <span className="frontvia-pap-resource-domain">{site.domain}</span>
                     {site.clientAllowed === false && (
-                      <span className="pap-resource-meta">需要服务方批准</span>
+                      <span className="frontvia-pap-resource-meta">需要服务方批准</span>
                     )}
                   </span>
                 </label>
               );
             })}
           </div>
-          <details className="pap-import-identity">
+          <details className="frontvia-pap-import-identity">
             <summary>
               <FileJson aria-hidden />
               客户端与连接地址
               <ChevronDown aria-hidden />
             </summary>
             {preview.client.clientId && (
-              <p className="pap-resource-url">{preview.client.clientId}</p>
+              <p className="frontvia-pap-resource-url">{preview.client.clientId}</p>
             )}
             {!preview.client.signingKeyConfigured && (
-              <p className="pap-field-help">
+              <p className="frontvia-pap-field-help">
                 {preview.client.automatic
                   ? "首次连接时将自动验证本机设备身份。"
                   : "客户端签名凭据尚未配置。"}
               </p>
             )}
             {preview.sites.map((site: any) => (
-              <p className="pap-resource-url" key={site.resource}>
+              <p className="frontvia-pap-resource-url" key={site.resource}>
                 {site.resource}
               </p>
             ))}
@@ -287,7 +287,7 @@ export function ImportPanel({
               <AlertDescription>{error}</AlertDescription>
             </Alert>
           )}
-          <div className="pap-import-actions">
+          <div className="frontvia-pap-import-actions">
             <Button
               variant="ghost"
               disabled={!!busy}

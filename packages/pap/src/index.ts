@@ -17,7 +17,7 @@ import {
   type UnconfiguredClientConfig,
   type Secrets,
 } from "./core.js";
-export const name = "dsh-pap";
+export const name = "dsh-frontvia-pap";
 export const inject = ["credentials", "connection", "profileContext"];
 export type Config = { configFile?: string };
 export class PapProvider extends Service {
@@ -26,7 +26,7 @@ export class PapProvider extends Service {
     ctx: Context,
     private core: PapService,
   ) {
-    super(ctx, "pap");
+    super(ctx, "frontviaPap");
   }
   sites() {
     return this.core.sites();
@@ -106,7 +106,7 @@ export class PapProvider extends Service {
 }
 declare module "@deepseek-ai/cordis" {
   interface Context {
-    pap: PapProvider;
+    frontviaPap: PapProvider;
   }
 }
 export async function apply(ctx: Context, config: Config = {}) {
@@ -150,7 +150,7 @@ export async function apply(ctx: Context, config: Config = {}) {
   ])
     ctx.effect(() =>
       ctx.connection.fetch.register({
-        path: `/api/pap/${operation}`,
+        path: `/api/frontvia-pap/${operation}`,
         methods: ["POST"],
         requestBody: "buffered",
         async fetch(request) {
@@ -163,7 +163,7 @@ export async function apply(ctx: Context, config: Config = {}) {
           } catch {
             return new Response(null, { status: 400 });
           }
-          if (message.method !== `pap/${operation}`)
+          if (message.method !== `frontvia-pap/${operation}`)
             return new Response(null, { status: 400 });
           let result: ConnectionRpcResult<unknown>;
           try {

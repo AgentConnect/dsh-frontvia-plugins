@@ -1,6 +1,6 @@
 import { defineTool } from "@deepseek-ai/dsh-tools";
 import { z } from "zod";
-import { PapError } from "dsh-pap/core";
+import { PapError } from "dsh-frontvia-pap/core";
 import type { CustomerService } from "./core.js";
 import { HELP_REASON_LIMIT } from "./consultation-limits.js";
 const ref = z.string().min(1).max(128),

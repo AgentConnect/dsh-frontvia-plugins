@@ -24,20 +24,20 @@ export function AccountSummary({
       : status.logoutPending
         ? "本机已退出，服务端退出待确认"
         : status.signedIn
-          ? `已登录 DSH 账号${status.phone ? ` · ${status.phone}` : ""}`
+          ? `已登录 Frontvia 账号${status.phone ? ` · ${status.phone}` : ""}`
           : status.configured
-            ? "未登录 DSH 账号"
-            : "DSH 账号尚未配置";
+            ? "未登录 Frontvia 账号"
+            : "Frontvia 账号尚未配置";
   return (
-    <div className="fv-account-summary" aria-label="DSH 账号状态">
+    <div className="fv-account-summary" aria-label="Frontvia 账号状态">
       <p role="status">{label}</p>
       <Button variant="ghost" size="sm" onClick={openAccount}>
         {!error &&
         status?.configured &&
         !status.signedIn &&
         !status.logoutPending
-          ? "登录 DSH 账号"
-          : "管理 DSH 账号"}
+          ? "登录 Frontvia 账号"
+          : "管理 Frontvia 账号"}
       </Button>
     </div>
   );

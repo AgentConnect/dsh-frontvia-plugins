@@ -4,8 +4,8 @@ import { mkdtempSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { randomBytes, createHash } from "node:crypto";
-import { Vault, PapError } from "dsh-pap/core";
-import { PROFILE } from "dsh-identity-client/core";
+import { Vault, PapError } from "dsh-frontvia-pap/core";
+import { PROFILE } from "dsh-frontvia-client/core";
 import { CustomerService, type PapPort } from "../src/core.js";
 import { schemas, tools } from "../src/tools.js";
 import {

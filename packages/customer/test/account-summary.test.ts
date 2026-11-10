@@ -18,9 +18,9 @@ test("signed-in Frontvia shows the shared masked identity and account management
     signedIn: true,
     phone: "+86 •••• 1234",
   });
-  assert.match(html, /已登录 DSH 账号 · \+86 •••• 1234/);
-  assert.match(html, /管理 DSH 账号/);
-  assert.doesNotMatch(html, />登录 DSH 账号</);
+  assert.match(html, /已登录 Frontvia 账号 · \+86 •••• 1234/);
+  assert.match(html, /管理 Frontvia 账号/);
+  assert.doesNotMatch(html, />登录 Frontvia 账号</);
   assert.doesNotMatch(
     render({ configured: true, signedIn: true }),
     /undefined/,
@@ -30,7 +30,7 @@ test("signed-in Frontvia shows the shared masked identity and account management
 test("only a confirmed signed-out account offers login; pending logout, errors and loading never pretend to be signed out", () => {
   assert.match(
     render({ configured: true, signedIn: false }),
-    />登录 DSH 账号</,
+    />登录 Frontvia 账号</,
   );
   for (const html of [
     render(),
@@ -38,8 +38,8 @@ test("only a confirmed signed-out account offers login; pending logout, errors a
     render({ configured: true, signedIn: false, logoutPending: true }),
     render({ configured: false, signedIn: false }),
   ]) {
-    assert.doesNotMatch(html, />登录 DSH 账号</);
-    assert.match(html, /管理 DSH 账号/);
+    assert.doesNotMatch(html, />登录 Frontvia 账号</);
+    assert.match(html, /管理 Frontvia 账号/);
   }
   assert.match(render(undefined, true), /暂时无法确认账号状态/);
   assert.match(

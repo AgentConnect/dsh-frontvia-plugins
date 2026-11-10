@@ -1,4 +1,4 @@
-import { AccountClient } from "dsh-identity-client/core";
+import { AccountClient } from "dsh-frontvia-client/core";
 const defaultPersonalConfig = {
   origin: "https://identity.test",
   requestOrigin: "https://dsh.test",
@@ -9,7 +9,7 @@ import { test } from "node:test";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { apply as applyPap } from "dsh-pap";
+import { apply as applyPap } from "dsh-frontvia-pap";
 import { apply as applyCustomer } from "../src/index.js";
 import {
   openProfileVault,
@@ -18,7 +18,7 @@ import {
   profileStorage,
   type Secrets,
   type Transport,
-} from "dsh-pap/core";
+} from "dsh-frontvia-pap/core";
 
 function credentialStore() {
   const values = new Map<string, string>();
@@ -86,7 +86,7 @@ test("a DSH profile installing both bundles without config registers the login, 
       secrets,
     );
     cleanups.push(() => accountVault.close());
-    ctx.identity = {
+    ctx.frontviaIdentity = {
       account: new AccountClient(
         defaultPersonalConfig,
         accountVault,
@@ -103,7 +103,7 @@ test("a DSH profile installing both bundles without config registers the login, 
       flows: [],
       sites: [],
     });
-    assert.equal("personal" in (await call("pap/status")), false);
+    assert.equal("personal" in (await call("frontvia-pap/status")), false);
     assert.equal(
       (await call("frontvia-customer/personal-status")).signedIn,
       false,

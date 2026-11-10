@@ -7,14 +7,14 @@ export const cn = (...values: (string | false | undefined)[]) =>
 type DivProps = React.ComponentProps<"div">;
 export function Card({ className, ...props }: DivProps) {
   return (
-    <div data-slot="card" className={cn("pap-card", className)} {...props} />
+    <div data-slot="card" className={cn("frontvia-pap-card", className)} {...props} />
   );
 }
 export function CardHeader({ className, ...props }: DivProps) {
   return (
     <div
       data-slot="card-header"
-      className={cn("pap-card-header", className)}
+      className={cn("frontvia-pap-card-header", className)}
       {...props}
     />
   );
@@ -23,7 +23,7 @@ export function CardTitle({ className, ...props }: React.ComponentProps<"h3">) {
   return (
     <h3
       data-slot="card-title"
-      className={cn("pap-card-title", className)}
+      className={cn("frontvia-pap-card-title", className)}
       {...props}
     />
   );
@@ -35,7 +35,7 @@ export function CardDescription({
   return (
     <p
       data-slot="card-description"
-      className={cn("pap-description", className)}
+      className={cn("frontvia-pap-description", className)}
       {...props}
     />
   );
@@ -44,7 +44,7 @@ export function CardContent({ className, ...props }: DivProps) {
   return (
     <div
       data-slot="card-content"
-      className={cn("pap-card-content", className)}
+      className={cn("frontvia-pap-card-content", className)}
       {...props}
     />
   );
@@ -53,7 +53,7 @@ export function CardFooter({ className, ...props }: DivProps) {
   return (
     <div
       data-slot="card-footer"
-      className={cn("pap-card-footer", className)}
+      className={cn("frontvia-pap-card-footer", className)}
       {...props}
     />
   );
@@ -81,7 +81,7 @@ export const Button = forwardRef<
       data-slot="button"
       data-variant={variant}
       data-size={size}
-      className={cn("pap-button", className)}
+      className={cn("frontvia-pap-button", className)}
       {...props}
     />
   );
@@ -94,7 +94,7 @@ export const Input = forwardRef<
     <input
       ref={ref}
       data-slot="input"
-      className={cn("pap-input", className)}
+      className={cn("frontvia-pap-input", className)}
       {...props}
     />
   );
@@ -103,7 +103,7 @@ export function FieldGroup({ className, ...props }: DivProps) {
   return (
     <div
       data-slot="field-group"
-      className={cn("pap-field-group", className)}
+      className={cn("frontvia-pap-field-group", className)}
       {...props}
     />
   );
@@ -113,7 +113,7 @@ export function Field({ className, ...props }: DivProps) {
     <div
       role="group"
       data-slot="field"
-      className={cn("pap-field", className)}
+      className={cn("frontvia-pap-field", className)}
       {...props}
     />
   );
@@ -125,7 +125,7 @@ export function FieldLabel({
   return (
     <label
       data-slot="field-label"
-      className={cn("pap-field-label", className)}
+      className={cn("frontvia-pap-field-label", className)}
       {...props}
     />
   );
@@ -135,7 +135,7 @@ export function FieldError({ className, ...props }: React.ComponentProps<"p">) {
     <p
       role="alert"
       data-slot="field-error"
-      className={cn("pap-field-error", className)}
+      className={cn("frontvia-pap-field-error", className)}
       {...props}
     />
   );
@@ -151,7 +151,7 @@ export function Badge({
     <span
       data-slot="badge"
       data-variant={variant}
-      className={cn("pap-badge", className)}
+      className={cn("frontvia-pap-badge", className)}
       {...props}
     />
   );
@@ -166,7 +166,7 @@ export function Alert({
       role="alert"
       data-slot="alert"
       data-variant={variant}
-      className={cn("pap-alert", className)}
+      className={cn("frontvia-pap-alert", className)}
       {...props}
     />
   );
@@ -175,7 +175,7 @@ export function AlertDescription({ className, ...props }: DivProps) {
   return (
     <div
       data-slot="alert-description"
-      className={cn("pap-alert-description", className)}
+      className={cn("frontvia-pap-alert-description", className)}
       {...props}
     />
   );
@@ -185,14 +185,14 @@ export function Skeleton({ className, ...props }: DivProps) {
     <div
       aria-hidden
       data-slot="skeleton"
-      className={cn("pap-skeleton", className)}
+      className={cn("frontvia-pap-skeleton", className)}
       {...props}
     />
   );
 }
 export function Empty({ className, ...props }: DivProps) {
   return (
-    <div data-slot="empty" className={cn("pap-empty", className)} {...props} />
+    <div data-slot="empty" className={cn("frontvia-pap-empty", className)} {...props} />
   );
 }
 export function EmptyTitle(props: React.ComponentProps<"h4">) {
@@ -203,14 +203,14 @@ export function EmptyDescription(props: React.ComponentProps<"p">) {
 }
 export function Separator() {
   return (
-    <div data-slot="separator" className="pap-separator" role="separator" />
+    <div data-slot="separator" className="frontvia-pap-separator" role="separator" />
   );
 }
 export function Spinner() {
   return (
     <LoaderCircle
       data-icon="inline-start"
-      className="pap-spinner"
+      className="frontvia-pap-spinner"
       aria-hidden
     />
   );

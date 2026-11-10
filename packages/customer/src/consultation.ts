@@ -1,7 +1,7 @@
 import { ReadCache, SharedReads } from "./read-cache.js";
 import { createHash, randomUUID } from "node:crypto";
-import { Vault, Serial, fail, canonical } from "dsh-pap/core";
-import { PROFILE } from "dsh-identity-client/core";
+import { Vault, Serial, fail, canonical } from "dsh-frontvia-pap/core";
+import { PROFILE } from "dsh-frontvia-client/core";
 import { modelData, type PapPort } from "./core.js";
 import {
   shoppingSupported,

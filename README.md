@@ -1,6 +1,6 @@
-# DSH PAP + Frontvia Customer
+# DSH Frontvia Plugins
 
-两个独立的本地插件，让官方 **DeepSeek Harness 0.2.2-rc.1** 的 Agent 使用商家发布的 PAP 服务。支持手机号个人账号、导入商家连接 JSON、发现咨询与购物资源、咨询会话与公开知识检索，以及商品、购物车和人工确认购买。购物表单按服务端能力支持 US/USD 与 CN/CNY；人工交付和零元订单沿用各自的服务端契约。此前个人账号免审批购物通过的是隔离 Mock 支付验收，不代表真实渠道验收。
+三个 Frontvia 专用本地插件，让官方 **DeepSeek Harness 0.2.2-rc.1** 的 Agent 使用商家发布的 PAP 服务。支持手机号个人账号、导入商家连接 JSON、发现咨询与购物资源、咨询会话与公开知识检索，以及商品、购物车和人工确认购买。购物表单按服务端能力支持 US/USD 与 CN/CNY；人工交付和零元订单沿用各自的服务端契约。此前个人账号免审批购物通过的是隔离 Mock 支付验收，不代表真实渠道验收。
 
 源码未发布 npm 或 Release；不内置收款渠道，也不替服务端实现取消订单和退款；付款入口与结果由商家服务提供，真实渠道仍须单独验收。咨询答复、公开知识与人工求助均由商家服务提供，插件不另建客服系统。安装包仅供本机使用；本地提交不包含推送或发版。
 
@@ -9,33 +9,30 @@
 ## 结构与边界
 
 ```text
-DSH Agent ── 七组 Frontvia 工具 ── CustomerService ── ctx.pap ── 商家咨询 / Commerce
+DSH Agent ── 七组 Frontvia 工具 ── CustomerService ── ctx.frontviaPap ── 商家咨询 / Commerce
 DSH 用户卡片 ── owner 用户操作接口 ───────┘                 └─ PAP/DPoP
                                 └─ 本地确认签名 → checkouts.confirm
 ```
 
 | 包                      | 负责                                                                                                                                        | 不负责                                                  |
 | ----------------------- | ------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------- |
-| `dsh-pap`               | 配置检查与导入、PAP 0.2 发现、ES256 Client/Session Assertion、DPoP、稳定主体、续接、PKCE/Direct Sign-In、撤销、按资源和已发布契约约束的请求 | 商品、购物车、付款授权                                  |
+| `dsh-frontvia-client` | Frontvia 账号页面、本机账号状态、设备身份及目标绑定断言 | 不处理商家业务，不在模型或浏览器暴露个人凭据 |
+| `dsh-frontvia-pap`               | 配置检查与导入、PAP 0.2 发现、ES256 Client/Session Assertion、DPoP、稳定主体、续接、PKCE/Direct Sign-In、撤销、按资源和已发布契约约束的请求 | 商品、购物车、付款授权                                  |
 | `dsh-frontvia-customer` | 五组购物工具、咨询与知识两组工具、服务卡片、购物进度、原请求核对、人类购买确认                                                              | 直接访问 Medusa、调用远端 Buyer Agent、模型代为确认购买 |
 
-`PAP` 可单独启用，不依赖账号或商城。`Customer` 声明 PAP 与账号插件的 peer 依赖和 Cordis `inject: ['pap', 'identity', ...]`。安装包存在不等于 PAP 服务启用。PAP 停用时，Cordis 自动撤销 Customer 的可执行工具和接口；界面显示依赖未就绪。协议服务 API 版本不兼容时不注册购物工具。
+`DSHFrontviaPAP`（`dsh-frontvia-pap`）是 **Frontvia 专用 PAP 插件，不是通用 PAP 插件**，不承诺支持其他产品的全部 PAP 扩展。它可单独启用，不依赖账号或商城。`Customer` 声明 PAP 与账号插件的 peer 依赖和 Cordis `inject: ['frontviaPap', 'frontviaIdentity', ...]`。安装包存在不等于 PAP 服务启用。PAP 停用时，Cordis 自动撤销 Customer 的可执行工具和接口；界面显示依赖未就绪。协议服务 API 版本不兼容时不注册购物工具。
 
-源代码在 `packages/pap/src` 和 `packages/customer/src`；测试栈脚本位于 `scripts`，这些验收脚本不会被打进插件包。运行时只使用商家公开的 Consultation / Commerce JSON-RPC 契约。
+账号客户端在 `packages/client/src`，PAP 在 `packages/pap/src`，业务插件在 `packages/customer/src`；测试栈脚本位于 `scripts`，这些验收脚本不会被打进插件包。运行时只使用商家公开的 Consultation / Commerce JSON-RPC 契约。
 
 协议与业务拆分、兼容和验证范围见 [PAP 独立连接管理](docs/pap-independence.md)。
 
 ## 构建与安装
 
-需要 Node **>=24.9.0**、pnpm **10.28.2**、官方 DSH Desktop **0.2.2-rc.1**。三个仓库的本轮交接分支均为 `codex/full-environment-readiness`：Core 在 `AgentConnect/frontvia-core`，本仓库为 `AgentConnect/dsh-frontvia-plugins`，身份服务为 `AgentConnect/pap-server`。身份仓库克隆为同级的 `pap-server` 目录；账号插件的包名仍为 `dsh-identity-client`，它不是本地仓库目录名。
+需要 Node **>=24.9.0**、pnpm **10.28.2**、官方 DSH Desktop **0.2.2-rc.1**。三个插件包都在本仓库构建：`dsh-frontvia-client`、`dsh-frontvia-pap`、`dsh-frontvia-customer`。不再依赖同级 `pap-server/client`。身份服务仍由 `AgentConnect/pap-server` 部署；本次只是复制其 Client 到 `packages/client`，原仓库 Client 保留不删。
 
 ```sh
-git clone --branch codex/full-environment-readiness https://github.com/AgentConnect/pap-server.git pap-server
-git clone --branch codex/full-environment-readiness https://github.com/AgentConnect/dsh-frontvia-plugins.git dsh-frontvia-plugins
-cd pap-server
-pnpm install --frozen-lockfile --ignore-scripts
-pnpm build
-cd ../dsh-frontvia-plugins
+git clone --branch main https://github.com/AgentConnect/dsh-frontvia-plugins.git dsh-frontvia-plugins
+cd dsh-frontvia-plugins
 pnpm install --frozen-lockfile --ignore-scripts
 pnpm typecheck
 pnpm build
@@ -43,17 +40,19 @@ pnpm test
 pnpm pack:local
 ```
 
-先按 [配置说明](docs/configuration.md) 准备当前用户受保护的 `desktop/identity-config.json`，再执行 `node scripts/install-desktop.mjs`。安装会一次校验三个包，再更新 desktop Profile；失败恢复原清单、锁文件与插件。打包前拒绝缺失的构建产物。更新身份客户端源码后必须重新构建身份仓库再打包。
+先按 [配置说明](docs/configuration.md) 准备当前用户受保护的 `desktop/identity-config.json`，再执行 `node scripts/install-desktop.mjs`。安装会一次校验三个包，再更新 desktop Profile；失败恢复原清单、锁文件与插件。打包前拒绝缺失的构建产物。更新 Frontvia 账号客户端后，在本仓库重新构建、打包即可。
 
-安装不生成身份信任配置。个人凭据只发往受保护配置固定的身份服务；商家链接不能替换它。退出重开 DSH，进入“DSH 账号”登录，然后在 PAP 连接中添加购物和咨询服务。不复制他人的 Profile 或凭据。
+安装不生成身份信任配置。个人凭据只发往受保护配置固定的身份服务；商家链接不能替换它。退出重开 DSH，进入“Frontvia 账号”登录，然后在 PAP 连接中添加购物和咨询服务。不复制他人的 Profile 或凭据。
 
 包摘要位于 `.local/packages/manifest.json`。隔离安装回归使用现有测试夹具，不修改真实用户 Profile。已通过的历史安装记录见相应验收文档，不能替代本次版本核对。
+
+旧版升级：先完全退出 DSH。默认安装拒绝同时启用本安装器原先生成的 `dsh-identity-client` / `dsh-pap` 包；执行 `node scripts/install-desktop.mjs --replace-legacy-frontvia`，只替换 Profile `.local-packages/frontvia/` 中可识别的旧 Frontvia 包，失败恢复原清单和锁文件。其他来源的通用 PAP 包不删除。手工安装的旧 Frontvia 包须先停用，保留 `plugin-data`、凭据及 `identity-config.json`。不要同时启用新旧 Frontvia 提供者。身份协议、设备引用、默认 Vault 位置和凭据 key 保持原值，不自动迁移账号；内部服务为 `frontviaIdentity` / `frontviaPap`，RPC 和页面事件也使用 Frontvia 命名空间。
 
 当前仅接受 0.2.2-rc.1，不申请或设置宿主版本豁免。包使用宿主 React，未打入第二套 React。
 
 ## 配置和身份
 
-完整示例见 [配置说明](docs/configuration.md)。如需覆盖默认值，两个宿主插件分别接收 `{ configFile: '/absolute/path.json' }`。配置文件必须属于当前用户、权限为 0600，不能是符号链接。配置只放 DSH 凭据引用；私钥、存储密钥、确认密钥不放在配置或工具参数中。
+完整示例见 [配置说明](docs/configuration.md)。如需覆盖默认值，三个宿主插件分别接收 `{ configFile: '/absolute/path.json' }`。配置文件必须属于当前用户、权限为 0600，不能是符号链接。配置只放 DSH 凭据引用；私钥、存储密钥、确认密钥不放在配置或工具参数中。
 
 每个独立 Profile/本机用户使用独立 DSH_HOME、凭据引用和数据目录。连接绑定 site、issuer 和 resource；稳定随机 PAP 主体在该目录内保存。不要把已有身份目录当作新用户模板复制。新主体不按邮箱认领 Buyer Web 用户或旧订单。
 
@@ -70,7 +69,7 @@ PAP 会话、DPoP 私钥、Token、购物进度和原请求以 AES-256-GCM 保�
 对话卡片可为每个规格填写加购数量，默认 1 件，上限为已知库存与 100 件中的较小值。点击加购后，可见对话文字和发送给智能体的请求使用同一数量；实际库存由商家在加购时核对。
 
 1. 启动已配置的独立 Profile，打开宿主打印的本机认证地址。
-2. 先在“DSH 账号”用手机号登录，再在“PAP 连接 → 添加服务”粘贴商家复制的 PAP 服务链接（也兼容 JSON），检查并选择资源。添加仅保存服务信息；连接成功、业务可用与购买授权分别核验。
+2. 先在“Frontvia 账号”用手机号登录，再在“PAP 连接 → 添加服务”粘贴商家复制的 PAP 服务链接（也兼容 JSON），检查并选择资源。添加仅保存服务信息；连接成功、业务可用与购买授权分别核验。
 3. 新建聊天：“搜索 Travel Mug，选一个可购买规格，加购一件。”
 4. 在购物车卡片填写并保存收货资料。这些字段直接提交业务服务，不写入模型工具结果。
 5. 对 Agent 说：“读取最新购物车，选最便宜配送，生成报价并准备结算，等我确认。”
@@ -99,8 +98,8 @@ PAP 连接页更新与验收：[docs/pap-ui-refresh.md](docs/pap-ui-refresh.md)�
 
 ### 手机号登录与公开 Agent
 
-默认启用 DSH 独立个人账号登录，账号环境由独立账号插件配置；PAP 的单独使用见 [PAP README](packages/pap/README.md)。
-流程为在「DSH 账号」中手机号验证码注册/登录 → 在 PAP 连接中添加商家的购物或公开咨询配置 → 连接 → 使用 Customer
+默认启用 DSH 独立个人账号登录，账号环境由独立账号插件配置；PAP 的单独使用见 [Frontvia PAP README](packages/pap/README.md)。
+流程为在「Frontvia 账号」中手机号验证码注册/登录 → 在 PAP 连接中添加商家的购物或公开咨询配置 → 连接 → 使用 Customer
 咨询工具；旧 USD 购物另添加 Commerce 资源；CNY 新购买使用独立 Commerce 资源。无需商家审批客户端；公钥、签名、回调、DPoP、服务发布状态仍由
 服务端校验。个人凭据只发给受保护配置中的可信服务，不随导入地址变化。
 

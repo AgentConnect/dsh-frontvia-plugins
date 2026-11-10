@@ -22,7 +22,7 @@ const pair = () =>
     publicKeyEncoding: { type: "spki", format: "pem" },
   });
 export function fixture() {
-  const dir = mkdtempSync(join(tmpdir(), "dsh-pap-test-")),
+  const dir = mkdtempSync(join(tmpdir(), "dsh-frontvia-pap-test-")),
     keys = pair(),
     secret = randomBytes(32).toString("base64url"),
     db = join(dir, "state.sqlite");

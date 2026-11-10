@@ -1,5 +1,5 @@
 {
-  "name": "dsh-pap",
+  "name": "dsh-frontvia-pap",
   "version": "0.1.0",
   "private": true,
   "type": "module",
@@ -50,5 +50,6 @@
   "dependencies": {
     "zod": "4.3.6",
     "lucide-react": "1.66.0"
-  }
+  },
+  "description": "Frontvia 专用 PAP 连接插件（DSHFrontviaPAP），不是通用 PAP 插件。"
 }

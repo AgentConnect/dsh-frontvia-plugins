@@ -4,8 +4,8 @@ import { createHash, randomBytes, createPublicKey, verify } from "node:crypto";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { DeviceIdentity } from "dsh-identity-client/core";
-import { PersonalAccount } from "dsh-identity-client/core";
+import { DeviceIdentity } from "dsh-frontvia-client/core";
+import { PersonalAccount } from "dsh-frontvia-client/core";
 import { Vault, PapError } from "../../pap/src/storage.js";
 import type { Transport } from "../../pap/src/network.js";
 

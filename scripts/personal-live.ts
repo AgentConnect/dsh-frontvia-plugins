@@ -199,7 +199,7 @@ const disabled = [
 const patch = join(dir, "patch.yml");
 await writeFile(
   patch,
-  `- id: dsh-pap\n  config:\n    configFile: ${JSON.stringify(join(dir, "pap.json"))}\n- id: dsh-frontvia-customer\n  config:\n    configFile: ${JSON.stringify(join(dir, "customer.json"))}\n- id: ui-settings-general\n  config:\n    welcomeNoticeVersion: 2026-09-28.1\n` +
+  `- id: dsh-frontvia-pap\n  config:\n    configFile: ${JSON.stringify(join(dir, "pap.json"))}\n- id: dsh-frontvia-customer\n  config:\n    configFile: ${JSON.stringify(join(dir, "customer.json"))}\n- id: ui-settings-general\n  config:\n    welcomeNoticeVersion: 2026-09-28.1\n` +
     disabled.map((id) => `- id: ${id}\n  disabled: true\n`).join(""),
   { mode: 0o600 },
 );
@@ -325,16 +325,16 @@ try {
     path: join(dir, "frontvia-account-desktop.png"),
     fullPage: true,
   });
-  await page.getByRole("button", { name: "PAP 连接", exact: true }).click();
+  await page.getByRole("button", { name: "Frontvia PAP 连接", exact: true }).click();
   const identityPanel = page.locator('[aria-label="当前身份"]');
   await identityPanel.getByText(/Frontvia 个人账号 ·/).waitFor();
   assert.equal(
-    await page.locator('.pap-viewport input[type="tel"]').count(),
+    await page.locator('.frontvia-pap-viewport input[type="tel"]').count(),
     0,
   );
   assert.equal(
     await page
-      .locator(".pap-viewport")
+      .locator(".frontvia-pap-viewport")
       .getByRole("button", { name: "退出登录", exact: true })
       .count(),
     0,
@@ -348,8 +348,8 @@ try {
   await page.reload();
   await dismissHostSignIn();
   // DSH restores the selected panel. Do not open a second copy after reload.
-  if (!(await page.locator(".pap-viewport").isVisible()))
-    await page.getByRole("button", { name: "PAP 连接", exact: true }).click();
+  if (!(await page.locator(".frontvia-pap-viewport").isVisible()))
+    await page.getByRole("button", { name: "Frontvia PAP 连接", exact: true }).click();
   await identityPanel.getByText(/Frontvia 个人账号 ·/).waitFor();
   await page.getByRole("button", { name: "断开", exact: true }).waitFor();
   await page
@@ -384,7 +384,7 @@ try {
     fullPage: true,
   });
   await page.setViewportSize({ width: 1440, height: 1000 });
-  await page.getByRole("button", { name: "PAP 连接", exact: true }).click();
+  await page.getByRole("button", { name: "Frontvia PAP 连接", exact: true }).click();
   await identityPanel
     .getByText("未登录 Frontvia 个人账号", { exact: true })
     .waitFor();

@@ -15,7 +15,7 @@ test("logout discards a delayed consultation view before it can repopulate the o
   ).then((value) => {
     rendered = value;
   });
-  events.dispatchEvent(new Event("dsh-identity-change"));
+  events.dispatchEvent(new Event("frontvia-identity-change"));
   complete({
     conversation: { messages: [{ text: "Person A's private answer" }] },
   });

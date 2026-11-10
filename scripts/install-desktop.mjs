@@ -8,12 +8,12 @@ import {
   rm,
   writeFile,
 } from "node:fs/promises";
-import { fileURLToPath } from "node:url";
-import { basename, dirname, join, resolve } from "node:path";
+import { basename, join, resolve } from "node:path";
 import { isDeepStrictEqual } from "node:util";
 import { resolveProfileDir } from "@deepseek-ai/dsh-app-boot";
 import { withFileLock, writeFileAtomic } from "@deepseek-ai/dsh-atomic-write";
 import spawn from "cross-spawn";
+import { pluginPackages, legacyFrontviaPackages } from "./plugin-packages.mjs";
 
 const profile = resolveProfileDir("desktop");
 const manifestPath = join(profile, "package.json");
@@ -26,7 +26,8 @@ const cli =
 const artifacts = JSON.parse(
   await readFile(resolve(".local/packages/manifest.json"), "utf8"),
 );
-const names = ["dsh-identity-client", "dsh-pap", "dsh-frontvia-customer"];
+const names = pluginPackages.map((item) => item.name);
+let replacingLegacy = [];
 const identityConfig = join(profile, "identity-config.json");
 if (
   !existsSync(identityConfig) ||
@@ -106,12 +107,13 @@ function pointsTo(spec, archive) {
 
 function otherPackages(bytes) {
   const manifest = JSON.parse(bytes);
-  for (const name of names) delete manifest.dependencies?.[name];
+  for (const name of [...names, ...replacingLegacy])
+    delete manifest.dependencies?.[name];
   if (manifest.dependencies && !Object.keys(manifest.dependencies).length)
     delete manifest.dependencies;
   if (manifest.dsh?.profile?.bundles)
     manifest.dsh.profile.bundles = manifest.dsh.profile.bundles.filter(
-      (name) => !names.includes(name),
+      (name) => ![...names, ...replacingLegacy].includes(name),
     );
   return manifest;
 }
@@ -127,6 +129,9 @@ async function rollback(previous, pair) {
         !isDeepStrictEqual(
           otherPackages(previous.manifest),
           otherPackages(current.manifest),
+        ) ||
+        replacingLegacy.some(
+          (name) => after[name] !== undefined && after[name] !== before[name],
         ) ||
         pair.some(
           ({ name, path }) =>
@@ -157,7 +162,40 @@ await withFileLock(
   async () => {
     const pair = await stagePair();
     const previous = await withFileLock(manifestPath, snapshot, locks);
+    replacingLegacy = legacyFrontviaPackages(
+      JSON.parse(previous.manifest),
+      profile,
+    );
+    if (
+      replacingLegacy.length &&
+      !process.argv.includes("--replace-legacy-frontvia")
+    )
+      throw new Error(
+        "检测到旧版 Frontvia 插件。先完全退出 DSH，再使用 --replace-legacy-frontvia 替换旧包；账号、密钥和连接数据不会删除。其他通用 PAP 插件不作替换。",
+      );
     try {
+      if (replacingLegacy.length)
+        await withFileLock(
+          manifestPath,
+          async () => {
+            if (!(await readFile(manifestPath)).equals(previous.manifest))
+              throw new Error("Profile 已并发修改，停止替换旧插件。");
+            const manifest = JSON.parse(previous.manifest);
+            for (const name of replacingLegacy)
+              delete manifest.dependencies?.[name];
+            if (manifest.dsh?.profile?.bundles)
+              manifest.dsh.profile.bundles =
+                manifest.dsh.profile.bundles.filter(
+                  (name) => !replacingLegacy.includes(name),
+                );
+            await writeFileAtomic(
+              manifestPath,
+              JSON.stringify(manifest, null, 2) + "\n",
+              { mode: 0o600 },
+            );
+          },
+          locks,
+        );
       run([
         "plugin",
         "--profile",
@@ -166,14 +204,10 @@ await withFileLock(
         ...pair.map((item) => item.path),
       ]);
       for (const { name } of pair) {
-        const folder =
-          name === "dsh-identity-client"
-            ? dirname(
-                fileURLToPath(
-                  import.meta.resolve("dsh-identity-client/package.json"),
-                ),
-              )
-            : join("packages", name === "dsh-pap" ? "pap" : "customer");
+        const folder = join(
+          "packages",
+          pluginPackages.find((item) => item.name === name).folder,
+        );
         for (const file of ["index.js", "core.js", "client.js"]) {
           const built = await readFile(join(folder, "dist", file));
           const installed = await readFile(
@@ -198,5 +232,5 @@ await withFileLock(
   locks,
 );
 console.log(
-  "独立账号、PAP 和购物插件已安装。重新打开 DSH 后，进入「DSH 账号」登录。",
+  "Frontvia Client、Frontvia 专用 PAP 和 Customer 插件已安装。重新打开 DSH 后，进入「Frontvia 账号」登录。",
 );

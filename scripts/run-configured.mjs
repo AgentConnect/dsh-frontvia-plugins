@@ -32,7 +32,7 @@ const disabled = [
   "session-telemetry-otel",
 ];
 let patchText =
-  `- id: dsh-pap\n  config:\n    configFile: ${JSON.stringify(resolve(native, "pap.json"))}\n- id: dsh-frontvia-customer\n  config:\n    configFile: ${JSON.stringify(resolve(native, "customer.json"))}\n` +
+  `- id: dsh-frontvia-pap\n  config:\n    configFile: ${JSON.stringify(resolve(native, "pap.json"))}\n- id: dsh-frontvia-customer\n  config:\n    configFile: ${JSON.stringify(resolve(native, "customer.json"))}\n` +
   disabled.map((id) => `- id: ${id}\n  disabled: true\n`).join("");
 const env = {
   ...process.env,

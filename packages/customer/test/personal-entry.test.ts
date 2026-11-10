@@ -1,12 +1,12 @@
-import { AccountClient } from "dsh-identity-client/core";
+import { AccountClient } from "dsh-frontvia-client/core";
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { mkdtempSync, writeFileSync, readFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { randomBytes } from "node:crypto";
-import { PapService, Vault } from "dsh-pap/core";
-import { PapProvider } from "dsh-pap";
+import { PapService, Vault } from "dsh-frontvia-pap/core";
+import { PapProvider } from "dsh-frontvia-pap";
 import { apply } from "../src/index.js";
 
 test("Frontvia owner routes manage the shared PAP identity without exposing credentials or model login tools", async () => {
@@ -21,7 +21,7 @@ test("Frontvia owner routes manage the shared PAP identity without exposing cred
     audiences: ["https://shop.test/companies/a"],
   };
   const secrets = { get: async () => undefined, set: async () => {} };
-  const wire: import("dsh-pap/core").Transport = async (request) => {
+  const wire: import("dsh-frontvia-pap/core").Transport = async (request) => {
     const path = new URL(request.url).pathname;
     const body = request.body ? JSON.parse(request.body) : undefined;
     calls.push({ path, body });
@@ -80,7 +80,7 @@ test("Frontvia owner routes manage the shared PAP identity without exposing cred
     definitions = new Map<string, any>();
   const cleanups: (() => void)[] = [];
   const ctx: any = {
-    identity: { account },
+    frontviaIdentity: { account },
     reflect: {
       provide: (name: string, value: any) => {
         ctx[name] = value;
