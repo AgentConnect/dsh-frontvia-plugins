@@ -30,7 +30,7 @@
     "@types/react-dom": "18.3.7",
     "@types/react-test-renderer": "18.3.1",
     "cross-spawn": "7.0.6",
-    "dsh-identity-client": "link:../dsh-identity/client",
+    "dsh-identity-client": "link:../pap-server/client",
     "esbuild": "0.25.12",
     "prettier": "3.6.2",
     "react": "18.3.1",

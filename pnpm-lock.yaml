@@ -5,7 +5,7 @@ settings:
   excludeLinksFromLockfile: false
 
 overrides:
-  dsh-identity-client: link:../dsh-identity/client
+  dsh-identity-client: link:../pap-server/client
 
 importers:
 
@@ -51,8 +51,8 @@ importers:
         specifier: 7.0.6
         version: 7.0.6
       dsh-identity-client:
-        specifier: link:../dsh-identity/client
-        version: link:../dsh-identity/client
+        specifier: link:../pap-server/client
+        version: link:../pap-server/client
       esbuild:
         specifier: 0.25.12
         version: 0.25.12
@@ -99,8 +99,8 @@ importers:
         specifier: 1.2.1
         version: 1.2.1(@types/react-dom@18.3.7(@types/react@18.3.26))(@types/react@18.3.26)(react-dom@18.3.1(react@18.3.1))(react@18.3.1)
       dsh-identity-client:
-        specifier: link:../../../dsh-identity/client
-        version: link:../../../dsh-identity/client
+        specifier: link:../../../pap-server/client
+        version: link:../../../pap-server/client
       lucide-react:
         specifier: 1.66.0
         version: 1.66.0(@types/react@18.3.26)(react@18.3.1)

@@ -27,12 +27,12 @@ DSH 用户卡片 ── owner 用户操作接口 ───────┘       
 
 ## 构建与安装
 
-需要 Node **>=24.9.0**、pnpm **10.28.2**、官方 DSH Desktop **0.2.2-rc.1**。三个仓库的本轮交接分支均为 `codex/full-environment-readiness`：Core 在 `AgentConnect/frontvia-core`，本仓库为 `AgentConnect/dsh-frontvia-plugins`，身份服务为 `AgentConnect/pap-server`。身份仓库必须克隆为同级的 `dsh-identity` 目录。
+需要 Node **>=24.9.0**、pnpm **10.28.2**、官方 DSH Desktop **0.2.2-rc.1**。三个仓库的本轮交接分支均为 `codex/full-environment-readiness`：Core 在 `AgentConnect/frontvia-core`，本仓库为 `AgentConnect/dsh-frontvia-plugins`，身份服务为 `AgentConnect/pap-server`。身份仓库克隆为同级的 `pap-server` 目录；账号插件的包名仍为 `dsh-identity-client`，它不是本地仓库目录名。
 
 ```sh
-git clone --branch codex/full-environment-readiness https://github.com/AgentConnect/pap-server.git dsh-identity
+git clone --branch codex/full-environment-readiness https://github.com/AgentConnect/pap-server.git pap-server
 git clone --branch codex/full-environment-readiness https://github.com/AgentConnect/dsh-frontvia-plugins.git dsh-frontvia-plugins
-cd dsh-identity
+cd pap-server
 pnpm install --frozen-lockfile --ignore-scripts
 pnpm build
 cd ../dsh-frontvia-plugins
