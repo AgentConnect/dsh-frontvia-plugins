@@ -127,8 +127,8 @@ PAP 连接页更新与验收：[docs/pap-ui-refresh.md](docs/pap-ui-refresh.md)�
 
 ### 手机号登录与公开 Agent
 
-默认启用 Frontvia 个人号登录，账号环境由独立账号插件配置；PAP 的单独使用见 [PAP README](packages/pap/README.md)。
-流程为在 Frontvia 服务中手机号验证码注册/登录 → 在 PAP 连接中添加商家公开咨询配置 → 连接 → 使用 Customer
+默认启用 DSH 独立个人账号登录，账号环境由独立账号插件配置；PAP 的单独使用见 [PAP README](packages/pap/README.md)。
+流程为在「DSH 账号」中手机号验证码注册/登录 → 在 PAP 连接中添加商家的购物或公开咨询配置 → 连接 → 使用 Customer
 咨询工具；旧 USD 购物另添加 Commerce 资源；声明支持的 CNY 购物直接使用咨询连接。无需商家审批客户端；公钥、签名、回调、DPoP、服务发布状态仍由
 服务端校验。个人凭据只发给受保护配置中的可信服务，不随导入地址变化。
 
@@ -142,7 +142,7 @@ HTTPS/Platform/Agent、预留号码验证码和受控模型；不修改用户默
 
 ### 单条 PAP 服务链接
 
-支持 `https://身份域名/.well-known/poppy.json#resource=编码后的咨询资源URL`。这是 Frontvia 链接导入约定；只添加发现文档中精确匹配且通过咨询 OpenAPI 核验的服务，不导入其他店铺或 Commerce。链接不含凭据，添加后仍用客户端自己的身份连接。已用 JSON 导入过同一绑定时保留其本地 ID 与身份。旧 JSON 导入流程不变。源码支持不代表本机已安装更新。
+支持 `https://身份域名/.well-known/poppy.json#resource=编码后的咨询资源URL`。这是 Frontvia 链接导入约定；只添加发现文档中精确匹配且通过对应 OpenAPI 核验的一个服务（咨询或 Commerce），不附带导入其他服务或店铺。链接不含凭据，添加后仍用客户端自己的身份连接。已用 JSON 导入过同一绑定时保留其本地 ID 与身份。旧 JSON 导入流程不变。源码支持不代表本机已安装更新。
 
 ### DSH 0.2.2-rc.1
 
