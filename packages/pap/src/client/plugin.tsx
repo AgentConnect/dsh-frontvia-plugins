@@ -33,6 +33,7 @@ import {
   Spinner,
 } from "./ui.js";
 import styles from "./styles.css";
+import { errorMessage, messages } from "./errors.js";
 import { ImportPanel } from "./import-panel.js";
 
 export const inject = ["slots", "connection", "layout"];
@@ -58,6 +59,7 @@ type Connection = {
   connected: boolean;
   expiresAt?: number;
   bindingError?: string;
+  authentication?: { mode: "provider" | "self_managed"; provider?: string };
 };
 type Status = {
   configured: boolean;
@@ -68,6 +70,7 @@ type Status = {
     clientId?: string;
     automatic?: boolean;
     signingKeyConfigured: boolean;
+    providers?: { id: string; clientId?: string; ready: boolean }[];
   };
 };
 type Operation =
@@ -81,50 +84,6 @@ type Run = (
   operation: Operation,
   payload: Record<string, unknown>,
 ) => Promise<any>;
-const messages: Record<string, string> = {
-  IDENTITY_PROVIDER_REQUIRED: "此连接需要对应的身份插件，请启用后重试。",
-  INVALID_DEVICE_IDENTITY: "账号服务返回的设备身份未通过验证。",
-  PAP_CLIENT_IDENTITY_REQUIRED: "请配置有效的 PAP 客户端身份后再连接。",
-  PAP_CONFIGURATION_REQUIRED: "请先配置 PAP 客户端，再连接服务方。",
-  CLIENT_KEY_REQUIRED: "客户端签名密钥未就绪，请检查此 Profile 的凭据配置。",
-  SITE_NOT_APPROVED: "此服务方尚未登记，请检查连接配置。",
-  DISCOVERY_MISMATCH: "服务方的发现信息与已登记配置不一致，连接未建立。",
-  ISSUER_MISMATCH: "服务方的身份服务与已登记配置不一致，连接未建立。",
-  ENDPOINT_MISMATCH: "服务方的授权地址与已登记配置不一致，连接未建立。",
-  ACCOUNT_REAUTHORIZATION_REQUIRED: "此账户需要重新授权，请展开下方账户授权。",
-  SESSION_REQUIRED: "请先连接服务方，建立 PAP 会话。",
-  CONNECTION_REQUIRED: "连接已不可用，请刷新状态后重新连接。",
-  CONNECTION_BINDING_CHANGED:
-    "连接配置已变化，旧凭据已停用。请恢复原配置；使用新服务方时请创建独立连接配置。",
-  CONNECTION_BINDING_REQUIRED:
-    "旧连接缺少身份绑定信息，暂时无法安全续接。原数据已保留，请在独立 Profile 中配置新连接。",
-  PERSONAL_LOGIN_REQUIRED: "此连接需要登录，请在对应的身份插件完成登录后重试。",
-  PERSONAL_ACCOUNT_CHANGED: "账号已变化，请重新连接服务方。",
-  PERSONAL_TOKEN_ORIGIN_UNTRUSTED:
-    "此服务方身份服务尚未配置为可信地址，个人凭据未发送。",
-  PROVIDER_AUTHORIZATION_REQUIRED: "请通过此连接对应的身份插件完成授权。",
-  CLIENT_NOT_ALLOWED:
-    "此旧配置限制了客户端，请重新导入服务方最新的免审批连接配置。",
-  OAUTH_INVALID_REQUEST: "服务方拒绝了连接请求格式（invalid_request），请联系服务管理员核对。",
-  OAUTH_INVALID_CLIENT: "服务方未通过客户端认证（invalid_client）。",
-  OAUTH_INVALID_GRANT: "服务方未接受本次授权凭据（invalid_grant）。",
-  OAUTH_INVALID_TARGET: "服务方未接受本次资源地址（invalid_target）。",
-  OAUTH_INVALID_DPOP_PROOF: "服务方未接受本次请求证明（invalid_dpop_proof）。",
-  OAUTH_UNAUTHORIZED_CLIENT: "服务方未允许此客户端的授权方式（unauthorized_client）。",
-  HTTP_401: "客户端身份尚未通过服务方验证，请核对客户端登记与签名凭据。",
-  HTTP_403: "服务拒绝了此请求，请检查服务是否已发布或账号是否有效。",
-  INVALID_SCOPE: "授权范围格式不正确，请使用服务方提供的范围，并以空格分隔。",
-  CALLBACK_REJECTED:
-    "回调地址未通过校验。请检查是否属于当前服务方和本次授权；过期时请重新创建授权链接。",
-  AUTHORIZATION_DENIED: "服务方未批准此次授权。你可以重新创建授权链接后再试。",
-  SITE_REVISION_CHANGED: "配置已变化，请刷新状态后重新确认。",
-  SITE_NOT_REMOVED: "配置已恢复或发生变化，请刷新状态。",
-  INVALID_AUTHORIZATION_URL: "服务方返回的授权链接无效，请检查连接配置。",
-};
-function errorMessage(error: unknown) {
-  const code = error instanceof Error ? error.message : "";
-  return messages[code] ?? "操作未完成，请检查服务列表是否可用后重试。";
-}
 function validUrl(value: string) {
   try {
     return new URL(value).protocol === "https:";
@@ -148,7 +107,11 @@ function sessionExpiry(connection?: Connection) {
 
 export function apply(ctx: any) {
   const call = async (op: string, payload: unknown = {}) => {
-    const result = await ctx.connection.rpc.call("/api", `frontvia-pap/${op}`, payload);
+    const result = await ctx.connection.rpc.call(
+      "/api",
+      `frontvia-pap/${op}`,
+      payload,
+    );
     if (!result.ok) throw new Error(result.error.code);
     return result.value;
   };
@@ -457,11 +420,15 @@ export function apply(ctx: any) {
             <div>
               <dt>连接身份</dt>
               <dd>
-                {connection?.personalSignedIn
-                  ? "身份服务授权"
-                  : connection?.signedIn
-                    ? "服务方账户"
-                    : "独立 PAP 身份"}
+                {!connection
+                  ? "连接后确认身份来源"
+                  : connection.authentication?.mode === "provider"
+                    ? `身份插件授权${connection.authentication.provider ? ` · ${connection.authentication.provider}` : ""}`
+                    : connection.personalSignedIn
+                      ? "身份服务授权"
+                      : connection?.signedIn
+                        ? "服务方账户"
+                        : "独立 PAP 身份"}
               </dd>
             </div>
             <div>
@@ -496,7 +463,9 @@ export function apply(ctx: any) {
                 <KeyRound aria-hidden />
                 <span>
                   账户授权
-                  <span className="frontvia-pap-summary-hint">按需连接服务方账户</span>
+                  <span className="frontvia-pap-summary-hint">
+                    按需连接服务方账户
+                  </span>
                 </span>
                 <Badge>可选</Badge>
                 <ChevronDown className="frontvia-pap-chevron" aria-hidden />
@@ -532,7 +501,10 @@ export function apply(ctx: any) {
                         disabled={!!busy}
                         aria-describedby={`${id}-scopes-help`}
                       />
-                      <p id={`${id}-scopes-help`} className="frontvia-pap-field-help">
+                      <p
+                        id={`${id}-scopes-help`}
+                        className="frontvia-pap-field-help"
+                      >
                         多个范围用空格分隔，具体权限由服务方确认。
                       </p>
                     </Field>
@@ -603,7 +575,10 @@ export function apply(ctx: any) {
                         aria-invalid={invalid || undefined}
                         aria-describedby={`${id}-callback-help`}
                       />
-                      <p id={`${id}-callback-help`} className="frontvia-pap-field-help">
+                      <p
+                        id={`${id}-callback-help`}
+                        className="frontvia-pap-field-help"
+                      >
                         此地址仅用于当前服务方的授权校验，不会发送给聊天模型。
                       </p>
                       {invalid && (
@@ -874,7 +849,10 @@ export function apply(ctx: any) {
                   </span>
                 )}
               </div>
-              <main className="frontvia-pap-service-groups" aria-label="服务列表">
+              <main
+                className="frontvia-pap-service-groups"
+                aria-label="服务列表"
+              >
                 {groups.length ? (
                   groups.map(({ key, title, domain, sites }) => (
                     <section
@@ -995,27 +973,49 @@ export function apply(ctx: any) {
                       技术信息
                       <ChevronDown aria-hidden />
                     </summary>
-                    <dl className="frontvia-pap-detail-facts">
-                      <div className="frontvia-pap-detail-address">
-                        <dt>客户端标识</dt>
-                        <dd>
-                          {data.client.clientId ??
-                            (data.client.automatic
-                              ? "首次连接服务方时自动建立"
-                              : "待配置服务方连接身份")}
-                        </dd>
-                      </div>
-                      <div>
-                        <dt>签名凭据</dt>
-                        <dd>
-                          {data.client.signingKeyConfigured
-                            ? "已配置"
-                            : data.client.automatic
-                              ? "首次连接时生成"
-                              : "待配置"}
-                        </dd>
-                      </div>
-                    </dl>
+                    {!!data.client.providers?.length && (
+                      <dl className="frontvia-pap-detail-facts">
+                        {data.client.providers.map((provider) => (
+                          <div key={provider.id}>
+                            <dt>身份插件 · {provider.id}</dt>
+                            <dd>
+                              {provider.ready
+                                ? "设备身份已登记，由身份插件管理签名凭据"
+                                : "设备身份尚未就绪，请在账号页面核对"}
+                              {provider.clientId && (
+                                <div className="frontvia-pap-detail-address">
+                                  {provider.clientId}
+                                </div>
+                              )}
+                            </dd>
+                          </div>
+                        ))}
+                      </dl>
+                    )}
+                    {(data.client.clientId ||
+                      !data.client.providers?.length) && (
+                      <dl className="frontvia-pap-detail-facts">
+                        <div className="frontvia-pap-detail-address">
+                          <dt>PAP 自管客户端标识</dt>
+                          <dd>
+                            {data.client.clientId ??
+                              (data.client.automatic
+                                ? "首次连接服务方时自动建立"
+                                : "待配置服务方连接身份")}
+                          </dd>
+                        </div>
+                        <div>
+                          <dt>签名凭据</dt>
+                          <dd>
+                            {data.client.signingKeyConfigured
+                              ? "已配置"
+                              : data.client.automatic
+                                ? "首次连接时生成"
+                                : "待配置"}
+                          </dd>
+                        </div>
+                      </dl>
+                    )}
                   </details>
                 )}
               </footer>
@@ -1027,7 +1027,10 @@ export function apply(ctx: any) {
   }
 
   ctx.slots.inject("main", () =>
-    ctx.slots.register({ name: "main", key: "frontvia-pap-connections" }, Panel),
+    ctx.slots.register(
+      { name: "main", key: "frontvia-pap-connections" },
+      Panel,
+    ),
   );
   ctx.slots.inject("sidebar.panellist", () =>
     ctx.slots.register(

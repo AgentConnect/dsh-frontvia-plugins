@@ -314,6 +314,13 @@ export class PapService {
       issuer: c.binding?.issuer ?? site?.issuer,
       resource: c.binding?.resource ?? site?.resource,
       ...(bindingError ? { bindingError } : {}),
+      authentication:
+        c.authenticationProvider || c.personalIdentity
+          ? {
+              mode: "provider" as const,
+              provider: c.authenticationProvider ?? this.provider(c)?.id,
+            }
+          : { mode: "self_managed" as const },
       signedIn: !!c.signedIn,
       ...(c.personalIdentity ? { personalSignedIn: true } : {}),
       connected:
@@ -414,6 +421,19 @@ export class PapService {
   async clientStatus() {
     const client = this.config.clientId === undefined ? undefined : this.config;
     return {
+      providers: [...this.providers.values()].map((provider) => {
+        let identity: ClientIdentity | undefined;
+        try {
+          identity = provider.client.current();
+        } catch {
+          /* Status must not register or authorize. */
+        }
+        return {
+          id: provider.id,
+          clientId: identity?.clientId,
+          ready: !!identity,
+        };
+      }),
       clientId: client?.clientId,
       callback: client?.callback,
       signingKeyConfigured: !!(

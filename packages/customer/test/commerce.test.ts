@@ -121,6 +121,7 @@ function fixture(cache = false, cny = false, language?: string) {
     ],
     status: () => [],
     connect: async () => ({
+      authentication: { mode: "self_managed" as const },
       connectionRef: "connection-a",
       siteId: "a",
       label: "Shop",
