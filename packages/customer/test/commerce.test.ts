@@ -4218,3 +4218,67 @@ test("cart recovery retains uncertainty or mismatched resource evidence", async 
     }
   }
 });
+
+test("explicit pre-admission confirmation rejection preserves safe diagnostics and requires fresh consent", async () => {
+  const f = fixture(false, true);
+  try {
+    const flow = await prepare(f), review = await f.service.review("session-a", flow);
+    const request = f.service.pap.request.bind(f.service.pap);
+    let rejected = false;
+    f.service.pap.request = async (ref, method, params, signal) => {
+      if (method === "commerce.checkouts.confirm" && !rejected) {
+        rejected = true;
+        return { error: { code: 1002, message: "must not retain raw secret", data: {
+          type: "FORBIDDEN", request_id: "14fc34c5-caac-4c50-a660-c5142a631524",
+          retry_policy: "after_change", token: "must-not-save",
+        } } };
+      }
+      return request(ref, method, params, signal);
+    };
+    await assert.rejects(f.service.confirm("session-a", flow, review.intent!.id), /CONFIRMATION_REJECTED/);
+    const saved = f.vault.get<any>(`flow:${flow}`);
+    assert.equal(saved.pending, undefined);
+    assert.equal(saved.intent, undefined);
+    const command = Object.values(saved.commands).find((v: any) => v.method === "commerce.checkouts.confirm") as any;
+    assert.equal(command.status, "done");
+    assert.deepEqual(command.lastError, { code: 1002, type: "FORBIDDEN", request_id: "14fc34c5-caac-4c50-a660-c5142a631524" });
+    assert(!JSON.stringify(command.lastError).includes("must"));
+    f.restart();
+    await assert.rejects(f.service.confirm("session-a", flow, review.intent!.id), /CONFIRMATION_REQUIRED/);
+    assert.equal(f.remote.confirms, 0);
+    const fresh = await f.service.review("session-a", flow);
+    assert.notEqual(fresh.intent!.id, review.intent!.id);
+    assert.equal(f.remote.confirms, 0);
+    await f.service.confirm("session-a", flow, fresh.intent!.id);
+    assert.equal(f.remote.confirms, 1);
+  } finally { f.close(); }
+});
+
+test("uncertain confirmation and missing lookup stay pending without replay, preserving both safe errors", async () => {
+  for (const error of [
+    { code: 1501, data: { type: "UPSTREAM_UNAVAILABLE", retry_policy: "after_change" } },
+    { code: 1002, data: { type: "FORBIDDEN", retry_policy: "after_reconcile", operation_id: "known-operation" } },
+  ]) {
+    const f = fixture();
+    try {
+      const flow = await prepare(f), review = await f.service.review("session-a", flow);
+      const request = f.service.pap.request.bind(f.service.pap);
+      let attempts = 0;
+      f.service.pap.request = async (ref, method, params, signal) => {
+        if (method === "commerce.checkouts.confirm") { attempts++; return { error }; }
+        return request(ref, method, params, signal);
+      };
+      await assert.rejects(f.service.confirm("session-a", flow, review.intent!.id), /CONFIRMATION_NOT_COMPLETED/);
+      const pending = f.vault.get<any>(`flow:${flow}`).pending;
+      assert(pending);
+      f.restart();
+      await assert.rejects(f.service.tool("session-a", "frontvia_orders", { flowId: flow, action: "recover" }, randomUUID()), /ORIGINAL_RESULT_UNKNOWN/);
+      const saved = f.vault.get<any>(`flow:${flow}`);
+      assert.equal(saved.pending, pending);
+      assert.equal(saved.commands[pending].lastError.code, error.code);
+      assert.equal(saved.commands[pending].lastLookupError.code, 1003);
+      assert.equal(f.remote.confirms, 0);
+      assert.equal(attempts, 1);
+    } finally { f.close(); }
+  }
+});

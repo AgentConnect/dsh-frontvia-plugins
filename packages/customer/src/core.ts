@@ -42,12 +42,31 @@ export type PapPort = Pick<
       checkoutId: string,
     ) => Promise<any>;
   };
+type SavedRpcError = { code?: number; type?: string; request_id?: string };
+function safeRpcError(error: any): SavedRpcError {
+  return {
+    ...(Number.isSafeInteger(error?.code) ? { code: error.code } : {}),
+    ...(typeof error?.data?.type === "string" && /^[A-Z][A-Z0-9_]{0,69}$/.test(error.data.type)
+      ? { type: error.data.type } : {}),
+    ...(typeof error?.data?.request_id === "string" && /^[a-f0-9-]{36}$/i.test(error.data.request_id)
+      ? { request_id: error.data.request_id } : {}),
+  };
+}
+function confirmationNotAdmitted(error: any): boolean {
+  // The server attaches operation_id/after_reconcile once admission commits.
+  // Missing lookup results or upstream errors alone never authorize a retry.
+  return error?.data?.retry_policy === "after_change" &&
+    !error.data.operation_id &&
+    [-32601, -32602, 1001, 1002, 1101, 1102, 1201, 1203, 1204, 1302, 1401].includes(error.code);
+}
 type Command = {
   key: string;
   method: string;
   params: any;
   status: "pending" | "done" | "discarded";
   waitEnded?: boolean;
+  lastError?: SavedRpcError;
+  lastLookupError?: SavedRpcError;
   result?: any;
 };
 // A terminal cart edit can leave a changed cart. Read its authoritative state
@@ -1429,6 +1448,8 @@ export class CustomerService {
         { method: c.method, idempotency_key: c.key },
       );
       if (r.error) {
+        c.lastLookupError = safeRpcError(r.error);
+        this.save(f);
         if (
           retryCart &&
           r.error.code === 1003 &&
@@ -1967,7 +1988,20 @@ export class CustomerService {
       f.pending = c.key;
       this.save(f);
       const r = await this.pap.request(f.connectionRef, c.method, c.params);
-      if (r.error) fail("CONFIRMATION_NOT_COMPLETED");
+      if (r.error) {
+        c.lastError = safeRpcError(r.error);
+        if (confirmationNotAdmitted(r.error)) {
+          c.status = "done";
+          c.result = { error: c.lastError, admission: "rejected" };
+          delete f.pending;
+          // Retain the original command, but require a new review and click.
+          delete f.intent;
+          this.save(f);
+          fail("CONFIRMATION_REJECTED");
+        }
+        this.save(f);
+        fail("CONFIRMATION_NOT_COMPLETED");
+      }
       const d = r.result?.data;
       if (!d?.operation) fail("INVALID_OPERATION_RESPONSE");
       this.apply(f, c.method, d);

@@ -92,6 +92,7 @@ export const inject = [
 ];
 type UI = { flowId: string; sessionId: string; card: string };
 const errorText: Record<string, string> = {
+  CONFIRMATION_REJECTED: "购买确认未被商店受理，请重新核对订单后再确认。",
   CART_ALREADY_SUBMITTED:
     "商品已生成订单，请到“我的订单”查看。继续加购会使用新的购物车。",
   OPERATION_DISCARDED: "这次加购已结束，请重新选择商品。",
@@ -451,8 +452,10 @@ export function apply(ctx: any) {
           op === "retry-cart"
         )
           views.invalidate(ui, ["checkout"]);
-        setError(op === "confirm" ? "CONFIRMATION_RESULT_UNKNOWN" : e.message);
-        if (op === "confirm" && e.message !== "PERSONAL_ACCOUNT_CHANGED")
+        const rejected = op === "confirm" && e.message === "CONFIRMATION_REJECTED";
+        if (rejected) views.invalidate(ui, ["checkout"]);
+        setError(op === "confirm" && !rejected ? "CONFIRMATION_RESULT_UNKNOWN" : e.message);
+        if (op === "confirm" && !rejected && e.message !== "PERSONAL_ACCOUNT_CHANGED")
           views.publish(ui, { ...liveData, pending: true });
         return false;
       } finally {
