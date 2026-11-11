@@ -5,6 +5,14 @@ import { lookup } from "node:dns/promises";
 import type { LookupAddress } from "node:dns";
 import { readFileSync } from "node:fs";
 import { fail, PapError } from "./storage.js";
+// Only protocol-defined error names may leave the remote response boundary.
+// Never retain descriptions, assertions, tokens, or arbitrary server strings.
+const oauthErrors = new Set([
+  "invalid_request", "invalid_client", "invalid_grant", "invalid_scope",
+  "invalid_target", "invalid_dpop_proof", "invalid_token", "insufficient_scope",
+  "unsupported_grant_type", "unauthorized_client", "unsupported_response_type",
+  "access_denied", "temporarily_unavailable",
+]);
 export type Target = {
   origin: string;
   address: string;
@@ -197,6 +205,12 @@ export function httpsTransport(
                   typeof value.id === "string"
                 )
                   return succeed(value);
+                if (
+                  Object.entries(headers).some(([name, value]) =>
+                    name.toLowerCase() === "content-type" &&
+                    value.split(";")[0]?.trim() === "application/x-www-form-urlencoded") &&
+                  typeof value?.error === "string" && oauthErrors.has(value.error)
+                ) return failed(new PapError(`OAUTH_${value.error.toUpperCase()}`));
                 return failed(new PapError(`HTTP_${res.statusCode}`));
               }
               succeed(value);

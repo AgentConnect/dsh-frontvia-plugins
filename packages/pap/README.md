@@ -52,3 +52,5 @@ Frontvia 的身份匹配、购买证明策略和支付链接规则在 Customer �
 已对照 [AgentConnect/dsh-pap](https://github.com/AgentConnect/dsh-pap) 的 `777a8214`：通用包为 `@awiki/dsh-pap`，使用 `pap` / `papHost` / `papManager` 服务、`papManager` 管理接口和 `pap_*` 工具。本插件不依赖该包，使用 `frontviaPap`、`/api/frontvia-pap/*`（RPC 方法 `frontvia-pap/*`）、`frontvia-pap-connections` 页面及 `frontvia-pap-connections-change` 事件；业务工具保持 `frontvia_*`。
 
 Frontvia 账号客户端同时使用 `frontviaIdentity`、`/api/frontvia-identity/*` 和 `frontvia-identity-change`。两套插件的本地服务和接口名称分开；远端 PAP 协议、资源 URL 与签名字段不随本地包名修改。默认存储与密钥引用保留，升级不会新建空身份或清空连接。
+
+OAuth 连接失败时，仅保留标准 `error` 字段，例如 `OAUTH_INVALID_REQUEST`。不记录或传递 `error_description`、令牌、签名或其他响应字段；未知错误仍使用 HTTP 状态码。

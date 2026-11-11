@@ -45,6 +45,11 @@ test("pinned HTTPS verifies host certificate, preserves RPC business errors and 
     (req, res) => {
       assert.equal(req.headers.host, "merchant.test");
       sockets.add(req.socket);
+      if(req.url==='/oauth-error' || req.url==='/untrusted-error') {
+        res.writeHead(400, {'content-type':'application/json'});
+        res.end(JSON.stringify({error:req.url==='/oauth-error'?'invalid_request':'private-server-string',error_description:'private-assertion-and-token',access_token:'never-retain'}));
+        return;
+      }
       if(req.url==='/hold'){
         holdArrivals++;held.push(()=>{res.writeHead(200,{'content-type':'application/json'});res.end('{}');});
         if(held.length===4)holdReady?.();return;
@@ -114,6 +119,16 @@ test("pinned HTTPS verifies host certificate, preserves RPC business errors and 
   try {
     const wire = httpsTransport([target], cert, agents);
     const original = { ...request, url: target.origin + "/original" };
+    const oauth = {...request, url:target.origin+'/oauth-error',headers:{'content-type':'application/x-www-form-urlencoded; charset=UTF-8'}};
+    await assert.rejects(wire(oauth), (error:any) => {
+      assert.equal(error.code,'OAUTH_INVALID_REQUEST');
+      assert.equal(error.message,'OAUTH_INVALID_REQUEST');
+      assert(!JSON.stringify(error).includes('private'));
+      assert(!JSON.stringify(error).includes('never-retain'));
+      return true;
+    });
+    await assert.rejects(wire({...oauth,url:target.origin+'/untrusted-error'}), {code:'HTTP_400'});
+    await assert.rejects(wire({...oauth,headers:{'Content-Type':'application/json'}}), {code:'HTTP_400'});
     await wire(request);await wire(request);
     assert.equal(sockets.size,1,'sequential requests reuse one TLS connection');
     await Promise.all(Array.from({length:12},()=>wire(request)));
