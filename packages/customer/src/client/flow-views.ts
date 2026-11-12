@@ -29,6 +29,7 @@ export function pollCadence(data: any, scopes: ViewScope[]): number {
     ...(scopes.includes("order-detail") ? [data.viewedOrder] : []),
   ].filter(Boolean);
   const cadence = (order: any) => {
+    if(order.business_status)return ["completed","canceled","closed_refunded","archived"].includes(order.business_status)?0:order.business_status==="closing"?1:4;
     const payment =
       order.payment?.status ?? data.checkout?.payment_summary?.status;
     if (
