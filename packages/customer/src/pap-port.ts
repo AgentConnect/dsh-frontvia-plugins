@@ -11,6 +11,8 @@ export interface PapPort {
   identity(ref:string):{issuer:string;resource:string;signedIn:boolean;clientId?:string;userId?:string};
   request(ref:string,method:string,params:unknown,signal?:AbortSignal,options?:{maxResponseBytes:number}):Promise<any>;
   canAccess?(ref:string):boolean;
+  /** Chat ownership is independent of whether a particular remote session is connected. */
+  isCurrentIdentity?(ref:string):boolean;
   capabilityCacheKey?(ref:string):string;
   prepareDomain?(domain:string):Promise<void>;
   refresh?():Promise<void>;

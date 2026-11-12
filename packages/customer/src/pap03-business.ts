@@ -47,9 +47,13 @@ export class Pap03Business implements PapPort {
     if(!value||!this.canAccess(ref))fail('IDENTITY_CHANGED');
     return value;
   }
+  isCurrentIdentity(ref:string){
+    const value=this.connections.get(ref);
+    return !!value&&!!this.epoch&&value.identity===this.epoch;
+  }
   canAccess(ref:string){
     const value=this.connections.get(ref);
-    return !!value&&!!this.epoch&&value.identity===this.epoch&&Array.isArray(this.publicState.sessions)&&this.publicState.sessions.some((s:any)=>s.companyRef===value.store.companyRef&&s.connected&&!s.account);
+    return this.isCurrentIdentity(ref)&&!!value&&Array.isArray(this.publicState.sessions)&&this.publicState.sessions.some((s:any)=>s.companyRef===value.store.companyRef&&s.connected&&!s.account);
   }
   sites():BusinessSite[]{
     return [...this.connections.entries()].filter(([ref])=>this.canAccess(ref)).map(([,v])=>({id:v.store.domain,domain:v.store.domain,label:v.store.name,issuer:v.store.companyId,resource:v.store.companyId,description:{profile:'frontvia.store.v1',methods:[...v.store.methods]}}));

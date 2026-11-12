@@ -358,6 +358,10 @@ export class CustomerService {
   }
   async connect(sessionId: string, siteId: string) {
     if (!sessionId || sessionId.length > 200) fail("SESSION_REQUIRED");
+    // Public PAP initializes on explicit domain connection after a Host restart.
+    // Restore its identity before comparing chat ownership; no business reads
+    // or saved flow data are exposed until the ownership check below passes.
+    await this.pap.prepareDomain?.(siteId);
     // A DSH chat retains its model context. Do not mix a second personal
     // account into a chat containing the first account's tool responses.
     for (const prefix of ["flow:", "consultation:"]) {
@@ -368,12 +372,13 @@ export class CustomerService {
         }>(key)!;
         if (
           saved.sessionId === sessionId &&
-          this.pap.canAccess?.(saved.connectionRef) === false
+          (this.pap.isCurrentIdentity
+            ? this.pap.isCurrentIdentity(saved.connectionRef)
+            : this.pap.canAccess?.(saved.connectionRef)) === false
         )
           fail("PERSONAL_CHAT_ACCOUNT_CHANGED");
       }
     }
-    await this.pap.prepareDomain?.(siteId);
     const site = this.pap.sites().find((s) => s.id === siteId);
     if (consultationSite(site) && !site?.description?.methods.includes("commerce.capabilities.get"))
       return this.consultation.connect(sessionId, siteId);

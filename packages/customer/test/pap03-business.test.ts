@@ -1,12 +1,13 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import {CustomerService} from '../src/core.js';
 import {Pap03Business} from '../src/pap03-business.js';
 import type {PapOperationsClient} from '@awiki/dsh-pap/product-api';
 function fixture(){
- let ready=false,identity='one',denied=false;const calls:any[]=[],connects:string[]=[];
- const operations=[{companyRef:'company',operationRef:'products',operationId:'commerce.products.search',method:'GET',queryParameters:[{name:'params',required:false}]},{companyRef:'company',operationRef:'payment',operationId:'commerce.payments.hosted.start',method:'POST'}];
- const sdk:PapOperationsClient={requestTimeoutMs:1000,connect:async domain=>{ready=true;connects.push(domain);return {ok:true,value:{company:{companyRef:'company',companyId:'https://shop.example',name:'Shop'}}};},status:async()=>denied?{ok:false,error:{code:'permission_denied'}}:{ok:true,value:ready?{state:'ready',identity:{did:identity},companies:[{companyRef:'company',companyId:'https://shop.example',domain:'shop.example',name:'Shop'}],sessions:[{companyRef:'company',sessionRef:'session',connected:true}]}:{state:'unconfigured'}},operations:async()=>({ok:true,value:operations}),request:async input=>{calls.push(input);return {ok:true,value:{status:200,body:{result:{data:{items:[]}}}}};}};
- return {sdk,calls,connects,changeIdentity(){identity='two';},deny(){denied=true;}};
+ let ready=false,identity='one',denied=false,connected=true;const calls:any[]=[],connects:string[]=[];
+ const operations=[{companyRef:'company',operationRef:'capabilities',operationId:'commerce.capabilities.get',method:'GET'},{companyRef:'company',operationRef:'products',operationId:'commerce.products.search',method:'GET',queryParameters:[{name:'params',required:false}]},{companyRef:'company',operationRef:'payment',operationId:'commerce.payments.hosted.start',method:'POST'}];
+ const sdk:PapOperationsClient={requestTimeoutMs:1000,connect:async domain=>{ready=true;connects.push(domain);return {ok:true,value:{company:{companyRef:'company',companyId:'https://shop.example',name:'Shop'}}};},status:async()=>denied?{ok:false,error:{code:'permission_denied'}}:{ok:true,value:ready?{state:'ready',identity:{did:identity},companies:[{companyRef:'company',companyId:'https://shop.example',domain:'shop.example',name:'Shop'}],sessions:[{companyRef:'company',sessionRef:'session',connected}]}:{state:'unconfigured'}},operations:async()=>({ok:true,value:operations}),request:async input=>{calls.push(input);return {ok:true,value:{status:200,body:{result:{data:(input as {operationRef:string}).operationRef==='capabilities'?{store_id:'store',methods:[{method:'commerce.products.search',availability:'supported'}]}:{items:[]}}}}};}};
+ return {sdk,calls,connects,changeIdentity(){identity='two';},deny(){denied=true;},restart(){ready=false;},disconnect(){connected=false;}};
 }
 test('public business projection restores the same identity/domain connection after Customer restart',async()=>{
  const f=fixture(),first=new Pap03Business(f.sdk);const {connectionRef}=await first.connect('shop.example');
@@ -31,4 +32,28 @@ test('inline payment uses a discovered operation and refuses foreign payment lin
  await assert.rejects(business.hostedPayment(connectionRef,link.replace('shop.example','foreign.example'),id),/INVALID_PAYMENT_LINK/);
  assert.equal(f.calls.length,0);await business.hostedPayment(connectionRef,link,id);
  assert.deepEqual(f.calls,[{operationRef:'payment',body:{checkout_id:id,expires,access}}]);
+});
+
+
+test('same chat reconnects after the whole PAP Host restarts without replacing its flow',async()=>{
+ const f=fixture(),saved=new Map<string,any>();
+ const vault={keys:(prefix:string)=>[...saved.keys()].filter(key=>key.startsWith(prefix)),get:<T>(key:string)=>structuredClone(saved.get(key)) as T|undefined,set:(key:string,value:unknown)=>{saved.set(key,structuredClone(value));}};
+ const service=()=>new CustomerService({dataDir:'unused',sites:[]},new Pap03Business(f.sdk),vault);
+ const first=await service().connect('chat','shop.example');
+ f.restart();
+ const restored=await service().connect('chat','shop.example');
+ assert.equal(restored.flowId,first.flowId);assert.equal(saved.size,1);
+ assert.deepEqual(f.calls.map(call=>call.operationRef),['capabilities','capabilities']);
+ f.restart();f.changeIdentity();const count=f.calls.length;
+ await assert.rejects(service().connect('chat','shop.example'),{code:'PERSONAL_CHAT_ACCOUNT_CHANGED'});
+ assert.equal(f.calls.length,count,'changed identity must not read business data');assert.equal(saved.size,1);
+});
+
+test('a disconnected remote session does not mean the chat owner changed',async()=>{
+ const f=fixture(),business=new Pap03Business(f.sdk);const {connectionRef}=await business.connect('shop.example');
+ f.disconnect();await business.refresh();
+ assert.equal(business.isCurrentIdentity(connectionRef),true);
+ assert.equal(business.canAccess(connectionRef),false);
+ await assert.rejects(business.request(connectionRef,'commerce.products.search',{}),/IDENTITY_CHANGED/);
+ assert.equal(f.calls.length,0);
 });
