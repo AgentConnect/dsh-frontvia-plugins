@@ -92,7 +92,7 @@ export async function awikiMeIdentity(){
     const view=await until(status,v=>v?.phase);
     if(view.phase==='awaiting_approval'){
       const review=await manager().getRequest(seed.requestId);
-      await manager().decide({requestId:seed.requestId,expectedVersion:review.request.version,decision:'approve'});
+      if(review.request.status==='pending')await manager().decide({requestId:seed.requestId,expectedVersion:review.request.version,decision:'approve'});
     }
     const phase=await until(status,v=>['awaiting_phone_verification','published','blocked','registration_uncertain'].includes(v?.phase));
     if(phase.phase==='awaiting_phone_verification')await remote.submitRegistrationOtp({code:auth.code});
