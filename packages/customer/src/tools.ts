@@ -1,3 +1,4 @@
+import { renderToolValue, toolPresentation } from "./tool-presentation.js";
 import { defineTool } from "@deepseek-ai/dsh-tools";
 import { z } from "zod";
 import { PapError } from "./state.js";
@@ -182,8 +183,9 @@ export function tools(service: CustomerService) {
         output: {
           schema: { type: "json" },
           render: (_a, value) => [
-            { type: "text", text: JSON.stringify(value) },
+            { type: "text", text: renderToolValue(value) },
           ],
+          presentationMeta: (_a, value) => toolPresentation(value),
         },
         async execute(args, exec) {
           try {
