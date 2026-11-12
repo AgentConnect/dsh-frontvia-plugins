@@ -1696,3 +1696,16 @@
 .fv-line-terms {
   margin-top: 8px;
 }
+
+/* Explicit stack prevents inherited paragraph/button margins from touching disclosure rows. */
+.fv .fv-service-feedback { display: grid; gap: 12px; }
+.fv .fv-service-feedback > p,
+.fv .fv-service-feedback .fv-consult-actions,
+.fv .fv-service-feedback .fv-button { margin: 0; }
+.fv .fv-service-feedback summary { cursor: pointer; padding-block: 4px; }
+.fv .fv-service-feedback code { display: block; padding-top: 6px; overflow-wrap: anywhere; }
+
+.fv.fv-connection-help{box-sizing:border-box;background:var(--fv-bg);border:1px solid var(--fv-border);border-radius:12px;width:min(480px,calc(100vw - 32px));padding:24px;margin:auto;max-height:calc(100dvh - 48px);overflow:auto}
+.fv-connection-help::backdrop{background:#0006}
+.fv-connection-help ol{padding-left:20px;display:grid;gap:10px;margin:16px 0}
+.fv-connection-help>p{margin:0 0 16px}

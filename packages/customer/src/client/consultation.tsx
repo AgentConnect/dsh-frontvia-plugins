@@ -1,3 +1,4 @@
+import { serviceFeedback } from "./service-feedback.js";
 import { useAccountRevision } from "./account.js";
 import { ConversationShopping } from "./conversation-shopping.js";
 import React, { useEffect, useRef, useState } from "react";
@@ -28,10 +29,16 @@ export function ConsultationCard({
   ui,
   call,
   sendToAgent,
+  openSettings,
+  openServices,
+  openPlugins,
 }: {
   ui: { flowId: string; sessionId: string; card: string };
   call: (op: string, payload: any) => Promise<any>;
   sendToAgent?: (text: string) => Promise<unknown>;
+  openSettings?: () => void;
+  openServices?: () => void;
+  openPlugins?: () => void;
 }) {
   const accountRevision = useAccountRevision();
   const scope = `${ui.flowId}:${ui.sessionId}:${accountRevision}`;
@@ -41,25 +48,12 @@ export function ConsultationCard({
   const [data, setData] = useState<any>(),
     [busy, setBusy] = useState(""),
     [error, setError] = useState("");
-  const errors: Record<string, string> = {
-    PERSONAL_ACCOUNT_CHANGED: "请登录原个人账号后查看此咨询。",
-    PERSONAL_LOGIN_REQUIRED: "请在公共 Identity/PAP 设置中选择身份并授权接入。",
-    CLIENT_NOT_ALLOWED: "客户端接入校验未通过，请在 PAP 连接中核对配置。",
-    CONNECTION_BINDING_REQUIRED:
-      "旧连接缺少绑定信息，请在 PAP 连接中查看处理说明。",
-    CONSULTATION_UNAVAILABLE: "咨询服务暂不可用或未获授权，请刷新连接后重试。",
-    KNOWLEDGE_SOURCE_EXPIRED: "原知识来源已失效，请重新检索。",
-    KNOWLEDGE_UNAVAILABLE: "商家暂未开放这项知识服务。",
-    RESOLVE_PENDING_OPERATION: "上次请求结果未知，请先核对原请求。",
-    SHOPPING_REVIEW_REQUIRED: "订单或报价已变化，请刷新后重新核对并确认。",
-    SHOPPING_RESPONSE_INVALID: "商家订单信息不完整，请重新核对原订单。",
-    SHOPPING_PAYMENT_LINK_INVALID: "付款入口未通过商家地址校验，请核对连接。",
-    SHOPPING_UNAVAILABLE: "商家当前未开放人民币购物。",
-  };
+  const [failure, setFailure] = useState<ReturnType<typeof serviceFeedback>>();
   async function refresh(op = "view", automatic = false) {
     if (!automatic) pollUntil.current = Date.now() + 300000;
     setBusy(op);
     setError("");
+    setFailure(undefined);
     try {
       const value = await call(op, ui);
       if (currentScope.current !== scope) return;
@@ -67,7 +61,7 @@ export function ConsultationCard({
     } catch (e: any) {
       if (currentScope.current !== scope) return;
       setData(undefined);
-      setError(errors[e.message] ?? "服务暂不可用，请检查连接或稍后重试。");
+      setFailure(serviceFeedback(e));
     } finally {
       if (currentScope.current === scope) setBusy("");
     }
@@ -77,13 +71,14 @@ export function ConsultationCard({
     pollUntil.current = Date.now() + 300000;
     setData(undefined);
     setError("");
+    setFailure(undefined);
     setBusy("");
     call("view", ui)
       .then((v) => {
         if (live) setData(v);
       })
       .catch((e) => {
-        if (live) setError(errors[e.message] ?? "暂时无法读取商家服务。");
+        if (live) setFailure(serviceFeedback(e));
       });
     return () => {
       live = false;
@@ -112,6 +107,7 @@ export function ConsultationCard({
   async function download(sourceRef: string) {
     setBusy("original");
     setError("");
+    setFailure(undefined);
     try {
       const value = await call("original", { ...ui, sourceRef });
       const bytes = Uint8Array.from(atob(value.bytes_base64), (c) =>
@@ -167,7 +163,44 @@ export function ConsultationCard({
             <AlertDescription>{error}</AlertDescription>
           </Alert>
         )}
-        {!data && !error && (
+        {failure && (
+          <Alert>
+            <Info aria-hidden />
+            <AlertDescription className="fv-service-feedback">
+              <p>{failure.text}</p>
+              <div className="fv-consult-actions">
+                {failure.retry && (
+                  <Button
+                    variant="outline"
+                    disabled={!!busy}
+                    onClick={() => void refresh()}
+                  >
+                    {busy ? <Spinner /> : <RefreshCw aria-hidden />}重试
+                  </Button>
+                )}
+                {(failure.action === "services"
+                  ? openServices
+                  : openSettings) && (
+                  <Button
+                    variant="outline"
+                    onClick={
+                      failure.action === "services"
+                        ? openServices
+                        : openSettings
+                    }
+                  >
+                    {failure.label}
+                  </Button>
+                )}
+              </div>
+              <details>
+                <summary>技术信息</summary>
+                <code>{failure.code}</code>
+              </details>
+            </AlertDescription>
+          </Alert>
+        )}
+        {!data && !error && !failure && (
           <p role="status">
             <Spinner />
             正在读取商家服务…
@@ -300,21 +333,23 @@ export function ConsultationCard({
             )}
           </div>
         )}
-        <div className="fv-consult-actions">
-          <Button
-            variant="outline"
-            disabled={!!busy}
-            onClick={() => void refresh()}
-          >
-            {busy === "view" ? <Spinner /> : <RefreshCw aria-hidden />}
-            {data?.shopping ? "刷新订单与答复" : "刷新答复"}
-          </Button>
-          {data?.pending && (
-            <Button disabled={!!busy} onClick={() => void refresh("recover")}>
-              {busy === "recover" ? <Spinner /> : null}核对原请求
+        {!failure && (
+          <div className="fv-consult-actions">
+            <Button
+              variant="outline"
+              disabled={!!busy}
+              onClick={() => void refresh()}
+            >
+              {busy === "view" ? <Spinner /> : <RefreshCw aria-hidden />}
+              {data?.shopping ? "刷新订单与答复" : "刷新答复"}
             </Button>
-          )}
-        </div>
+            {data?.pending && (
+              <Button disabled={!!busy} onClick={() => void refresh("recover")}>
+                {busy === "recover" ? <Spinner /> : null}核对原请求
+              </Button>
+            )}
+          </div>
+        )}
       </CardContent>
     </Card>
   );

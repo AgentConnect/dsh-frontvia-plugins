@@ -32,7 +32,7 @@ pnpm pack:local
 
 `pack:local` 仅产生本机安装候选：Customer 与公共 PAP 的内容寻址包。Identity 使用锁定的正式版本。未执行安装或 npm 发布。
 
-安装候选必须与 DSH `0.2.2-rc.1` 匹配。显式运行 `scripts/install-desktop.mjs` 才会更新 desktop Profile；旧 Frontvia 包的替换使用 `--replace-legacy-frontvia`，只处理安装器原先放入 `.local-packages/frontvia` 的旧包，不删除身份、凭据或业务状态。用户 Profile 自己的覆盖配置保持优先；公共 PAP 的自定义配置需保留 `businessConsumers: ['dsh-frontvia-customer']`。
+安装候选必须与 DSH `0.2.2-rc.1` 匹配。显式运行 `scripts/install-desktop.mjs` 才会更新 desktop Profile；旧 Frontvia 包的替换使用 `--replace-legacy-frontvia`，只处理安装器原先放入 `.local-packages/frontvia` 的旧包，不删除身份、凭据或业务状态。安装器会把公共 Identity/PAP 的 bundle 放在 Customer 之前，修复旧版升级时保留错误顺序造成的后台启动失败；其他插件的选择和相对顺序保持不变。用户 Profile 自己的覆盖配置保持优先；公共 PAP 的自定义配置需保留 `businessConsumers: ['dsh-frontvia-customer']`。
 
 隔离 Host 可以通过原有 `scripts/harness.mjs` 加载候选；验收不得使用用户默认 Profile。普通验证不产生额外日志归档。
 
@@ -53,3 +53,5 @@ MCP 测试投影仅描述工具的根对象参数；实际 Customer 仍执行完
 - 实际 DSH Web / Chromium E2E：本仓库 `pnpm test:e2e:dsh`，说明见 [DSH E2E](tests/e2e/dsh/README.md)。覆盖域名浏览、卡片恢复、规格加购、邮箱、公共批准、原订单和实际咨询；工作台配置本轮不纳入。
 
 两类测试使用隔离资源；公共 PAP 的组件检查与真实 HTTP 系统用例分开计数。测试使用正式公共 Identity、本地 PAP 候选和 Native Mock；身份统一连接既有 awiki.me User Service，没有新部署 User Service 或对外 DSH 站点。
+
+咨询读取失败会区分本机插件未启动、身份／授权、历史卡片和商家读取失败，提供只读重试、插件页或设置步骤，并在折叠技术信息中保留安全错误码。不自动重发购买／付款，不自动将旧手机号记录绑定到新公共身份。

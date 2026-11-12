@@ -82,6 +82,7 @@ import {
 } from "./ui.js";
 // @ts-ignore esbuild loads CSS as text.
 import styles from "./styles.css";
+import { ConnectionHelp } from "./connection-help.js";
 import { ConsultationCard } from "./consultation.js";
 export const inject = [
   "slots",
@@ -1305,13 +1306,15 @@ export function apply(ctx: any) {
     );
   }
   function Panel() {
+    const [help, setHelp] = useState(false);
     return (
       <>
         <style>{styles}</style>
+        <ConnectionHelp open={help} close={() => setHelp(false)} />
         <ServicePage
-          openAccount={() => ctx.layout.selectPanel("settings")}
+          openAccount={() => setHelp(true)}
           call={call}
-          openConnections={() => ctx.layout.selectPanel("settings")}
+          openConnections={() => setHelp(true)}
           renderFlow={(ui, startShopping, addedQuantity, initialError) => (
             <FlowCard
               key={ui.flowId}
@@ -1358,13 +1361,18 @@ export function apply(ctx: any) {
     initialError?: string;
     catalog?: CatalogSnapshot;
   }) {
+    const [help, setHelp] = useState(false);
     return ui.card === "consultation" ? (
       <section
         className={`fv${resume ? "" : " fv-inline"}`}
         aria-label="Frontvia 商家咨询"
       >
         <style>{styles}</style>
-        <ConsultationCard ui={ui} call={call} sendToAgent={sendToAgent} />
+        <ConnectionHelp open={help} close={() => setHelp(false)} />
+        <ConsultationCard ui={ui} call={call} sendToAgent={sendToAgent}
+          openPlugins={() => ctx.layout.selectPanel("plugins")}
+          openSettings={() => setHelp(true)}
+          openServices={() => ctx.layout.selectPanel("frontvia-customer")} />
       </section>
     ) : (
       <Shopping

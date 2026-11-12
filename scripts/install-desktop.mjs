@@ -13,6 +13,7 @@ import { isDeepStrictEqual } from "node:util";
 import { resolveProfileDir } from "@deepseek-ai/dsh-app-boot";
 import { withFileLock, writeFileAtomic } from "@deepseek-ai/dsh-atomic-write";
 import spawn from "cross-spawn";
+import { orderFrontviaBundles } from "./desktop-bundles.mjs";
 import { pluginPackages, legacyFrontviaPackages } from "./plugin-packages.mjs";
 
 const profile = resolveProfileDir("desktop");
@@ -200,6 +201,15 @@ await withFileLock(
         ...pair.filter(item=>item.name!=="dsh-frontvia-customer").map(item=>item.path),
         ...pair.filter(item=>item.name==="dsh-frontvia-customer").map(item=>item.path),
       ]);
+      await withFileLock(manifestPath, async () => {
+        const current = JSON.parse(await readFile(manifestPath, "utf8"));
+        const bundles = current.dsh?.profile?.bundles;
+        const ordered = orderFrontviaBundles(bundles);
+        if (!isDeepStrictEqual(bundles, ordered)) {
+          current.dsh.profile.bundles = ordered;
+          await writeFileAtomic(manifestPath, JSON.stringify(current, null, 2) + "\n", { mode: 0o600 });
+        }
+      }, locks);
       const installedIdentity=JSON.parse(await readFile(join(profile,"node_modules",identityName,"package.json"),"utf8"));
       if(installedIdentity.version!==identityVersion)throw new Error("Installed identity does not match the candidate");
       for (const { name } of pair.filter(item=>pluginPackages.some(p=>p.name===item.name))) {
