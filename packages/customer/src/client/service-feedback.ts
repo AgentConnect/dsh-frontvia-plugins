@@ -16,6 +16,22 @@ export function serviceFeedback(error: unknown) {
   const code = /^[A-Z][A-Z0-9_]{1,80}$/.test(message)
     ? message
     : "SERVICE_READ_FAILED";
+  if (code === "PAP_CREDENTIAL_UNAVAILABLE")
+    return {
+      code,
+      text: "PAP 暂时无法使用本机凭证。请检查公共身份及 PAP 的安全存储配置；不需要重新注册账号。",
+      action: "settings",
+      label: "查看设置步骤",
+      retry: true,
+    };
+  if (["PAP_INVALID_SESSION", "PAP_SESSION_ENDED"].includes(code))
+    return {
+      code,
+      text: "商家未接受当前连接。请从 Frontvia 服务重新打开商家；若仍失败，请保留技术信息中的错误码联系维护人员。不要重复下单或付款。",
+      action: "services",
+      label: "打开 Frontvia 服务",
+      retry: false,
+    };
   if (
     [
       "PERSONAL_ACCOUNT_CHANGED",

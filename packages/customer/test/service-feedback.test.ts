@@ -29,3 +29,15 @@ test("local plugin transport failure is distinguished from a remote merchant out
   assert.equal(feedback.action, "plugins");
   assert.match(feedback.text, /插件尚未就绪/);
 });
+
+test("credential and session failures do not prescribe identity recreation or blind retry", () => {
+  const credential = serviceFeedback(new Error("PAP_CREDENTIAL_UNAVAILABLE"));
+  assert.match(credential.text, /安全存储/);
+  assert.match(credential.text, /不需要重新注册/);
+  for (const code of ["PAP_INVALID_SESSION", "PAP_SESSION_ENDED"]) {
+    const session = serviceFeedback(new Error(code));
+    assert.equal(session.action, "services");
+    assert.equal(session.retry, false);
+    assert.match(session.text, /错误码/);
+  }
+});
