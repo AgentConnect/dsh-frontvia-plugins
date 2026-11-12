@@ -1,14 +1,12 @@
 import { resolve, dirname, basename } from "node:path";
 /** Frontvia packages are built and installed from this workspace only. */
 export const pluginPackages = [
-  { folder: "client", name: "dsh-frontvia-client" },
-  { folder: "pap", name: "dsh-frontvia-pap" },
   { folder: "customer", name: "dsh-frontvia-customer" },
 ];
 
 /** Only old local archives staged by the Frontvia installer are upgrade targets.
  * An unrelated generic PAP plugin must remain installed and untouched. */
-export const legacyPackageNames = ["dsh-identity-client", "dsh-pap"];
+export const legacyPackageNames = ["dsh-identity-client", "dsh-pap", "dsh-frontvia-client", "dsh-frontvia-pap"];
 export function legacyFrontviaPackages(manifest, profile) {
   const directory = resolve(profile, ".local-packages", "frontvia");
   return legacyPackageNames.filter((name) => {

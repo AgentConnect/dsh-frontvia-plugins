@@ -51,12 +51,15 @@ export const contactSchema = z
     }
   });
 
+export const manualContactSchema = z.object({ email: z.email().max(254) }).strict();
+
 /** A merchant may return an empty or country-only address for a new cart. */
 export function cartContactReady(
   cart: any,
   country: string | undefined,
 ): boolean {
-  if (manualCart(cart)) return true;
+  if (manualCart(cart))
+    return country === "CN" || (country === "US" && manualContactSchema.safeParse({ email: cart.email }).success);
   return (
     !!country &&
     cart?.shipping_address?.country === country &&

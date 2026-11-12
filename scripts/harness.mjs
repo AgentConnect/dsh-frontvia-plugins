@@ -26,6 +26,7 @@ if (process.argv.includes("--install")) {
   const manifest = JSON.parse(
     await readFile(resolve(".local/packages/manifest.json"), "utf8"),
   );
+  run(['plugin','--profile',profile,'add','@agent-network-protocol/dsh-anp-identity@'+manifest.identityVersion,...manifest.artifacts.filter(a=>!pluginPackages.some(p=>p.name===a.name)).map(a=>a.path)]);
   for (const { name, folder } of pluginPackages) {
     run([
       "plugin",

@@ -1,6 +1,15 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { cartContactReady } from "../src/contact-fields.js";
+import { uiSchemas } from "../src/ui-contract.js";
+
+test("owner contact route accepts a manual email patch without accepting invalid email or scope fields", () => {
+  const request = {sessionId:"owned-session",flowId:"00000000-0000-4000-8000-000000000001",
+    actionId:"00000000-0000-4000-8000-000000000002",expected_version:"v1",patch:{email:"buyer@example.test"}};
+  assert.equal(uiSchemas.contact.safeParse(request).success,true);
+  assert.equal(uiSchemas.contact.safeParse({...request,patch:{email:"invalid"}}).success,false);
+  assert.equal(uiSchemas.contact.safeParse({...request,tenant_id:"other-tenant"}).success,false);
+});
 
 test("checkout address readiness uses CN and US required fields, not address-object presence", () => {
   const cn = {
@@ -66,6 +75,9 @@ test("manual carts skip addresses from the current public cart, without quote-on
     lines: [{ catalog: null }],
   };
   assert.equal(cartContactReady(cart, "CN"), true);
+  assert.equal(cartContactReady(cart, "US"), false);
+  assert.equal(cartContactReady({ ...cart, email: "invalid" }, "US"), false);
+  assert.equal(cartContactReady({ ...cart, email: "buyer@example.test" }, "US"), true);
   assert.equal(cartContactReady({ ...cart, lines: [] }, "CN"), false);
   for (const kind of [undefined, null, "mixed", "physical", "unknown"])
     assert.equal(

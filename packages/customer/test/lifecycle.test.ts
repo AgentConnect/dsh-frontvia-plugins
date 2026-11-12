@@ -1,363 +1,45 @@
-import { AccountClient } from "dsh-frontvia-client/core";
-import { test } from "node:test";
-import assert from "node:assert/strict";
-import { mkdtempSync, writeFileSync, readFileSync } from "node:fs";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
-import { randomBytes } from "node:crypto";
-import { Vault } from "dsh-frontvia-pap/core";
-import { evaluatePluginCompatibility } from "@deepseek-ai/dsh-app-boot";
-import { serverResponseSchema } from "@deepseek-ai/dsh-client-connection";
-import { apply, inject } from "../src/index.js";
-
-test("built PAP and Customer bundles preserve connection errors through tools and owner routes", async () => {
-  const papBundle = await import(
-    new URL("../../pap/dist/index.js", import.meta.url).href
-  );
-  const customerBundle = await import(
-    new URL("../dist/index.js", import.meta.url).href
-  );
-  const dir = mkdtempSync(join(tmpdir(), "dsh-built-errors-")),
-    key = randomBytes(32).toString("base64url"),
-    papDir = join(dir, "pap"),
-    customerDir = join(dir, "customer"),
-    flowId = "00000000-0000-4000-8000-000000000002";
-  const papConfig = join(dir, "pap.json"),
-    customerConfig = join(dir, "customer.json");
-  writeFileSync(
-    papConfig,
-    JSON.stringify({
-      dataDir: papDir,
-      storageKeyRef: "PAP_STORAGE",
-      signingKeyRef: "SIGNING",
-      keyId: "test",
-      clientId: "https://client.test/client.json",
-      callback: "https://client.test/callback",
-      targets: [],
-      sites: [
-        {
-          id: "a",
-          label: "Test",
-          domain: "shop.test",
-          issuer: "https://auth.test",
-          resource: "https://api.test/rpc",
-        },
-      ],
-    }),
-    { mode: 0o600 },
-  );
-  writeFileSync(
-    customerConfig,
-    JSON.stringify({
-      dataDir: customerDir,
-      storageKeyRef: "CUSTOMER_STORAGE",
-      sites: [
-        {
-          siteId: "a",
-          storeId: "store",
-          confirmationKeyRef: "CONFIRM",
-          confirmationKid: "test",
-        },
-      ],
-    }),
-    { mode: 0o600 },
-  );
-  const legacy = new Vault(join(papDir, "pap.sqlite"), key);
-  legacy.set("connection:legacy", {
-    id: "legacy",
-    siteId: "a",
-    user: "subject",
-    proofKey: "unused",
-    metadata: {},
-  });
-  legacy.set("personal-account", {
-    generation: "saved-login-attempt",
-    challenge: {
-      id: "host-only-otp-challenge",
-      phone: "+12 •••• 0101",
-      expiresAt: Math.floor(Date.now() / 1000) + 300,
-      resendAt: Math.floor(Date.now() / 1000) + 60,
-    },
-  });
-  legacy.close();
-  const customer = new Vault(join(customerDir, "customer.sqlite"), key);
-  customer.set(`flow:${flowId}`, {
-    id: flowId,
-    sessionId: "s",
-    connectionRef: "legacy",
-    siteId: "a",
-    storeId: "store",
-    connection: null,
-    commands: {},
-    cart: { id: "cart" },
-  });
-  customer.close();
-  const cleanups: (() => void)[] = [],
-    routes = new Map<string, any>(),
-    definitions = new Map<string, any>();
-  const ctx: any = {
-    reflect: {
-      provide: (name: string, value: any) => {
-        ctx[name] = value;
-      },
-    },
-    credentials: { resolve: async () => ({ value: key }), set: async () => {} },
-    effect: (fn: () => (() => void) | undefined) => {
-      const dispose = fn();
-      if (dispose) cleanups.push(dispose);
-    },
-    tools: { register: (tool: any) => definitions.set(tool.name, tool) },
-    systemPrompt: { section: () => {} },
-    connection: {
-      browserPeer: { principal: { kind: "owner" } },
-      fetch: {
-        register: (route: any) => {
-          routes.set(route.path, route);
-          return () => {};
-        },
-      },
-    },
-  };
-  const accountVault = new Vault(join(dir, "identity.sqlite"), key);
-  cleanups.push(() => accountVault.close());
-  ctx.frontviaIdentity = {
-    account: new AccountClient(
-      {
-        origin: "https://identity.test",
-        requestOrigin: "https://identity.test",
-        audiences: ["https://auth.test"],
-      },
-      accountVault,
-      { get: async () => key, set: async () => {} },
-      async () => {
-        throw new Error("unexpected identity network");
-      },
-      "DEVICE",
-    ),
-  };
-  try {
-    await papBundle.apply(ctx, { configFile: papConfig });
-    await customerBundle.apply(ctx, { configFile: customerConfig });
-    for (const operation of [
-      "personal-status",
-      "personal-code",
-      "personal-verify",
-      "personal-logout",
-    ]) {
-      assert.equal(routes.has(`/api/frontvia-pap/${operation}`), false);
-      assert.equal(routes.has(`/api/frontvia-customer/${operation}`), true);
-    }
-    const tool = await definitions
-      .get("frontvia_connection")
-      .execute(
-        { action: "connect", siteId: "a" },
-        { agent: { id: "s" }, callId: "connect" },
-      );
-    assert.equal(tool.error.code, "CONNECTION_BINDING_REQUIRED");
-    const response = await routes.get("/api/frontvia-customer/view").fetch(
-      new Request("http://localhost/api/frontvia-customer/view", {
-        method: "POST",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify({
-          type: "client-request",
-          rpcId: "built-route",
-          method: "frontvia-customer/view",
-          payload: { sessionId: "s", flowId },
-        }),
-      }),
-    );
-    const envelope = serverResponseSchema.parse(await response.json());
-    assert.equal(envelope.result.ok, false);
-    if (!envelope.result.ok)
-      assert.equal(envelope.result.error.code, "CONNECTION_BINDING_REQUIRED");
-    const call = async (operation: string, payload = {}) => {
-      const route = routes.get(`/api/${operation}`);
-      return route.fetch(
-        new Request(`http://localhost/api/${operation}`, {
-          method: "POST",
-          headers: { "content-type": "application/json" },
-          body: JSON.stringify({
-            type: "client-request",
-            rpcId: "configuration",
-            method: operation,
-            payload,
-          }),
-        }),
-      );
-    };
-    const status = (await (await call("frontvia-pap/status")).json()).result.value;
-    assert.equal("personal" in status, false);
-    assert(!JSON.stringify(status).includes("host-only-otp-challenge"));
-    const site = status.sites[0];
-    ctx.connection.browserPeer.principal.kind = "guest";
-    assert.equal(
-      (await call("frontvia-pap/remove", { siteId: site.id, revision: site.revision }))
-        .status,
-      403,
-    );
-    assert.equal(
-      (await call("frontvia-pap/restore", { siteId: site.id, revision: site.revision }))
-        .status,
-      403,
-    );
-    ctx.connection.browserPeer.principal.kind = "owner";
-    const invalid = await (
-      await call("frontvia-pap/remove", {
-        siteId: site.id,
-        revision: site.revision,
-        extra: "not allowed",
-      })
-    ).json();
-    assert.equal(invalid.result.error.code, "INVALID_CONFIGURATION_ACTION");
-    assert.equal(
-      (
-        await (
-          await call("frontvia-pap/remove", { siteId: site.id, revision: site.revision })
-        ).json()
-      ).result.ok,
-      true,
-    );
-    const deleted = (await (await call("frontvia-pap/status")).json()).result.value;
-    assert.equal(deleted.sites.length, 0);
-    assert.equal(deleted.connections[0].connectionRef, "legacy");
-    const history = (await (await call("frontvia-customer/list")).json()).result
-      .value;
-    assert.equal(history.flows[0].flowId, flowId);
-    assert.equal(definitions.has("pap_remove"), false);
-    assert.equal(
-      (
-        await (
-          await call("frontvia-pap/restore", {
-            siteId: site.id,
-            revision: deleted.removedSites[0].revision,
-          })
-        ).json()
-      ).result.ok,
-      true,
-    );
-    assert.equal(
-      ctx.frontviaPap.status("legacy").bindingError,
-      "CONNECTION_BINDING_REQUIRED",
-    );
-  } finally {
-    cleanups.reverse().forEach((fn) => fn());
-  }
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import {mkdtempSync,writeFileSync,rmSync,existsSync} from 'node:fs';
+import {tmpdir} from 'node:os';
+import {join} from 'node:path';
+import {randomBytes} from 'node:crypto';
+import {serverResponseSchema} from '@deepseek-ai/dsh-client-connection';
+import {apply,inject} from '../src/index.js';
+import {evaluatePluginCompatibility} from '@deepseek-ai/dsh-app-boot';
+import {createRequire} from 'node:module';
+const require=createRequire(import.meta.url);
+function fixture(){
+ const dir=mkdtempSync(join(tmpdir(),'customer-public-entry-')),file=join(dir,'customer.json'),key=randomBytes(32).toString('base64url');
+ writeFileSync(file,JSON.stringify({dataDir:join(dir,'state'),storageKeyRef:'CUSTOMER_STATE',sites:[]}),{mode:0o600});
+ const routes=new Map<string,any>(),tools=new Map<string,any>(),cleanups:(()=>void)[]=[];let credentials=0,facades=0;
+ const sdk={requestTimeoutMs:1000,status:async()=>({ok:true,value:{state:'unconfigured',access_token:'host-secret-not-for-UI'}}),operations:async()=>({ok:true,value:[]}),connect:async()=>({ok:false,error:{code:'default_identity_required'}}),request:async()=>{throw Error('Unexpected dispatch');}};
+ const ctx:any={pap:{acquireBusiness(c:unknown){assert.equal(c,ctx);facades++;return sdk;}},credentials:{resolve:async()=>{credentials++;return {value:key};},set:async()=>{}},effect(fn:()=>undefined|(()=>void)){const close=fn();if(close)cleanups.push(close);},tools:{register(tool:any){tools.set(tool.name,tool);}},systemPrompt:{section(){}},connection:{browserPeer:{principal:{kind:'owner'}},fetch:{register(route:any){routes.set(route.path,route);return ()=>{};}}}};
+ async function call(operation:string,payload={}){
+  return routes.get('/api/frontvia-customer/'+operation).fetch(new Request('http://localhost/api/frontvia-customer/'+operation,{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({type:'client-request',rpcId:'test-request',method:'frontvia-customer/'+operation,payload})}));
+ }
+ return {dir,file,ctx,routes,tools,call,get credentials(){return credentials;},get facades(){return facades;},close(){for(const fn of cleanups.reverse())fn();rmSync(dir,{recursive:true,force:true});}};
+}
+test('Customer activates with only public PAP and zero merchants, without phone routes or protocol secrets',async()=>{
+ const f=fixture();try{
+  assert(!inject.includes('frontviaPap'));assert(!inject.includes('frontviaIdentity'));assert(inject.includes('pap'));
+  await apply(f.ctx,{configFile:f.file});assert.equal(f.facades,1);assert(f.tools.has('frontvia_products'));
+  for(const old of ['personal-status','personal-code','personal-verify','personal-logout'])assert(!f.routes.has('/api/frontvia-customer/'+old));
+  const status=serverResponseSchema.parse(await(await f.call('identity-status')).json());assert(status.result.ok);assert(!JSON.stringify(status).includes('host-secret'));
+  const list=serverResponseSchema.parse(await(await f.call('list')).json());assert(list.result.ok);if(list.result.ok)assert.deepEqual(list.result.value,{flows:[],sites:[],identityRevision:''});
+  const missing=serverResponseSchema.parse(await(await f.call('view',{sessionId:'chat',flowId:'00000000-0000-4000-8000-000000000001'})).json());assert(!missing.result.ok);if(!missing.result.ok)assert.equal(missing.result.error.code,'FLOW_NOT_OWNED');
+  f.ctx.connection.browserPeer.principal.kind='guest';assert.equal((await f.call('list')).status,403);
+ }finally{f.close();}
 });
-
-test("Customer activation fails closed before registering routes or tools on incompatible PAP", async () => {
-  const dataDir = mkdtempSync(join(tmpdir(), "dsh-lifecycle-")),
-    configFile = join(dataDir, "config.json");
-  writeFileSync(
-    configFile,
-    JSON.stringify({ dataDir, storageKeyRef: "TEST_STORAGE", sites: [] }),
-    { mode: 0o600 },
-  );
-  const cleanups: (() => void)[] = [],
-    tools: unknown[] = [],
-    routes: unknown[] = [];
-  const ctx = {
-    frontviaPap: { apiVersion: 1 },
-    credentials: {
-      resolve: async () => ({ value: randomBytes(32).toString("base64url") }),
-      set: async () => {},
-    },
-    effect: (fn: () => () => void) => {
-      cleanups.push(fn());
-    },
-    tools: { register: (v: unknown) => tools.push(v) },
-    connection: { fetch: { register: (v: unknown) => routes.push(v) } },
-  };
-  try {
-    await assert.rejects(
-      apply(ctx as any, { configFile }),
-      /PAP_VERSION_UNSUPPORTED/,
-    );
-    assert.deepEqual(tools, []);
-    assert.deepEqual(routes, []);
-    assert.ok(inject.includes("frontviaPap"));
-  } finally {
-    cleanups.forEach((f) => f());
-  }
+test('Customer without a public consumer grant fails before opening state or registering capabilities',async()=>{
+ const f=fixture();try{
+  f.ctx.pap.acquireBusiness=()=>{throw Error('permission_denied');};
+  await assert.rejects(apply(f.ctx,{configFile:f.file}),/permission_denied/);
+  assert.equal(f.credentials,0);assert.equal(f.routes.size,0);assert.equal(f.tools.size,0);assert.equal(existsSync(join(f.dir,'state')),false);
+ }finally{f.close();}
 });
-test("all three bundles are accepted only on the approved DSH baseline without an exemption", () => {
-  for (const name of ["client", "pap", "customer"]) {
-    const manifest = JSON.parse(
-      readFileSync(
-        new URL(`../../${name}/package.json`, import.meta.url),
-        "utf8",
-      ),
-    );
-    assert.equal(
-      evaluatePluginCompatibility(manifest, {}, "0.2.2-rc.1"),
-      undefined,
-    );
-    assert.ok(evaluatePluginCompatibility(manifest, {}, "0.2.1-rc.3"));
-    assert.ok(evaluatePluginCompatibility(manifest, {}, "0.2.2-rc.2"));
-  }
-});
-
-test("owner UI route preserves a business failure in the actual DSH response contract", async () => {
-  const dataDir = mkdtempSync(join(tmpdir(), "dsh-ui-failure-"));
-  const configFile = join(dataDir, "config.json");
-  writeFileSync(
-    configFile,
-    JSON.stringify({ dataDir, storageKeyRef: "TEST_STORAGE", sites: [] }),
-    { mode: 0o600 },
-  );
-  const cleanups: (() => void)[] = [];
-  const routes = new Map<string, any>();
-  const ctx = {
-    frontviaIdentity: { account: { device: {} } },
-    frontviaPap: {
-      apiVersion: 2,
-      registerAuthentication: () => () => {},
-      registerStatement: () => () => {},
-    },
-    credentials: {
-      resolve: async () => ({ value: randomBytes(32).toString("base64url") }),
-      set: async () => {},
-    },
-    effect: (fn: () => (() => void) | undefined) => {
-      const dispose = fn();
-      if (dispose) cleanups.push(dispose);
-    },
-    tools: { register: () => {} },
-    systemPrompt: { section: () => {} },
-    connection: {
-      browserPeer: { principal: { kind: "owner" } },
-      fetch: {
-        register: (route: any) => {
-          routes.set(route.path, route);
-          return () => {};
-        },
-      },
-    },
-  };
-  try {
-    await apply(ctx as any, { configFile });
-    const route = routes.get("/api/frontvia-customer/view");
-    const response = await route.fetch(
-      new Request("http://localhost/api/frontvia-customer/view", {
-        method: "POST",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify({
-          type: "client-request",
-          rpcId: "test-business-failure",
-          method: "frontvia-customer/view",
-          payload: {
-            sessionId: "session-a",
-            flowId: "00000000-0000-4000-8000-000000000001",
-          },
-        }),
-      }),
-    );
-    const envelope = serverResponseSchema.parse(await response.json());
-    assert.equal(envelope.result.ok, false);
-    if (!envelope.result.ok) {
-      assert.equal(envelope.result.error.code, "FLOW_NOT_OWNED");
-      assert.deepEqual(envelope.result.error.details, {});
-    }
-  } finally {
-    cleanups.forEach((fn) => fn());
-  }
+test('Customer retains the supported DSH Host version with no compatibility exemption',()=>{
+ const manifest=require('../package.json');
+ assert.equal(evaluatePluginCompatibility(manifest,{},'0.2.2-rc.1'),undefined);
+ assert.ok(evaluatePluginCompatibility(manifest,{},'0.1.5'));
 });

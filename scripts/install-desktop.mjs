@@ -26,17 +26,11 @@ const cli =
 const artifacts = JSON.parse(
   await readFile(resolve(".local/packages/manifest.json"), "utf8"),
 );
-const names = pluginPackages.map((item) => item.name);
+const names = artifacts.artifacts.map(item=>item.name);
+const identityName='@agent-network-protocol/dsh-anp-identity';
+const identityVersion=artifacts.identityVersion;
+if(identityVersion!=='0.1.16')throw new Error('Rebuild the matched public identity candidate before installation');
 let replacingLegacy = [];
-const identityConfig = join(profile, "identity-config.json");
-if (
-  !existsSync(identityConfig) ||
-  !lstatSync(identityConfig).isFile() ||
-  (process.platform !== "win32" && lstatSync(identityConfig).mode & 0o077)
-)
-  throw new Error(
-    "安装前须准备受保护的 desktop/identity-config.json；不能从商家配置推导身份服务地址。",
-  );
 const locks = { waitMs: 120000 };
 
 function run(args, capture = false) {
@@ -71,7 +65,7 @@ async function stagePair() {
   const temp = await mkdtemp(join(directory, ".stage-"));
   try {
     for (const item of pair) {
-      const staged = join(temp, item.name);
+      const staged = join(temp, digest(Buffer.from(item.name)));
       await writeFile(staged, item.bytes, { mode: 0o600 });
       try {
         await link(staged, item.path);
@@ -107,13 +101,13 @@ function pointsTo(spec, archive) {
 
 function otherPackages(bytes) {
   const manifest = JSON.parse(bytes);
-  for (const name of [...names, ...replacingLegacy])
+  for (const name of [...names,identityName, ...replacingLegacy])
     delete manifest.dependencies?.[name];
   if (manifest.dependencies && !Object.keys(manifest.dependencies).length)
     delete manifest.dependencies;
   if (manifest.dsh?.profile?.bundles)
     manifest.dsh.profile.bundles = manifest.dsh.profile.bundles.filter(
-      (name) => ![...names, ...replacingLegacy].includes(name),
+      (name) => ![...names,identityName, ...replacingLegacy].includes(name),
     );
   return manifest;
 }
@@ -125,6 +119,7 @@ async function rollback(previous, pair) {
       const current = await snapshot();
       const before = JSON.parse(previous.manifest).dependencies ?? {};
       const after = JSON.parse(current.manifest).dependencies ?? {};
+      if (before[identityName]!==after[identityName]&&!['0.1.16','^0.1.16','~0.1.16'].includes(after[identityName]))throw new Error('Public identity dependency changed concurrently');
       if (
         !isDeepStrictEqual(
           otherPackages(previous.manifest),
@@ -201,9 +196,13 @@ await withFileLock(
         "--profile",
         "desktop",
         "add",
-        ...pair.map((item) => item.path),
+        `${identityName}@${identityVersion}`,
+        ...pair.filter(item=>item.name!=="dsh-frontvia-customer").map(item=>item.path),
+        ...pair.filter(item=>item.name==="dsh-frontvia-customer").map(item=>item.path),
       ]);
-      for (const { name } of pair) {
+      const installedIdentity=JSON.parse(await readFile(join(profile,"node_modules",identityName,"package.json"),"utf8"));
+      if(installedIdentity.version!==identityVersion)throw new Error("Installed identity does not match the candidate");
+      for (const { name } of pair.filter(item=>pluginPackages.some(p=>p.name===item.name))) {
         const folder = join(
           "packages",
           pluginPackages.find((item) => item.name === name).folder,
@@ -232,5 +231,5 @@ await withFileLock(
   locks,
 );
 console.log(
-  "Frontvia Client、Frontvia 专用 PAP 和 Customer 插件已安装。重新打开 DSH 后，进入「Frontvia 账号」登录。",
+  "Customer 与公共 Identity/PAP 已安装；首次使用在公共设置中选择身份并授权域名接入，然后在对话中提供店铺域名。",
 );

@@ -1,6 +1,6 @@
 # dsh-frontvia-customer
 
-Frontvia shopping tools and native chat cards for official DeepSeek Harness 0.2.2-rc.1. Requires an activated dsh-frontvia-pap bundle. Five Agent tool groups prepare shopping and query results; purchase confirmation is only on the owner UI route. Phone personal accounts support consultation and US/USD shopping without per-client merchant approval. See the repository README for server prerequisites and Mock-payment acceptance boundaries.
+Frontvia shopping tools and native chat cards for DeepSeek Harness 0.2.2-rc.1. Requires public Identity and public DSH PAP with the local business-consumer patch described in the repository README. PAP 0.3 handles discovery, request signing and final purchase approval; Customer keeps shopping and consultation cards. Merchant configuration may be empty: provide the shop domain in the conversation.
 
 人民币对话购物的收货地址与服务端一致：国家为 CN，姓名、电话和完整地址必填；省、市、邮编及补充地址是可选字符串。插件保留商家返回的地址原文，不要求把完整地址拆成省、市，也不自动补造这些字段。订单金额、确认摘要和付款链接仍单独校验。
 
@@ -15,7 +15,7 @@ Frontvia shopping tools and native chat cards for official DeepSeek Harness 0.2.
 失败显示可读说明，不把协议错误 JSON 或内部引用直接呈现给用户；完整购物卡片继续
 保留在回复下方，连接后默认显示商品页。
 
-## 服务页手动操作
+## 服务页操作（连接后）
 
 「Frontvia 服务」使用独立的 shadcn/ui 商城布局，不再嵌入聊天购物卡片。
 商家列表支持按店名、域名和店铺标识搜索；展示服务类型、记录数量和最近更新时间，
@@ -24,8 +24,8 @@ Frontvia shopping tools and native chat cards for official DeepSeek Harness 0.2.
 一次点击即可开始浏览。列表加载完成前不覆盖保存的选择，切换账号重新按当前账号
 的商家与记录解析。窄面板采用单列，店铺内的其他历史记录不重复列出当前记录。
 先选择店铺，再通过商品、购物车和我的订单三个入口操作；结账从购物车进入。
-商家按完整 issuer 与 store_id 归组，同域名下不同店铺和不同 issuer 不会合并。
-已配置但尚无记录的商家可通过 owner 专用 `open-store` 直接开始购物，无须先聊天；
+商家按发现的 Company、店铺和当前公共身份隔离。
+已连接但尚无记录的商家可通过 owner 专用 `open-store` 直接开始购物，无须先聊天；
 每次进店动作使用幂等引用建立独立购物会话。已移除商家及其记录不在此页展示，
 底层历史数据保留。页面只记住商家与流程引用，账号变化时卸载旧面板。
 
@@ -75,31 +75,20 @@ owner view 支持 catalog/cart/checkout/order/order-detail 读取范围；同流
 页面返回时先显示短时快照，再刷新当前页；账户变化与读取失败清除快照。购物能力展示
 缓存为 120 秒，购买前仍强制重验。实际测量与限制见 [性能记录](../../docs/performance.md)。
 
-## 个人账号入口
+## 公共身份与购物批准
 
-**Frontvia 服务** 页面提供手机号（含国家代码）、验证码登录/注册、重发倒计时、
-退出及退出重试。owner UI 接口为 `frontvia-customer/personal-status`、
-`frontvia-customer/personal-code`、`frontvia-customer/personal-verify`、
-`frontvia-customer/personal-logout`；严格校验输入，非 owner 不可调用，
-也不注册相应模型工具。PAP 页面只显示同一账号的脱敏身份和连接状态。
-登录、退出和换号会通知两页清除旧账号状态，迟到的旧结果不能恢复显示。
-原有 PAP 加密账号会话保持兼容，不搬迁或复制凭据。
+身份创建、发布、默认身份选择和域名接入授权在公共 Identity 中完成。Customer
+只读取公共 PAP 的身份状态，不提供手机号注册、验证码或退出接口，也不读取
+私钥、Token 或 PAP 私有数据库。更换身份后，旧购物车、订单与迟到响应不回填。
 
-## 个人号咨询
+在提示词中提供店铺域名，使用 `frontvia_connection` 连接，或先调用公共
+`pap_connect({domain})`。购物与咨询由同一域名发现；没有咨询助手不影响购物。
+服务端按验证后的 PAP 稳定主体识别买方，不自动合并旧手机号账号或订单。
 
-配合本次 PAP 插件的个人账号配置，`frontvia_connection` 和
-`frontvia_consultation` 复用同一手机号账号的公开咨询身份。个人账号无需商家
-成员权限或客户端审批。咨询记录按当前个人账号过滤，换号不可读取缓存结果；
-同一账号重登可以接续原聊天的咨询回执。不同账号须使用不同 DSH 聊天，避免
-把旧模型上下文带入新账号。购物和订单使用服务端验证的个人主体，不按手机号
-认领已有 Medusa 买方或订单。两插件应一起更新。
-
-## 个人号购物
-
-个人登录购物使用 `frontvia.personal_purchase.v1`：服务端支持该 profile 时，
-Customer 复用 PAP 当前个人连接的证明签名，购物车和确认不依赖商家逐客户端审批
-或本机 HMAC 购买密钥。确认仍只在用户卡片入口发起，Agent 工具不能代确认。
-游客不自动获得此能力；旧配置的签名购买 profile 保留原有凭据边界。
+购买使用 `frontvia.pap03_purchase.v1`。Customer 卡片展示商品、数量、报价和总价，
+用户从卡片发起购买，再由公共 PAP 批准并执行同一实际请求。Customer 不签发
+购买 JWT 或 HMAC 凭据。公共 PAP 批准前不下单，服务端继续校验报价版本、金额、
+有效期、nonce 和幂等键；未知结果继续核对原 operation，不重新下单。
 
 购物卡片按当前 capabilities 控制加购入口，未开通时说明原因并禁止点击。
 只有明确配置 `mockPayment: true` 才标注 Mock 支付；否则显示结算提示。
@@ -109,8 +98,8 @@ Customer 复用 PAP 当前个人连接的证明签名，购物车和确认不依
 已确认的 CNY 原订单可在卡片中点击「获取支付二维码」。owner 专用的
 `frontvia-customer/payment-start` 只接受会话和 flow 引用；付款链接、金额、
 收款方、订单及有效期由保存的结算和服务端回执确定，不接受模型或 UI 传入。
-PAP 宿主复用商家同源 `/companies/{issuer}/hosted-payer/rpc` 的单订单能力，
-沿用服务端身份、订单、原确认及支付幂等约束，不向该接口转发 PAP access token。
+公共 PAP 调用发现的 `commerce.payments.hosted.start` 操作，沿用服务端身份、
+订单、原确认及支付幂等约束。PAP 0.3 Session 由公共插件签名，卡片不持有协议凭据。
 
 二维码作为受限 SVG 图片显示，随 flow 加密保存以支持重开会话；不会进入模型
 上下文。卡片显示收款方和有效期，通过现有共享轮询及窗口重新聚焦读取原订单。
@@ -133,3 +122,5 @@ PAP 宿主复用商家同源 `/companies/{issuer}/hosted-payer/rpc` 的单订单
 客户页面的异常处理只显示一条简短提示。进入未完成的操作时自动查询一次结果；购物车操作提供“重试”，先查原回执，只有服务端返回操作不存在时才使用保存的原参数和幂等标识重试。重试重新检查授权与能力，并按购物记录串行执行。查询错误不触发重发，下单、取消订单和支付不走购物车重试。未知错误码不直接展示给顾客。
 
 加购异常按普通购物体验处理：自动结束本地等待并刷新购物车，不常驻“待确认”提示、不再自动重发该加购。已有购物车的追加加购使用丢弃标记阻止旧请求重放，商家已经生效的商品以重新读取的购物车为准。首次建车尚未取得 cart ID 时仅结束界面等待，保留原命令与幂等标识；刷新或重启后通过只读回执查询找回购物车，不自动重发或建立替代购物车。回执暂不可查时显示简短的购物车刷新入口。该处理不适用于下单或支付。修改数量等其他购物车操作仍可显式重试。安装更新后须完全退出桌面应用再启动，关闭窗口不会重载插件后台。
+
+购买确认的首次错误只保留安全的错误码、类型和 request_id，不保存原始错误消息或敏感详情。仅当商店明确返回未受理的拒绝（after_change 且无 operation_id）时，结束本地等待并要求重新核对后再次点击；网络错误、上游异常、已受理操作或仅查询不到记录仍保留原 pending，不自动重发购买。旧版本已经丢失首次错误的 pending 不会被此更新自动清除。

@@ -1,3 +1,5 @@
+> 历史 0.2 验收记录，所述旧栈脚本已退役，不可用于当前 PAP 0.3 候选。当前接入见 [配置说明](configuration.md)。
+
 # 隔离测试栈
 
 这些脚本只用于验收，插件安装包不包含它们。需要已构建的 Frontvia 源码、Rust、PostgreSQL 16、Python 3 和 Medusa 依赖。参考代码基线为 `5e8cb68b44aa630de2cc634d9b75d2da8c7033f7`。不要改变用户正在修改的 Frontvia 源码。

@@ -1,6 +1,7 @@
 import type { StartShopping } from "./storefront-cart.js";
 import type { ViewScope } from "../view-scope.js";
 import { Storefront } from "./storefront.js";
+import { ManualContact } from "./manual-contact.js";
 import {
   items,
   money,
@@ -92,6 +93,7 @@ export const inject = [
 ];
 type UI = { flowId: string; sessionId: string; card: string };
 const errorText: Record<string, string> = {
+  CONFIRMATION_REJECTED: "购买确认未被商店受理，请重新核对订单后再确认。",
   CART_ALREADY_SUBMITTED:
     "商品已生成订单，请到“我的订单”查看。继续加购会使用新的购物车。",
   OPERATION_DISCARDED: "这次加购已结束，请重新选择商品。",
@@ -113,7 +115,7 @@ const errorText: Record<string, string> = {
   INVALID_PAYMENT_LINK: "付款入口暂不可用，请刷新原订单。",
   INVALID_PAYMENT_QR: "二维码未通过核对，请刷新原订单后重试。",
   PERSONAL_ACCOUNT_CHANGED: "请登录原个人账号后查看此记录。",
-  PERSONAL_LOGIN_REQUIRED: "请先到 Frontvia 服务登录个人账号。",
+  PERSONAL_LOGIN_REQUIRED: "请在公共身份/PAP 设置中选择身份并授权接入。",
   PERSONAL_CHAT_ACCOUNT_CHANGED: "此聊天已用于另一账号，请新建聊天后连接商家。",
   FLOW_NOT_OWNED: "这份购物进度不属于当前会话，请回到原聊天查看。",
   NETWORK_FAILURE: "暂时无法连接商店，请稍后刷新。",
@@ -218,6 +220,7 @@ const contactFrom = (v: any): Contact => {
   };
 };
 export function apply(ctx: any) {
+  let identityRevision: string | undefined;
   const call = (op: string, payload: any = {}) =>
     accountRequest(async () => {
       const r = await ctx.connection.rpc.call(
@@ -225,7 +228,17 @@ export function apply(ctx: any) {
         `frontvia-customer/${op}`,
         payload,
       );
-      if (!r.ok) throw new Error(r.error.code);
+      if (!r.ok) {
+        if(identityRevision&&['IDENTITY_CHANGED','PERSONAL_ACCOUNT_CHANGED','PAP_PERMISSION_DENIED'].includes(r.error.code)){
+          identityRevision='';window.dispatchEvent(new Event('frontvia-public-identity-change'));
+        }
+        throw new Error(r.error.code);
+      }
+      const revision=r.value?.identityRevision;
+      if(typeof revision==='string'){
+        const changed=!!identityRevision&&identityRevision!==revision;identityRevision=revision;
+        if(changed)window.dispatchEvent(new Event('frontvia-public-identity-change'));
+      }
       return r.value;
     });
   const views = new FlowViews(
@@ -240,13 +253,13 @@ export function apply(ctx: any) {
     };
     const notifyPap = () =>
       window.dispatchEvent(new Event("frontvia-pap-connections-change"));
-    window.addEventListener("frontvia-identity-change", notifyPap);
-    window.addEventListener("frontvia-identity-change", reset);
+    window.addEventListener("frontvia-public-identity-change", notifyPap);
+    window.addEventListener("frontvia-public-identity-change", reset);
     window.addEventListener("focus", refresh);
     document.addEventListener("visibilitychange", refresh);
     return () => {
-      window.removeEventListener("frontvia-identity-change", reset);
-      window.removeEventListener("frontvia-identity-change", notifyPap);
+      window.removeEventListener("frontvia-public-identity-change", reset);
+      window.removeEventListener("frontvia-public-identity-change", notifyPap);
       window.removeEventListener("focus", refresh);
       document.removeEventListener("visibilitychange", refresh);
       views.clear();
@@ -451,8 +464,10 @@ export function apply(ctx: any) {
           op === "retry-cart"
         )
           views.invalidate(ui, ["checkout"]);
-        setError(op === "confirm" ? "CONFIRMATION_RESULT_UNKNOWN" : e.message);
-        if (op === "confirm" && e.message !== "PERSONAL_ACCOUNT_CHANGED")
+        const rejected = op === "confirm" && e.message === "CONFIRMATION_REJECTED";
+        if (rejected) views.invalidate(ui, ["checkout"]);
+        setError(op === "confirm" && !rejected ? "CONFIRMATION_RESULT_UNKNOWN" : e.message);
+        if (op === "confirm" && !rejected && e.message !== "PERSONAL_ACCOUNT_CHANGED")
           views.publish(ui, { ...liveData, pending: true });
         return false;
       } finally {
@@ -810,9 +825,15 @@ export function apply(ctx: any) {
                         <div className="fv-form-layout fv-chat-shipping">
                           <div className="fv-stack">
                             {manualCart(data.cart) ? (
+                              <div className="fv-stack">
                               <p className="fv-muted">
                                 由商家交付，无需填写收货地址。
                               </p>
+                              {data.pricing?.country === "US" && <ManualContact key={data.cart.id}
+                                email={data.cart.email} disabled={!!busy || data.pending || locked}
+                                save={email => action("contact", {expected_version:data.cart.version,
+                                  patch:{email},actionId:crypto.randomUUID()})} />}
+                              </div>
                             ) : locked ? (
                               <Address cart={data.cart} />
                             ) : (
@@ -1288,9 +1309,9 @@ export function apply(ctx: any) {
       <>
         <style>{styles}</style>
         <ServicePage
-          openAccount={() => ctx.layout.selectPanel("dsh-frontvia-client")}
+          openAccount={() => ctx.layout.selectPanel("settings")}
           call={call}
-          openConnections={() => ctx.layout.selectPanel("frontvia-pap-connections")}
+          openConnections={() => ctx.layout.selectPanel("settings")}
           renderFlow={(ui, startShopping, addedQuantity, initialError) => (
             <FlowCard
               key={ui.flowId}

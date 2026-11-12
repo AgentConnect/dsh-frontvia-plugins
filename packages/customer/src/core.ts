@@ -1,53 +1,54 @@
 import { viewScopes, type ViewScope } from "./view-scope.js";
-import { createHash, createHmac, randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import {
   Vault,
   Serial,
   fail,
   canonical,
-  type PapService,
-  type Secrets,
-} from "dsh-frontvia-pap/core";
+} from "./state.js";
+import type {PapPort} from "./pap-port.js";
+export type {PapPort} from "./pap-port.js";
 import { ReadCache, SharedReads } from "./read-cache.js";
 import { z } from "zod";
 import {
   shoppingActionSchema,
   type ShoppingAction,
 } from "./shopping-action.js";
-import { contactSchema, cartContactReady } from "./contact-fields.js";
+import { contactSchema, cartContactReady, manualCart, manualContactSchema } from "./contact-fields.js";
 import { ConsultationService, consultationSite } from "./consultation.js";
 export type CustomerConfig = {
   dataDir: string;
   sites: {
     siteId: string;
     storeId: string;
-    confirmationKeyRef?: string;
-    confirmationKid?: string;
     mockPayment?: boolean;
   }[];
 };
-export type PapPort = Pick<
-  PapService,
-  "apiVersion" | "sites" | "status" | "connect" | "identity" | "request"
-> &
-  Partial<
-    Pick<
-      PapService,
-      "canAccess" | "signResourceStatement" | "capabilityCacheKey"
-    >
-  > & {
-    hostedPayment?: (
-      ref: string,
-      link: string,
-      checkoutId: string,
-    ) => Promise<any>;
+type SavedRpcError = { code?: number; type?: string; request_id?: string };
+function safeRpcError(error: any): SavedRpcError {
+  return {
+    ...(Number.isSafeInteger(error?.code) ? { code: error.code } : {}),
+    ...(typeof error?.data?.type === "string" && /^[A-Z][A-Z0-9_]{0,69}$/.test(error.data.type)
+      ? { type: error.data.type } : {}),
+    ...(typeof error?.data?.request_id === "string" && /^[a-f0-9-]{36}$/i.test(error.data.request_id)
+      ? { request_id: error.data.request_id } : {}),
   };
+}
+function confirmationNotAdmitted(error: any): boolean {
+  // The server attaches operation_id/after_reconcile once admission commits.
+  // Missing lookup results or upstream errors alone never authorize a retry.
+  return error?.data?.retry_policy === "after_change" &&
+    !error.data.operation_id &&
+    [-32601, -32602, 1001, 1002, 1101, 1102, 1201, 1203, 1204, 1302, 1401].includes(error.code);
+}
 type Command = {
   key: string;
   method: string;
   params: any;
   status: "pending" | "done" | "discarded";
   waitEnded?: boolean;
+  lastError?: SavedRpcError;
+  lastLookupError?: SavedRpcError;
   result?: any;
 };
 // A terminal cart edit can leave a changed cart. Read its authoritative state
@@ -128,8 +129,6 @@ function pricing(f: Flow) {
     locale: c.locale as string,
   };
 }
-const personalProfile = "frontvia.personal_purchase.v1";
-const profile = "frontvia.pap_subject_purchase.v1";
 const digest = (v: unknown) =>
   createHash("sha256").update(canonical(v)).digest("hex");
 const id = z
@@ -186,10 +185,9 @@ export class CustomerService {
   constructor(
     readonly config: CustomerConfig,
     readonly pap: PapPort,
-    private secrets: Secrets,
-    private vault: Vault,
+    private vault: Pick<Vault,"get"|"set"|"keys">,
   ) {
-    if (pap.apiVersion !== 2) fail("PAP_VERSION_UNSUPPORTED");
+    if (pap.apiVersion !== 3) fail("PAP_VERSION_UNSUPPORTED");
     this.consultation = new ConsultationService(pap, vault);
   }
   private save(f: Flow) {
@@ -328,11 +326,7 @@ export class CustomerService {
     f.capabilities = cap;
     f.purchaseReady = await this.purchaseReady(f);
   }
-  private purchaseProfile(f: Flow) {
-    return this.pap.identity(f.connectionRef).personalSignedIn
-      ? personalProfile
-      : profile;
-  }
+  private purchaseProfile(_f: Flow) { return "frontvia.pap03_purchase.v1"; }
   private cartReady(f: Flow) {
     const method = f.cart
       ? "commerce.carts.lines.add"
@@ -350,31 +344,15 @@ export class CustomerService {
       )
     );
   }
-  private async purchaseReady(f: Flow) {
-    const p = this.policy(f);
-    return !!(
-      (this.purchaseProfile(f) === personalProfile
-        ? !!this.pap.signResourceStatement
-        : p.confirmationKeyRef &&
-          p.confirmationKid &&
-          (await this.secrets.get(p.confirmationKeyRef))) &&
-      f.capabilities?.business_profiles?.some(
-        (v: any) =>
-          v.id === this.purchaseProfile(f) && v.availability === "supported",
-      ) &&
-      f.capabilities.methods?.some(
-        (v: any) =>
-          v.method === "commerce.checkouts.confirm" &&
-          v.availability === "supported",
-      )
-    );
+  private async purchaseReady(f:Flow) {
+    return !!(f.capabilities?.business_profiles?.some((p:any)=>p.id===this.purchaseProfile(f)&&p.availability==='supported')&&f.capabilities.methods?.some((m:any)=>m.method==='commerce.checkouts.confirm'&&m.availability==='supported'));
   }
   /** A dedicated owner shopping session does not require an Agent conversation.
    * Retrying the same entry action reuses its durable flow. */
   async openStore(siteId: string, actionId: string) {
     z.uuid().parse(actionId);
     const site = this.pap.sites().find((s) => s.id === siteId);
-    if (!site || consultationSite(site)) fail("SITE_NOT_APPROVED");
+    if (!site?.description?.methods.includes("commerce.capabilities.get")) fail("SITE_NOT_APPROVED");
     const result = await this.connect(`storefront:${actionId}`, siteId);
     return result.ui;
   }
@@ -395,8 +373,9 @@ export class CustomerService {
           fail("PERSONAL_CHAT_ACCOUNT_CHANGED");
       }
     }
+    await this.pap.prepareDomain?.(siteId);
     const site = this.pap.sites().find((s) => s.id === siteId);
-    if (consultationSite(site))
+    if (consultationSite(site) && !site?.description?.methods.includes("commerce.capabilities.get"))
       return this.consultation.connect(sessionId, siteId);
     return this.serial.run(`connect:${sessionId}:${siteId}`, async () => {
       const policy =
@@ -626,6 +605,12 @@ export class CustomerService {
     signal?: AbortSignal,
   ) {
     this.views.clear();
+    await this.pap.refresh?.();
+    if ((name === "frontvia_consultation" || name === "frontvia_knowledge") && !this.consultation.owns(args.flowId)) {
+      const parent=this.flow(sessionId,id.parse(args.flowId));
+      const connected=await this.consultation.connect(sessionId,parent.siteId);
+      args={...args,flowId:connected.flowId};
+    }
     if (
       name === "frontvia_consultation" &&
       ["ask", "answer_accept"].includes(args.action) &&
@@ -643,7 +628,7 @@ export class CustomerService {
       );
     if (name === "frontvia_connection") {
       if (args.action === "connect")
-        return this.connect(sessionId, args.siteId);
+        return this.connect(sessionId, args.domain);
       return {
         sites: this.pap.sites(),
         flows: this.list(sessionId),
@@ -1429,6 +1414,8 @@ export class CustomerService {
         { method: c.method, idempotency_key: c.key },
       );
       if (r.error) {
+        c.lastLookupError = safeRpcError(r.error);
+        this.save(f);
         if (
           retryCart &&
           r.error.code === 1003 &&
@@ -1596,17 +1583,19 @@ export class CustomerService {
     actionId: string,
   ) {
     this.views.clear();
-    const contact = contactSchema.parse(patch);
-    // Empty optional form fields are absent on the Commerce wire, which rejects
-    // supplied empty address values. Country-required fields were checked above.
-    for (const key of ["city", "region", "postal_code", "phone"] as const) {
-      if (!contact.shipping_address[key]) delete contact.shipping_address[key];
-    }
     return this.serial.run(flowId, async () => {
       const f = this.flow(sessionId, flowId);
+      const contact = manualCart(f.cart)
+        ? manualContactSchema.or(contactSchema).parse(patch)
+        : contactSchema.parse(patch);
+      if ("shipping_address" in contact) {
+        for (const key of ["city", "region", "postal_code", "phone"] as const) {
+          if (!contact.shipping_address[key]) delete contact.shipping_address[key];
+        }
+        if (contact.shipping_address.country !== pricing(f).country)
+          fail("ADDRESS_COUNTRY_MISMATCH");
+      }
       await this.currentCapabilities(f, true);
-      if (contact.shipping_address.country !== pricing(f).country)
-        fail("ADDRESS_COUNTRY_MISMATCH");
       const result = await this.write(
         f,
         "commerce.carts.update",
@@ -1839,8 +1828,6 @@ export class CustomerService {
     )
       fail("QUOTE_CHANGED");
     if (
-      c.issuer !== identity.issuer ||
-      c.resource !== identity.resource ||
       c.store_id !== f.storeId ||
       c.connection_id !== f.connection.connection_id ||
       c.generation !== f.connection.generation ||
@@ -1853,15 +1840,7 @@ export class CustomerService {
       !/^\d+$/.test(amount.amount_minor)
     )
       fail("CONFIRMATION_BINDING_MISMATCH");
-    return {
-      ...c,
-      client_id: identity.clientId,
-      user_id:
-        this.purchaseProfile(f) === personalProfile
-          ? c.user_id
-          : identity.userId,
-      checkout_id: f.checkout.id,
-    };
+    return {...c,checkout_id:f.checkout.id};
   }
   async review(sessionId: string, flowId: string) {
     this.views.clear();
@@ -1924,42 +1903,15 @@ export class CustomerService {
         iat: issued,
         exp: expiry,
       };
-      if (this.purchaseProfile(f) === personalProfile) {
-        if (!this.pap.signResourceStatement)
-          fail("PURCHASE_CONFIRMATION_UNAVAILABLE");
-        intent.token = this.pap.signResourceStatement(
-          f.connectionRef,
-          "frontvia-personal-purchase+jwt",
-          claims,
-        );
-      } else {
-        const policy = this.policy(f),
-          key =
-            (policy.confirmationKeyRef &&
-              (await this.secrets.get(policy.confirmationKeyRef))) ??
-            fail("CONFIRMATION_KEY_REQUIRED");
-        if (!policy.confirmationKid) fail("CONFIRMATION_KEY_REQUIRED");
-        if (Buffer.from(key, "base64url").length !== 32)
-          fail("INVALID_CONFIRMATION_KEY");
-        const body = [
-          {
-            alg: "HS256",
-            typ: "frontvia-purchase-confirmation+jwt",
-            kid: policy.confirmationKid,
-          },
-          claims,
-        ]
-          .map((v) => Buffer.from(JSON.stringify(v)).toString("base64url"))
-          .join(".");
-        intent.token = `${body}.${createHmac("sha256", Buffer.from(key, "base64url")).update(body).digest("base64url")}`;
-      }
+      // Public PAP performs the only final approval for this exact business frame.
+      intent.token = JSON.stringify(claims);
       const c: Command = {
         key: intent.key,
         method: "commerce.checkouts.confirm",
         params: {
           checkout_id: f.checkout.id,
           idempotency_key: intent.key,
-          confirmation: intent.token,
+          confirmation: JSON.parse(intent.token),
         },
         status: "pending",
       };
@@ -1967,7 +1919,20 @@ export class CustomerService {
       f.pending = c.key;
       this.save(f);
       const r = await this.pap.request(f.connectionRef, c.method, c.params);
-      if (r.error) fail("CONFIRMATION_NOT_COMPLETED");
+      if (r.error) {
+        c.lastError = safeRpcError(r.error);
+        if (confirmationNotAdmitted(r.error)) {
+          c.status = "done";
+          c.result = { error: c.lastError, admission: "rejected" };
+          delete f.pending;
+          // Retain the original command, but require a new review and click.
+          delete f.intent;
+          this.save(f);
+          fail("CONFIRMATION_REJECTED");
+        }
+        this.save(f);
+        fail("CONFIRMATION_NOT_COMPLETED");
+      }
       const d = r.result?.data;
       if (!d?.operation) fail("INVALID_OPERATION_RESPONSE");
       this.apply(f, c.method, d);

@@ -109,7 +109,7 @@ function AccountServicePage({
       .finally(() => {
         if (active) setLoading(false);
       });
-    call("personal-status")
+    call("identity-status")
       .then((value) => {
         if (active) {
           setAccount(value);
@@ -181,7 +181,7 @@ function AccountServicePage({
       return !result.error;
     } catch {
       if (live.current)
-        setError("暂时无法准备购物车，请核对商家连接与个人登录后重试。");
+        setError("暂时无法准备购物车，请核对公共身份、PAP 授权及店铺状态后重试。");
       return false;
     } finally {
       openingRef.current = false;
@@ -250,11 +250,11 @@ function AccountServicePage({
         ) : !merchants.length ? (
           <Empty>
             <Store />
-            <EmptyTitle>添加第一个服务入口</EmptyTitle>
+            <EmptyTitle>提供店铺域名即可开始</EmptyTitle>
             <EmptyDescription>
-              添加商家的购物或咨询服务后，即可使用对应能力。
+              直接在对话中提供店铺域名，自动发现商品和咨询服务，无需预填商家或服务链接。
             </EmptyDescription>
-            <Button onClick={openConnections}>添加服务</Button>
+            <Button onClick={openConnections}>公共接入设置</Button>
           </Empty>
         ) : (
           <>

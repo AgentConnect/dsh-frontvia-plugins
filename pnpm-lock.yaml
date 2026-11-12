@@ -8,6 +8,12 @@ importers:
 
   .:
     devDependencies:
+      '@agent-network-protocol/dsh-anp-identity':
+        specifier: 0.1.16
+        version: 0.1.16(@deepseek-ai/cordis@4.1.0)(@deepseek-ai/dsh-api-remotes@0.2.2-rc.1(@deepseek-ai/cordis@4.1.0)(@deepseek-ai/dsh-scope@0.2.2-rc.1(@deepseek-ai/cordis@4.1.0)))(@deepseek-ai/dsh-client-connection@0.2.2-rc.1(@deepseek-ai/cordis@4.1.0)(@deepseek-ai/dsh-scope@0.2.2-rc.1(@deepseek-ai/cordis@4.1.0)))(@deepseek-ai/dsh-client-ui-layout@0.2.2-rc.1(@deepseek-ai/cordis@4.1.0))(@deepseek-ai/dsh-client-ui-renderer@0.2.2-rc.1(@deepseek-ai/cordis@4.1.0))(@deepseek-ai/dsh-client-ui-settings@0.2.2-rc.1(@deepseek-ai/cordis@4.1.0))(@deepseek-ai/dsh-credentials@0.2.2-rc.1(@deepseek-ai/cordis@4.1.0))(@deepseek-ai/dsh-system-prompt@0.2.2-rc.1(@deepseek-ai/cordis@4.1.0)(@deepseek-ai/dsh-llm@0.2.2-rc.1(@deepseek-ai/cordis@4.1.0))(@deepseek-ai/dsh-scope@0.2.2-rc.1(@deepseek-ai/cordis@4.1.0)))(@deepseek-ai/dsh-tools@0.2.2-rc.1(71e9b8099add9aaf7bb42662f07c41a3))(@deepseek-ai/dsh-typert-protocol@0.2.2-rc.1(@deepseek-ai/cordis@4.1.0))(react@18.3.1)
+      '@awiki/dsh-pap':
+        specifier: file:../dsh-pap
+        version: file:../dsh-pap(398777274573ca16f2d6c095b1d7f9fb)
       '@deepseek-ai/cordis':
         specifier: 4.1.0
         version: 4.1.0(@deepseek-ai/cordis-plugin-include@1.1.0)(@deepseek-ai/cordis-plugin-loader@1.1.0)
@@ -47,9 +53,6 @@ importers:
       cross-spawn:
         specifier: 7.0.6
         version: 7.0.6
-      dsh-frontvia-client:
-        specifier: workspace:*
-        version: link:packages/client
       esbuild:
         specifier: 0.25.12
         version: 0.25.12
@@ -74,27 +77,6 @@ importers:
       zod:
         specifier: 4.3.6
         version: 4.3.6
-
-  packages/client:
-    dependencies:
-      '@deepseek-ai/cordis':
-        specifier: ~4.1.0
-        version: 4.1.0(@deepseek-ai/cordis-plugin-include@1.1.0)(@deepseek-ai/cordis-plugin-loader@1.1.0)
-      '@deepseek-ai/dsh-client-connection':
-        specifier: 0.2.2-rc.1
-        version: 0.2.2-rc.1(@deepseek-ai/cordis@4.1.0)(@deepseek-ai/dsh-scope@0.2.2-rc.1(@deepseek-ai/cordis@4.1.0))
-      '@deepseek-ai/dsh-credentials':
-        specifier: 0.2.2-rc.1
-        version: 0.2.2-rc.1(@deepseek-ai/cordis@4.1.0)
-      '@radix-ui/react-tabs':
-        specifier: 1.2.1
-        version: 1.2.1(@types/react-dom@18.3.7(@types/react@18.3.26))(@types/react@18.3.26)(react-dom@18.3.1(react@18.3.1))(react@18.3.1)
-      lucide-react:
-        specifier: 1.66.0
-        version: 1.66.0(@types/react@18.3.26)(react@18.3.1)
-      react:
-        specifier: ^18.3.1
-        version: 18.3.1
 
   packages/customer:
     dependencies:
@@ -132,38 +114,96 @@ importers:
         specifier: 4.3.6
         version: 4.3.6
     devDependencies:
-      dsh-frontvia-client:
-        specifier: workspace:*
-        version: link:../client
-      dsh-frontvia-pap:
-        specifier: workspace:*
-        version: link:../pap
+      '@agent-network-protocol/dsh-anp-identity':
+        specifier: 0.1.16
+        version: 0.1.16(@deepseek-ai/cordis@4.1.0)(@deepseek-ai/dsh-api-remotes@0.2.2-rc.1(@deepseek-ai/cordis@4.1.0)(@deepseek-ai/dsh-scope@0.2.2-rc.1(@deepseek-ai/cordis@4.1.0)))(@deepseek-ai/dsh-client-connection@0.2.2-rc.1(@deepseek-ai/cordis@4.1.0)(@deepseek-ai/dsh-scope@0.2.2-rc.1(@deepseek-ai/cordis@4.1.0)))(@deepseek-ai/dsh-client-ui-layout@0.2.2-rc.1(@deepseek-ai/cordis@4.1.0))(@deepseek-ai/dsh-client-ui-renderer@0.2.2-rc.1(@deepseek-ai/cordis@4.1.0))(@deepseek-ai/dsh-client-ui-settings@0.2.2-rc.1(@deepseek-ai/cordis@4.1.0))(@deepseek-ai/dsh-credentials@0.2.2-rc.1(@deepseek-ai/cordis@4.1.0))(@deepseek-ai/dsh-system-prompt@0.2.2-rc.1(@deepseek-ai/cordis@4.1.0)(@deepseek-ai/dsh-llm@0.2.2-rc.1(@deepseek-ai/cordis@4.1.0))(@deepseek-ai/dsh-scope@0.2.2-rc.1(@deepseek-ai/cordis@4.1.0)))(@deepseek-ai/dsh-tools@0.2.2-rc.1(71e9b8099add9aaf7bb42662f07c41a3))(@deepseek-ai/dsh-typert-protocol@0.2.2-rc.1(@deepseek-ai/cordis@4.1.0))(react@18.3.1)
+      '@awiki/dsh-pap':
+        specifier: file:../../../dsh-pap
+        version: file:../dsh-pap(398777274573ca16f2d6c095b1d7f9fb)
       react-dom:
         specifier: 18.3.1
         version: 18.3.1(react@18.3.1)
 
-  packages/pap:
-    dependencies:
-      '@deepseek-ai/cordis':
-        specifier: ~4.1.0
-        version: 4.1.0(@deepseek-ai/cordis-plugin-include@1.1.0)(@deepseek-ai/cordis-plugin-loader@1.1.0)
-      '@deepseek-ai/dsh-client-connection':
-        specifier: 0.2.2-rc.1
-        version: 0.2.2-rc.1(@deepseek-ai/cordis@4.1.0)(@deepseek-ai/dsh-scope@0.2.2-rc.1(@deepseek-ai/cordis@4.1.0))
-      '@deepseek-ai/dsh-credentials':
-        specifier: 0.2.2-rc.1
-        version: 0.2.2-rc.1(@deepseek-ai/cordis@4.1.0)
-      lucide-react:
-        specifier: 1.66.0
-        version: 1.66.0(@types/react@18.3.26)(react@18.3.1)
-      react:
-        specifier: ^18.3.1
-        version: 18.3.1
-      zod:
-        specifier: 4.3.6
-        version: 4.3.6
-
 packages:
+
+  '@agent-network-protocol/anp-identity-darwin-arm64@0.2.6':
+    resolution: {integrity: sha512-dZ0i7rnnHGofZ3VA2/0v9/n6Y9qB7Vbkv0dgV8AUjUSZzvihh7Q5azbS2S9WasKyFm7/CcAsSBwIoyt69Hpchg==}
+    engines: {node: '>=18'}
+    cpu: [arm64]
+    os: [darwin]
+
+  '@agent-network-protocol/anp-identity-darwin-x64@0.2.6':
+    resolution: {integrity: sha512-Y9o6QvDl4ypFTGbBDtuXr2cjKc8i6EjA+T10UWln33fbuqWb1Z0V4NcOYyQ23B1gBFDDzb5Atng+BkUbvc+ZQw==}
+    engines: {node: '>=18'}
+    cpu: [x64]
+    os: [darwin]
+
+  '@agent-network-protocol/anp-identity-linux-arm64-gnu@0.2.6':
+    resolution: {integrity: sha512-09bJw6MjOc95oczrub4ZTv3NdIgZh3Lm4KFjGOpPU9NPM+8JSvFOY65rayQ7DOezxLLJVPsgIRw9TMYZuBNDag==}
+    engines: {node: '>=18'}
+    cpu: [arm64]
+    os: [linux]
+    libc: [glibc]
+
+  '@agent-network-protocol/anp-identity-linux-x64-gnu@0.2.6':
+    resolution: {integrity: sha512-D04zESBK0DZid08Vej47zjckfIpHQm9SD12k0mkdLIhYoxe45GanIm1p6189l//AUi4/sR6TUUU9hbJmsgNkiw==}
+    engines: {node: '>=18'}
+    cpu: [x64]
+    os: [linux]
+    libc: [glibc]
+
+  '@agent-network-protocol/anp-identity-win32-x64-msvc@0.2.6':
+    resolution: {integrity: sha512-+iC2I2mcSoBJP65Or5xHBf3FtmXg5b4Bg8SfJJ2vVSETWe7mGU4RTxU7MN6UGqNa/fSBCcQDVtkSI3pzlj4pHQ==}
+    engines: {node: '>=18'}
+    cpu: [x64]
+    os: [win32]
+
+  '@agent-network-protocol/anp-identity@0.2.6':
+    resolution: {integrity: sha512-XEnmH/EfnuUL2bq3mN8mLRSiuJlN0o68kHptMF0SsiGsz5AqjjEjmk9o4yGTnaDC3xY8/iZ89HT78oySC7CtAQ==}
+    engines: {node: '>=18'}
+
+  '@agent-network-protocol/dsh-anp-identity@0.1.16':
+    resolution: {integrity: sha512-kZqo2Wh5CH+mUPdLUByQyEaArMcYVQlT/zWx6O9Z1uqzl8Z1QWfVWaxS98863Qoi2U/tbQBa29Nr9Tutn324LA==}
+    engines: {node: ^22.19.0 || >=24.0.0}
+    peerDependencies:
+      '@deepseek-ai/cordis': 4.1.0
+      '@deepseek-ai/dsh-api-remotes': 0.2.2-rc.1
+      '@deepseek-ai/dsh-client-connection': 0.2.2-rc.1
+      '@deepseek-ai/dsh-client-ui-layout': 0.2.2-rc.1
+      '@deepseek-ai/dsh-client-ui-primitives': 0.2.2-rc.1
+      '@deepseek-ai/dsh-client-ui-renderer': 0.2.2-rc.1
+      '@deepseek-ai/dsh-client-ui-settings': 0.2.2-rc.1
+      '@deepseek-ai/dsh-client-ui-slots': 0.2.2-rc.1
+      '@deepseek-ai/dsh-credentials': 0.2.2-rc.1
+      '@deepseek-ai/dsh-system-prompt': 0.2.2-rc.1
+      '@deepseek-ai/dsh-tools': 0.2.2-rc.1
+      '@deepseek-ai/dsh-typert-protocol': 0.2.2-rc.1
+      react: ^18.3.1
+    peerDependenciesMeta:
+      '@deepseek-ai/dsh-api-remotes':
+        optional: true
+      '@deepseek-ai/dsh-client-connection':
+        optional: true
+      '@deepseek-ai/dsh-client-ui-layout':
+        optional: true
+      '@deepseek-ai/dsh-client-ui-primitives':
+        optional: true
+      '@deepseek-ai/dsh-client-ui-renderer':
+        optional: true
+      '@deepseek-ai/dsh-client-ui-settings':
+        optional: true
+      '@deepseek-ai/dsh-client-ui-slots':
+        optional: true
+      '@deepseek-ai/dsh-credentials':
+        optional: true
+      '@deepseek-ai/dsh-system-prompt':
+        optional: true
+      '@deepseek-ai/dsh-tools':
+        optional: true
+      '@deepseek-ai/dsh-typert-protocol':
+        optional: true
+      react:
+        optional: true
 
   '@agentclientprotocol/sdk@1.4.0':
     resolution: {integrity: sha512-/eufudw+aFY1LKLolT6yFE6UMmYRl7fMJ/DEONSIyR6wI3slHWITBsANRGqXEY8FRzqUxwh7QEaGiZHcJPVThg==}
@@ -177,6 +217,46 @@ packages:
       zod: ^3.25.0 || ^4.0.0
     peerDependenciesMeta:
       zod:
+        optional: true
+
+  '@awiki/dsh-pap@file:../dsh-pap':
+    resolution: {directory: ../dsh-pap, type: directory}
+    engines: {node: ^22.19.0 || >=24.0.0}
+    peerDependencies:
+      '@agent-network-protocol/dsh-anp-identity': '>=0.1.15'
+      '@deepseek-ai/cordis': 4.1.0
+      '@deepseek-ai/dsh-api-remotes': 0.2.2-rc.1
+      '@deepseek-ai/dsh-client-connection': 0.2.2-rc.1
+      '@deepseek-ai/dsh-client-ui-layout': 0.2.2-rc.1
+      '@deepseek-ai/dsh-client-ui-renderer': 0.2.2-rc.1
+      '@deepseek-ai/dsh-client-ui-settings': 0.2.2-rc.1
+      '@deepseek-ai/dsh-client-ui-slots': 0.2.2-rc.1
+      '@deepseek-ai/dsh-tools': 0.2.2-rc.1
+      '@deepseek-ai/dsh-typert-protocol': 0.2.2-rc.1
+      '@deepseek-ai/dsh-typert-registry': 0.2.2-rc.1
+      react: 18.3.1
+    peerDependenciesMeta:
+      '@agent-network-protocol/dsh-anp-identity':
+        optional: true
+      '@deepseek-ai/dsh-api-remotes':
+        optional: true
+      '@deepseek-ai/dsh-client-connection':
+        optional: true
+      '@deepseek-ai/dsh-client-ui-layout':
+        optional: true
+      '@deepseek-ai/dsh-client-ui-renderer':
+        optional: true
+      '@deepseek-ai/dsh-client-ui-settings':
+        optional: true
+      '@deepseek-ai/dsh-client-ui-slots':
+        optional: true
+      '@deepseek-ai/dsh-tools':
+        optional: true
+      '@deepseek-ai/dsh-typert-protocol':
+        optional: true
+      '@deepseek-ai/dsh-typert-registry':
+        optional: true
+      react:
         optional: true
 
   '@aws-sdk/client-bedrock-runtime@3.1127.0':
@@ -4032,6 +4112,9 @@ packages:
     resolution: {integrity: sha512-QLV1qeYSo5l13mQzWgP/y0LbMr5Plr5fJilgAIwgnwseproEbtNym8xpLsDzeZ6MWXgNE6kdWGBjdh3zT/Qerg==}
     engines: {node: '>=20'}
 
+  graceful-fs@4.2.11:
+    resolution: {integrity: sha512-RbJ5/jmFcNNCcDV5o9eTnBLJ/HszWV0P73bc+Ff4nS/rJj+YaS6IGyiOL0VoBYX+l1Wrl3k63h/KrH+nhJ0XvQ==}
+
   hosted-git-info@9.0.3:
     resolution: {integrity: sha512-Hc+ghLoSt6QaYZUv0WBiIvmMDZuZZ7oaDvdH8MbfOO4lOsxdXLEvuC6ePoGs9H1X9oCLyq6+NVN0MKqD+ydxyg==}
     engines: {node: ^20.17.0 || >=22.9.0}
@@ -4383,6 +4466,9 @@ packages:
     resolution: {integrity: sha512-HzMy3Geq23nVALD/M2LliU+F+M+gVNsvkQWWqeBZ8HDiCgzo6YPJ/Omrmtq24EFrIsk0a3EkQGEd7bDOo+IhGA==}
     engines: {node: '>=18'}
 
+  proper-lockfile@4.1.2:
+    resolution: {integrity: sha512-TjNPblN4BwAWMXU8s9AEz4JmQxnD1NNL7bNOY/AKUzyamc379FWASUhc/K1pL2noVb+XmZKLL68cjzLsiOAMaA==}
+
   protobufjs@7.6.6:
     resolution: {integrity: sha512-dYDWdjSl5RNb7SgPxGQcRU+GtvP7s2fpkrY0r432PcOIaZ0/rBcxEZnQN67iJhFuQiVw754JDoPruPCNdGsbjg==}
     engines: {node: '>=12.0.0'}
@@ -4450,6 +4536,10 @@ packages:
 
   restructure@3.0.2:
     resolution: {integrity: sha512-gSfoiOEA0VPE6Tukkrr7I0RBdE0s7H1eFCDBk05l1KIQT1UIKNc5JZy6jdyW6eYH3aR3g5b3PuL77rq0hvwtAw==}
+
+  retry@0.12.0:
+    resolution: {integrity: sha512-9LkiTwjUh6rT555DtE9rTX+BKByPfrMzEAtnlEtdEwr3Nkffwiihqe2bWADg+OQRjt9gl6ICdmB/ZFDCGAtSow==}
+    engines: {node: '>= 4'}
 
   retry@0.13.1:
     resolution: {integrity: sha512-XQBQ3I8W1Cge0Seh+6gjj03LbmRFWuoszgK9ooCpwYIrhhoO80pfq4cUkU5DkknwfOfFteRwlZ56PYOGYyFWdg==}
@@ -4541,6 +4631,9 @@ packages:
     resolution: {integrity: sha512-oZF1c9VPOKtMwn83Bboc5XSWL+76BRoyB3eUuVnCknBKxwSULZU2Foia9VHWzU+n4I12rPsP6z6H9Rp1hD9o8g==}
     cpu: [x64]
     os: [win32]
+
+  signal-exit@3.0.7:
+    resolution: {integrity: sha512-wnD2ZE+l+SPC/uoS0vXeE9L1+0wuaMqKlfz9AMUo38JsyLSBWSFcHR1Rri62LZc12vLr1gb3jl7iwQhgwpAbGQ==}
 
   signal-exit@4.1.0:
     resolution: {integrity: sha512-bzyZ1e88w9O1iNJbKnOlvYTrWPDl46O1bG0D3XInv+9tkPrxrN8jUUTiFlDkkmKWgn1M6CfIA13SuGqOa9Korw==}
@@ -4661,10 +4754,55 @@ packages:
   zod@4.4.3:
     resolution: {integrity: sha512-ytENFjIJFl2UwYglde2jchW2Hwm4GJFLDiSXWdTrJQBIN9Fcyp7n4DhxJEiWNAJMV1/BqWfW/kkg71UDcHJyTQ==}
 
+  zod@4.6.2:
+    resolution: {integrity: sha512-lh5RCAGFa1Cm2hjtNwLQhSs/AsqdWnTQaBER9fEwN/88pSh7KOtJavtBx/0VlkN/uFd61SwYmljLMDAsHlvzBQ==}
+
   zod@4.6.7:
     resolution: {integrity: sha512-g8W2D2kU6a8untc053fX1uVBKzM7yqAxW/3zwk83+6RyF2+SKOuV+c0wBDhUwzV1PaGapmZH+rmcUzPf+3CGwg==}
 
 snapshots:
+
+  '@agent-network-protocol/anp-identity-darwin-arm64@0.2.6':
+    optional: true
+
+  '@agent-network-protocol/anp-identity-darwin-x64@0.2.6':
+    optional: true
+
+  '@agent-network-protocol/anp-identity-linux-arm64-gnu@0.2.6':
+    optional: true
+
+  '@agent-network-protocol/anp-identity-linux-x64-gnu@0.2.6':
+    optional: true
+
+  '@agent-network-protocol/anp-identity-win32-x64-msvc@0.2.6':
+    optional: true
+
+  '@agent-network-protocol/anp-identity@0.2.6':
+    optionalDependencies:
+      '@agent-network-protocol/anp-identity-darwin-arm64': 0.2.6
+      '@agent-network-protocol/anp-identity-darwin-x64': 0.2.6
+      '@agent-network-protocol/anp-identity-linux-arm64-gnu': 0.2.6
+      '@agent-network-protocol/anp-identity-linux-x64-gnu': 0.2.6
+      '@agent-network-protocol/anp-identity-win32-x64-msvc': 0.2.6
+
+  '@agent-network-protocol/dsh-anp-identity@0.1.16(@deepseek-ai/cordis@4.1.0)(@deepseek-ai/dsh-api-remotes@0.2.2-rc.1(@deepseek-ai/cordis@4.1.0)(@deepseek-ai/dsh-scope@0.2.2-rc.1(@deepseek-ai/cordis@4.1.0)))(@deepseek-ai/dsh-client-connection@0.2.2-rc.1(@deepseek-ai/cordis@4.1.0)(@deepseek-ai/dsh-scope@0.2.2-rc.1(@deepseek-ai/cordis@4.1.0)))(@deepseek-ai/dsh-client-ui-layout@0.2.2-rc.1(@deepseek-ai/cordis@4.1.0))(@deepseek-ai/dsh-client-ui-renderer@0.2.2-rc.1(@deepseek-ai/cordis@4.1.0))(@deepseek-ai/dsh-client-ui-settings@0.2.2-rc.1(@deepseek-ai/cordis@4.1.0))(@deepseek-ai/dsh-credentials@0.2.2-rc.1(@deepseek-ai/cordis@4.1.0))(@deepseek-ai/dsh-system-prompt@0.2.2-rc.1(@deepseek-ai/cordis@4.1.0)(@deepseek-ai/dsh-llm@0.2.2-rc.1(@deepseek-ai/cordis@4.1.0))(@deepseek-ai/dsh-scope@0.2.2-rc.1(@deepseek-ai/cordis@4.1.0)))(@deepseek-ai/dsh-tools@0.2.2-rc.1(71e9b8099add9aaf7bb42662f07c41a3))(@deepseek-ai/dsh-typert-protocol@0.2.2-rc.1(@deepseek-ai/cordis@4.1.0))(react@18.3.1)':
+    dependencies:
+      '@agent-network-protocol/anp-identity': 0.2.6
+      '@deepseek-ai/cordis': 4.1.0(@deepseek-ai/cordis-plugin-include@1.1.0)(@deepseek-ai/cordis-plugin-loader@1.1.0)
+      '@deepseek-ai/schemastery': 3.19.0
+      proper-lockfile: 4.1.2
+      zod: 4.6.7
+    optionalDependencies:
+      '@deepseek-ai/dsh-api-remotes': 0.2.2-rc.1(@deepseek-ai/cordis@4.1.0)(@deepseek-ai/dsh-scope@0.2.2-rc.1(@deepseek-ai/cordis@4.1.0))
+      '@deepseek-ai/dsh-client-connection': 0.2.2-rc.1(@deepseek-ai/cordis@4.1.0)(@deepseek-ai/dsh-scope@0.2.2-rc.1(@deepseek-ai/cordis@4.1.0))
+      '@deepseek-ai/dsh-client-ui-layout': 0.2.2-rc.1(@deepseek-ai/cordis@4.1.0)
+      '@deepseek-ai/dsh-client-ui-renderer': 0.2.2-rc.1(@deepseek-ai/cordis@4.1.0)
+      '@deepseek-ai/dsh-client-ui-settings': 0.2.2-rc.1(@deepseek-ai/cordis@4.1.0)
+      '@deepseek-ai/dsh-credentials': 0.2.2-rc.1(@deepseek-ai/cordis@4.1.0)
+      '@deepseek-ai/dsh-system-prompt': 0.2.2-rc.1(@deepseek-ai/cordis@4.1.0)(@deepseek-ai/dsh-llm@0.2.2-rc.1(@deepseek-ai/cordis@4.1.0))(@deepseek-ai/dsh-scope@0.2.2-rc.1(@deepseek-ai/cordis@4.1.0))
+      '@deepseek-ai/dsh-tools': 0.2.2-rc.1(71e9b8099add9aaf7bb42662f07c41a3)
+      '@deepseek-ai/dsh-typert-protocol': 0.2.2-rc.1(@deepseek-ai/cordis@4.1.0)
+      react: 18.3.1
 
   '@agentclientprotocol/sdk@1.4.0(zod@4.3.6)':
     dependencies:
@@ -4676,6 +4814,23 @@ snapshots:
       standardwebhooks: 1.1.1
     optionalDependencies:
       zod: 4.3.6
+
+  '@awiki/dsh-pap@file:../dsh-pap(398777274573ca16f2d6c095b1d7f9fb)':
+    dependencies:
+      '@deepseek-ai/cordis': 4.1.0(@deepseek-ai/cordis-plugin-include@1.1.0)(@deepseek-ai/cordis-plugin-loader@1.1.0)
+      proper-lockfile: 4.1.2
+      zod: 4.6.2
+    optionalDependencies:
+      '@agent-network-protocol/dsh-anp-identity': 0.1.16(@deepseek-ai/cordis@4.1.0)(@deepseek-ai/dsh-api-remotes@0.2.2-rc.1(@deepseek-ai/cordis@4.1.0)(@deepseek-ai/dsh-scope@0.2.2-rc.1(@deepseek-ai/cordis@4.1.0)))(@deepseek-ai/dsh-client-connection@0.2.2-rc.1(@deepseek-ai/cordis@4.1.0)(@deepseek-ai/dsh-scope@0.2.2-rc.1(@deepseek-ai/cordis@4.1.0)))(@deepseek-ai/dsh-client-ui-layout@0.2.2-rc.1(@deepseek-ai/cordis@4.1.0))(@deepseek-ai/dsh-client-ui-renderer@0.2.2-rc.1(@deepseek-ai/cordis@4.1.0))(@deepseek-ai/dsh-client-ui-settings@0.2.2-rc.1(@deepseek-ai/cordis@4.1.0))(@deepseek-ai/dsh-credentials@0.2.2-rc.1(@deepseek-ai/cordis@4.1.0))(@deepseek-ai/dsh-system-prompt@0.2.2-rc.1(@deepseek-ai/cordis@4.1.0)(@deepseek-ai/dsh-llm@0.2.2-rc.1(@deepseek-ai/cordis@4.1.0))(@deepseek-ai/dsh-scope@0.2.2-rc.1(@deepseek-ai/cordis@4.1.0)))(@deepseek-ai/dsh-tools@0.2.2-rc.1(71e9b8099add9aaf7bb42662f07c41a3))(@deepseek-ai/dsh-typert-protocol@0.2.2-rc.1(@deepseek-ai/cordis@4.1.0))(react@18.3.1)
+      '@deepseek-ai/dsh-api-remotes': 0.2.2-rc.1(@deepseek-ai/cordis@4.1.0)(@deepseek-ai/dsh-scope@0.2.2-rc.1(@deepseek-ai/cordis@4.1.0))
+      '@deepseek-ai/dsh-client-connection': 0.2.2-rc.1(@deepseek-ai/cordis@4.1.0)(@deepseek-ai/dsh-scope@0.2.2-rc.1(@deepseek-ai/cordis@4.1.0))
+      '@deepseek-ai/dsh-client-ui-layout': 0.2.2-rc.1(@deepseek-ai/cordis@4.1.0)
+      '@deepseek-ai/dsh-client-ui-renderer': 0.2.2-rc.1(@deepseek-ai/cordis@4.1.0)
+      '@deepseek-ai/dsh-client-ui-settings': 0.2.2-rc.1(@deepseek-ai/cordis@4.1.0)
+      '@deepseek-ai/dsh-tools': 0.2.2-rc.1(71e9b8099add9aaf7bb42662f07c41a3)
+      '@deepseek-ai/dsh-typert-protocol': 0.2.2-rc.1(@deepseek-ai/cordis@4.1.0)
+      '@deepseek-ai/dsh-typert-registry': 0.2.2-rc.1(@deepseek-ai/cordis@4.1.0)
+      react: 18.3.1
 
   '@aws-sdk/client-bedrock-runtime@3.1127.0':
     dependencies:
@@ -7905,7 +8060,7 @@ snapshots:
     dependencies:
       '@deepseek-ai/cordis': 4.1.0(@deepseek-ai/cordis-plugin-include@1.1.0)(@deepseek-ai/cordis-plugin-loader@1.1.0)
       '@deepseek-ai/dsh-brand': 0.2.2-rc.1(@deepseek-ai/cordis@4.1.0)
-      zod: 4.4.3
+      zod: 4.6.7
 
   '@deepseek-ai/dsh-typert-registry@0.2.2-rc.1(@deepseek-ai/cordis@4.1.0)':
     dependencies:
@@ -9418,6 +9573,8 @@ snapshots:
       responselike: 4.0.2
       type-fest: 4.41.0
 
+  graceful-fs@4.2.11: {}
+
   hosted-git-info@9.0.3:
     dependencies:
       lru-cache: 11.5.3
@@ -9724,6 +9881,12 @@ snapshots:
     dependencies:
       parse-ms: 4.0.0
 
+  proper-lockfile@4.1.2:
+    dependencies:
+      graceful-fs: 4.2.11
+      retry: 0.12.0
+      signal-exit: 3.0.7
+
   protobufjs@7.6.6:
     dependencies:
       '@protobufjs/aspromise': 1.1.2
@@ -9784,6 +9947,8 @@ snapshots:
       lowercase-keys: 3.0.0
 
   restructure@3.0.2: {}
+
+  retry@0.12.0: {}
 
   retry@0.13.1: {}
 
@@ -9900,6 +10065,8 @@ snapshots:
   sherpa-onnx-win-x64@1.13.8:
     optional: true
 
+  signal-exit@3.0.7: {}
+
   signal-exit@4.1.0: {}
 
   standardwebhooks@1.1.1:
@@ -9978,5 +10145,7 @@ snapshots:
   zod@4.3.6: {}
 
   zod@4.4.3: {}
+
+  zod@4.6.2: {}
 
   zod@4.6.7: {}

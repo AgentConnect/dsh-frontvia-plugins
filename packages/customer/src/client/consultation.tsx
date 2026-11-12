@@ -43,7 +43,7 @@ export function ConsultationCard({
     [error, setError] = useState("");
   const errors: Record<string, string> = {
     PERSONAL_ACCOUNT_CHANGED: "请登录原个人账号后查看此咨询。",
-    PERSONAL_LOGIN_REQUIRED: "请先到 Frontvia 服务登录个人账号。",
+    PERSONAL_LOGIN_REQUIRED: "请在公共 Identity/PAP 设置中选择身份并授权接入。",
     CLIENT_NOT_ALLOWED: "客户端接入校验未通过，请在 PAP 连接中核对配置。",
     CONNECTION_BINDING_REQUIRED:
       "旧连接缺少绑定信息，请在 PAP 连接中查看处理说明。",

@@ -1,10 +1,8 @@
 import { ReadCache, SharedReads } from "./read-cache.js";
 import { createHash, randomUUID } from "node:crypto";
-import { Vault, Serial, fail, canonical } from "dsh-frontvia-pap/core";
-import { PROFILE } from "dsh-frontvia-client/core";
+import { Vault, Serial, fail, canonical } from "./state.js";
 import { modelData, type PapPort } from "./core.js";
 import {
-  shoppingSupported,
   shoppingView,
   consultationModelData,
 } from "./conversation-shopping.js";
@@ -35,21 +33,18 @@ type Flow = {
   answers: Record<string, any>;
   knowledge?: any;
   updatedAt: string;
-  shoppingIntent?: { id: string; hash: string };
-  shoppingConfirmations?: Record<string, string>;
 };
 const digest = (v: unknown) =>
   createHash("sha256").update(canonical(v)).digest("hex");
 export const consultationSite = (site: any) =>
-  site?.description?.profile === "frontvia.merchant_consultation.v1" &&
-  site.description.methods.includes("consultation.capabilities.get");
+  site?.description?.methods.includes("consultation.capabilities.get");
 export class ConsultationService {
   private serial = new Serial();
   private capabilitiesCache = new ReadCache();
   private views = new SharedReads();
   constructor(
     private pap: PapPort,
-    private vault: Vault,
+    private vault: Pick<Vault,"get"|"set"|"keys">,
   ) {}
   private save(f: Flow) {
     f.updatedAt = new Date().toISOString();
@@ -68,8 +63,7 @@ export class ConsultationService {
     return !!this.vault.get(`consultation:${flowId}`);
   }
   private independentIdentity(f: Flow) {
-    const identity = this.pap.identity(f.connectionRef);
-    return identity.personalSignedIn === true && identity.authenticationProvider === PROFILE;
+    return this.pap.apiVersion===3 && this.pap.canAccess?.(f.connectionRef)!==false;
   }
   canAsk(sessionId: string, flowId: string) {
     return this.independentIdentity(this.flow(sessionId, flowId));
@@ -435,80 +429,13 @@ export class ConsultationService {
     }));
   }
   private shopping(f: Flow, conversation: any) {
-    // New-purchase availability does not revoke an already accepted order.
-    // Validate historical amounts and payment destinations even when disabled.
-    let shopping = shoppingView(
-      conversation.shopping,
-      this.pap.sites().find((s) => s.id === f.siteId),
-    );
-    if (
-      shopping?.state === "requires_confirmation" &&
-      !shoppingSupported(f.capabilities)
-    )
-      shopping = null;
-    if (
-      shopping?.state === "requires_confirmation" &&
-      !f.pending &&
-      conversation.status === "answered"
-    ) {
-      const hash = digest([
-        conversation.conversation_id,
-        conversation.version,
-        shopping,
-      ]);
-      if (f.shoppingIntent?.hash !== hash)
-        f.shoppingIntent = { id: randomUUID(), hash };
-      shopping.intentId = f.shoppingIntent.id;
-    } else delete f.shoppingIntent;
-    this.save(f);
-    return shopping;
+    const shopping = shoppingView(conversation.shopping, this.pap.sites().find(site=>site.id===f.siteId));
+    // Old accepted orders remain readable, but advice never starts a purchase.
+    return shopping?.state==='requires_confirmation'?null:shopping;
   }
-  async confirmShopping(sessionId: string, flowId: string, intentId: string) {
-    return this.serial.run(flowId, async () => {
-      const f = this.flow(sessionId, flowId);
-      await this.capabilities(f, true);
-      if (!shoppingSupported(f.capabilities)) fail("SHOPPING_UNAVAILABLE");
-      // Duplicate clicks and restarts return the original receipt. Lost responses
-      // stay pending until explicit recovery sends the identical saved request.
-      const oldKey = f.shoppingConfirmations?.[intentId];
-      if (oldKey) {
-        if (f.pending) fail("RESOLVE_PENDING_OPERATION");
-        return this.result(
-          f,
-          f.commands[oldKey]?.result ?? fail("PENDING_COMMAND_MISSING"),
-        );
-      }
-      if (f.pending) fail("RESOLVE_PENDING_OPERATION");
-      if (f.shoppingIntent?.id !== intentId) fail("SHOPPING_REVIEW_REQUIRED");
-      const previous = f.shoppingIntent;
-      const conversation = await this.current(f);
-      const shopping = this.shopping(f, conversation);
-      if (
-        !shopping?.intentId ||
-        shopping.intentId !== intentId ||
-        f.shoppingIntent?.hash !== previous.hash
-      )
-        fail("SHOPPING_REVIEW_REQUIRED");
-      const key = digest([f.id, "owner-shopping-confirm", intentId]);
-      const params = {
-        text: shopping.confirmation.text,
-        conversation_id: conversation.conversation_id,
-        expected_version: conversation.version,
-        idempotency_key: key,
-      };
-      const command: Command = {
-        method: "consultation.messages.submit",
-        params,
-        inputHash: digest(params),
-        status: "pending",
-      };
-      f.commands[key] = command;
-      (f.shoppingConfirmations ??= {})[intentId] = key;
-      f.pending = key;
-      delete f.shoppingIntent;
-      this.save(f);
-      return this.result(f, await this.send(f, command));
-    });
+  async confirmShopping(sessionId: string, flowId: string, _intentId: string) {
+    this.flow(sessionId,flowId);
+    fail("DIRECT_COMMERCE_REQUIRED");
   }
   async original(sessionId: string, flowId: string, sourceRef: string) {
     return this.serial.run(flowId, async () => {

@@ -1,20 +1,13 @@
-import type {} from "dsh-frontvia-client";
-import { attachFrontvia } from "./pap-integration.js";
 import type { Context } from "@deepseek-ai/cordis";
 import { credentialRef } from "@deepseek-ai/dsh-credentials";
 import {
   clientRequestSchema,
   type ConnectionRpcResult,
 } from "@deepseek-ai/dsh-client-connection";
-import type {} from "dsh-frontvia-pap";
-import {
-  PapError,
-  fail,
-  openProfileVault,
-  profileStorage,
-  readProfileConfig,
-  type Secrets,
-} from "dsh-frontvia-pap/core";
+import type {} from "@awiki/dsh-pap/plugin";
+import {Pap03Business} from "./pap03-business.js";
+import {PapError,fail,type Secrets} from "./state.js";
+import {openProfileVault,profileStorage,readProfileConfig} from "./profile.js";
 import type {} from "@deepseek-ai/dsh-app-boot";
 import { join } from "node:path";
 import { CustomerService, type CustomerConfig } from "./core.js";
@@ -22,8 +15,7 @@ import { tools, guidance } from "./tools.js";
 import { uiSchemas } from "./ui-contract.js";
 export const name = "dsh-frontvia-customer";
 export const inject = [
-  "frontviaPap",
-  "frontviaIdentity",
+  "pap",
   "profileContext",
   "tools",
   "credentials",
@@ -37,41 +29,20 @@ export async function apply(
   const c: CustomerConfig & { storageKeyRef: string } = config.configFile
     ? readProfileConfig(config.configFile)
     : profileStorage(ctx.profileContext, "customer");
+  if(typeof ctx.pap.acquireBusiness!=="function")fail("PUBLIC_PAP_UPDATE_REQUIRED");
+  const pap = new Pap03Business(ctx.pap.acquireBusiness(ctx));
   const secrets: Secrets = {
     get: async (ref) =>
       (await ctx.credentials.resolve(credentialRef(ref)))?.value,
     set: (ref, v) => ctx.credentials.set(credentialRef(ref), v),
   };
-  for (const site of c.sites) {
-    const value =
-      site.confirmationKeyRef && (await secrets.get(site.confirmationKeyRef));
-    if (value && site.confirmationKeyRef)
-      await secrets.set(site.confirmationKeyRef, value);
-  }
   const vault = await openProfileVault(
     join(c.dataDir, "customer.sqlite"),
     c.storageKeyRef,
     secrets,
   );
   ctx.effect(() => () => vault.close());
-  if (ctx.frontviaPap.apiVersion !== 2) fail("PAP_VERSION_UNSUPPORTED");
-  const integration = attachFrontvia(ctx.frontviaPap, ctx.frontviaIdentity.account);
-  ctx.effect(() => () => integration.dispose());
-  // Preserve the PAP service receiver; business-only operations belong to this adapter.
-  const pap = {
-    apiVersion: 2 as const,
-    sites: () => ctx.frontviaPap.sites(),
-    status: (ref?: string) => ctx.frontviaPap.status(ref),
-    connect: (site: string) => ctx.frontviaPap.connect(site),
-    identity: (ref: string) => ctx.frontviaPap.identity(ref),
-    request: (...args: Parameters<typeof ctx.frontviaPap.request>) =>
-      ctx.frontviaPap.request(...args),
-    canAccess: (ref: string) => ctx.frontviaPap.canAccess(ref),
-    capabilityCacheKey: (ref: string) => ctx.frontviaPap.capabilityCacheKey(ref),
-    signResourceStatement: integration.signResourceStatement,
-    hostedPayment: integration.hostedPayment,
-  };
-  const service = new CustomerService(c, pap, secrets, vault);
+  const service = new CustomerService(c, pap, vault);
   for (const tool of tools(service)) ctx.tools.register(tool as any);
   ctx.systemPrompt.section({
     name: "frontvia-customer:shopping",
@@ -102,16 +73,9 @@ export async function apply(
           try {
             const a = uiSchemas[operation].parse(message.payload) as any;
             let value: any;
-            if (operation === "personal-status")
-              value = await ctx.frontviaIdentity.account.refresh();
-            if (operation === "personal-code")
-              value = await ctx.frontviaIdentity.account.requestCode(a.phone);
-            if (operation === "personal-verify")
-              value = await ctx.frontviaIdentity.account.verify(a.code);
-            if (operation === "personal-logout")
-              value = await ctx.frontviaIdentity.account.logout();
-            if (operation === "list")
-              value = { flows: service.list(), sites: ctx.frontviaPap.sites() };
+            await pap.refresh();
+            if (operation === "identity-status") value = pap.identityStatus();
+            if (operation === "list") value = {flows:service.list(),sites:pap.sites()};
             if (operation === "open-store")
               value = await service.openStore(a.siteId, a.actionId);
             if (operation === "view")
@@ -173,7 +137,7 @@ export async function apply(
                 ? await service.consultation.view(a.sessionId, a.flowId)
                 : await service.view(a.sessionId, a.flowId, a.scopes);
             }
-            result = { ok: true, value };
+            result = { ok: true, value: value&&typeof value==="object"&&!Array.isArray(value)?{...value,identityRevision:pap.revision()}:value };
           } catch (e) {
             result = {
               ok: false,

@@ -10,11 +10,12 @@
   "scripts": {
     "build": "node scripts/build.mjs",
     "typecheck": "tsc --noEmit",
-    "test": "node --import tsx --test packages/*/test/*.test.ts",
+    "test": "node --import tsx --test packages/customer/test/*.test.ts",
     "check": "pnpm typecheck && pnpm build && pnpm test",
     "pack:local": "node scripts/pack.mjs",
     "harness": "node scripts/harness.mjs",
-    "install:desktop": "pnpm build && pnpm pack:local && node scripts/install-desktop.mjs"
+    "install:desktop": "pnpm build && pnpm pack:local && node scripts/install-desktop.mjs",
+    "test:e2e:dsh": "python3 tests/e2e/dsh/run.py"
   },
   "devDependencies": {
     "@deepseek-ai/cordis": "4.1.0",
@@ -30,7 +31,6 @@
     "@types/react-dom": "18.3.7",
     "@types/react-test-renderer": "18.3.1",
     "cross-spawn": "7.0.6",
-    "dsh-frontvia-client": "workspace:*",
     "esbuild": "0.25.12",
     "prettier": "3.6.2",
     "react": "18.3.1",
@@ -38,6 +38,8 @@
     "react-test-renderer": "18.3.1",
     "tsx": "4.20.6",
     "typescript": "5.9.3",
-    "zod": "4.3.6"
+    "zod": "4.3.6",
+    "@awiki/dsh-pap": "file:../dsh-pap",
+    "@agent-network-protocol/dsh-anp-identity": "0.1.16"
   }
 }

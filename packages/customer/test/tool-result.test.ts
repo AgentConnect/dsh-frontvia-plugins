@@ -66,7 +66,7 @@ test("product errors and consultation progress have user-facing feedback instead
       "frontvia_products",
       message({ error: { code: "PERSONAL_LOGIN_REQUIRED" } }),
     ).title,
-    /Frontvia 服务登录/,
+    /公共 Identity\/PAP 设置/,
   );
   assert.equal(
     summarizeToolResult(

@@ -6,12 +6,8 @@ import { join } from "node:path";
 import {
   randomBytes,
   randomUUID,
-  createHmac,
-  generateKeyPairSync,
-  createPublicKey,
-  verify,
 } from "node:crypto";
-import { Vault, PapError, jwt } from "dsh-frontvia-pap/core";
+import { Vault, PapError } from "../src/state.js";
 import { CustomerService, modelData, type PapPort } from "../src/core.js";
 import { schemas, tools } from "../src/tools.js";
 import { uiSchemas } from "../src/ui-contract.js";
@@ -23,14 +19,31 @@ function fixture(cache = false, cny = false, language?: string) {
   const currency = cny ? "CNY" : "USD",
     country = cny ? "CN" : "US",
     locale = language ?? (cny ? "zh-CN" : "en-US");
-  const profile = cny
-    ? "frontvia.personal_purchase.v1"
-    : "frontvia.pap_subject_purchase.v1";
-  const proof = generateKeyPairSync("ec", {
-    namedCurve: "prime256v1",
-    privateKeyEncoding: { type: "pkcs8", format: "pem" },
-    publicKeyEncoding: { type: "spki", format: "pem" },
-  }).privateKey;
+  const profile = "frontvia.pap03_purchase.v1";
+  const fixtureMethods = [
+            "capabilities.get",
+            "connections.list",
+            "products.search",
+            "products.get",
+            "variants.list",
+            "carts.create",
+            "carts.get",
+            "carts.update",
+            "carts.lines.add",
+            "carts.lines.update",
+            "carts.lines.remove",
+            "carts.delivery_options.list",
+            "carts.delivery_option.select",
+            "quotes.create",
+            "quotes.get",
+            "checkouts.create",
+            "checkouts.get",
+            "checkouts.cancel",
+            "checkouts.confirm",
+            "orders.list",
+            "orders.get",
+            "operations.lookup",
+          ];
   const dir = mkdtempSync(join(tmpdir(), "dsh-customer-test-")),
     key = randomBytes(32).toString("base64url"),
     db = join(dir, "customer.sqlite");
@@ -68,7 +81,7 @@ function fixture(cache = false, cny = false, language?: string) {
   };
   const response = (data: any) => ({ result: { data: copy(data) } });
   const pap: PapPort = {
-    apiVersion: 2,
+    apiVersion: 3,
     hostedPayment: async (_ref, _url, checkoutId) => {
       remote.paymentCalls++;
       return {
@@ -91,20 +104,6 @@ function fixture(cache = false, cny = false, language?: string) {
         },
       };
     },
-    ...(cny
-      ? {
-          signResourceStatement: (_ref: string, typ: string, claims: any) =>
-            jwt(
-              proof,
-              {
-                alg: "ES256",
-                typ,
-                jwk: createPublicKey(proof).export({ format: "jwk" }),
-              },
-              claims,
-            ),
-        }
-      : {}),
     ...(cache ? { capabilityCacheKey: () => remote.generation } : {}),
     sites: () => [
       {
@@ -114,7 +113,7 @@ function fixture(cache = false, cny = false, language?: string) {
         domain: "shop.test",
         issuer: identity.issuer,
         resource: identity.resource,
-        description: undefined,
+        description: {methods:fixtureMethods.map(method=>`commerce.${method}`)},
         service: undefined,
         clientAllowed: undefined,
       },
@@ -138,30 +137,7 @@ function fixture(cache = false, cny = false, language?: string) {
         return response({
           store_id: "store",
           default_context: { country, currency, locale },
-          methods: [
-            "capabilities.get",
-            "connections.list",
-            "products.search",
-            "products.get",
-            "variants.list",
-            "carts.create",
-            "carts.get",
-            "carts.update",
-            "carts.lines.add",
-            "carts.lines.update",
-            "carts.lines.remove",
-            "carts.delivery_options.list",
-            "carts.delivery_option.select",
-            "quotes.create",
-            "quotes.get",
-            "checkouts.create",
-            "checkouts.get",
-            "checkouts.cancel",
-            "checkouts.confirm",
-            "orders.list",
-            "orders.get",
-            "operations.lookup",
-          ].map((m) => ({
+          methods: fixtureMethods.map((m) => ({
             method: `commerce.${m}`,
             availability:
               remote.methodAvailability[`commerce.${m}`] ?? "supported",
@@ -316,9 +292,6 @@ function fixture(cache = false, cny = false, language?: string) {
           order_ids: [],
           confirmation: {
             profile,
-            ...(cny ? { user_id: identity.userId } : {}),
-            issuer: identity.issuer,
-            resource: identity.resource,
             store_id: "store",
             connection_id: "native",
             generation: 1,
@@ -354,25 +327,10 @@ function fixture(cache = false, cny = false, language?: string) {
         resource = remote.checkout;
       }
       if (m === "commerce.checkouts.confirm") {
-        const [h, c, s] = p.confirmation.split(".");
-        if (cny)
-          assert(
-            verify(
-              "sha256",
-              Buffer.from(h + "." + c),
-              { key: createPublicKey(proof), dsaEncoding: "ieee-p1363" },
-              Buffer.from(s, "base64url"),
-            ),
-          );
-        else
-          assert.equal(
-            s,
-            createHmac("sha256", Buffer.from(key, "base64url"))
-              .update(h + "." + c)
-              .digest("base64url"),
-          );
-        const claims = JSON.parse(Buffer.from(c, "base64url").toString());
-        assert.equal(claims.user_id, identity.userId);
+        const claims = p.confirmation;
+        assert.equal(typeof claims,'object');
+        assert.equal(claims.profile,profile);
+        assert.equal(claims.client_id,undefined);assert.equal(claims.user_id,undefined);
         assert.equal(claims.amount_minor, "1734");
         assert.equal(claims.idempotency_key, k);
         assert.ok(claims.exp - claims.iat <= 120);
@@ -424,13 +382,10 @@ function fixture(cache = false, cny = false, language?: string) {
           {
             siteId: "a",
             storeId: "store",
-            confirmationKeyRef: "CONFIRM",
-            confirmationKid: "test",
           },
         ],
       },
       pap,
-      { get: async () => key, set: async () => {} },
       vault,
     );
   return {
@@ -455,8 +410,7 @@ function fixture(cache = false, cny = false, language?: string) {
       service = new CustomerService(
         service.config,
         pap,
-        { get: async () => key, set: async () => {} },
-        vault,
+          vault,
       );
     },
     close() {
@@ -1371,24 +1325,13 @@ test("fresh merchant capabilities revoke previously supported methods and unveri
     f.close();
   }
 });
-test("a merchant exposing confirmation does not create a missing client confirmation credential", async () => {
-  const f = fixture();
-  try {
-    f.service.config.sites[0].confirmationKeyRef = undefined;
-    f.service.config.sites[0].confirmationKid = undefined;
-    const flow = await prepare(f);
-    assert.equal(
-      (await f.service.view("session-a", flow)).purchaseReady,
-      false,
-    );
-    await assert.rejects(
-      f.service.review("session-a", flow),
-      /PURCHASE_CONFIRMATION_UNAVAILABLE/,
-    );
-    assert.equal(f.remote.confirms, 0);
-  } finally {
-    f.close();
-  }
+test("PAP03 purchase review needs no Customer signing key and does not confirm before user action", async()=>{
+ const f=fixture();try{
+  assert(!("confirmationKeyRef" in f.service.config.sites[0]));
+  assert(!("confirmationKid" in f.service.config.sites[0]));
+  const flow=await prepare(f);assert.equal((await f.service.view('session-a',flow)).purchaseReady,true);
+  await f.service.review('session-a',flow);assert.equal(f.remote.confirms,0);
+ }finally{f.close();}
 });
 
 test("browse and legacy blank searches omit the query, retain pagination, and return one catalog page", async () => {
@@ -1566,7 +1509,7 @@ test("browse and concurrent card reads reuse capabilities; mutations and changed
   }
 });
 
-test("CNY uses direct Commerce, owner ES256 confirmation and private original payment link", async () => {
+test("CNY uses direct Commerce, public PAP approval frame and original payment link", async () => {
   const f = fixture(false, true);
   try {
     const flow = await prepare(f);
@@ -4217,4 +4160,101 @@ test("cart recovery retains uncertainty or mismatched resource evidence", async 
       f.close();
     }
   }
+});
+
+test("explicit pre-admission confirmation rejection preserves safe diagnostics and requires fresh consent", async () => {
+  const f = fixture(false, true);
+  try {
+    const flow = await prepare(f), review = await f.service.review("session-a", flow);
+    const request = f.service.pap.request.bind(f.service.pap);
+    let rejected = false;
+    f.service.pap.request = async (ref, method, params, signal) => {
+      if (method === "commerce.checkouts.confirm" && !rejected) {
+        rejected = true;
+        return { error: { code: 1002, message: "must not retain raw secret", data: {
+          type: "FORBIDDEN", request_id: "14fc34c5-caac-4c50-a660-c5142a631524",
+          retry_policy: "after_change", token: "must-not-save",
+        } } };
+      }
+      return request(ref, method, params, signal);
+    };
+    await assert.rejects(f.service.confirm("session-a", flow, review.intent!.id), /CONFIRMATION_REJECTED/);
+    const saved = f.vault.get<any>(`flow:${flow}`);
+    assert.equal(saved.pending, undefined);
+    assert.equal(saved.intent, undefined);
+    const command = Object.values(saved.commands).find((v: any) => v.method === "commerce.checkouts.confirm") as any;
+    assert.equal(command.status, "done");
+    assert.deepEqual(command.lastError, { code: 1002, type: "FORBIDDEN", request_id: "14fc34c5-caac-4c50-a660-c5142a631524" });
+    assert(!JSON.stringify(command.lastError).includes("must"));
+    f.restart();
+    await assert.rejects(f.service.confirm("session-a", flow, review.intent!.id), /CONFIRMATION_REQUIRED/);
+    assert.equal(f.remote.confirms, 0);
+    const fresh = await f.service.review("session-a", flow);
+    assert.notEqual(fresh.intent!.id, review.intent!.id);
+    assert.equal(f.remote.confirms, 0);
+    await f.service.confirm("session-a", flow, fresh.intent!.id);
+    assert.equal(f.remote.confirms, 1);
+  } finally { f.close(); }
+});
+
+test("uncertain confirmation and missing lookup stay pending without replay, preserving both safe errors", async () => {
+  for (const error of [
+    { code: 1501, data: { type: "UPSTREAM_UNAVAILABLE", retry_policy: "after_change" } },
+    { code: 1002, data: { type: "FORBIDDEN", retry_policy: "after_reconcile", operation_id: "known-operation" } },
+  ]) {
+    const f = fixture();
+    try {
+      const flow = await prepare(f), review = await f.service.review("session-a", flow);
+      const request = f.service.pap.request.bind(f.service.pap);
+      let attempts = 0;
+      f.service.pap.request = async (ref, method, params, signal) => {
+        if (method === "commerce.checkouts.confirm") { attempts++; return { error }; }
+        return request(ref, method, params, signal);
+      };
+      await assert.rejects(f.service.confirm("session-a", flow, review.intent!.id), /CONFIRMATION_NOT_COMPLETED/);
+      const pending = f.vault.get<any>(`flow:${flow}`).pending;
+      assert(pending);
+      f.restart();
+      await assert.rejects(f.service.tool("session-a", "frontvia_orders", { flowId: flow, action: "recover" }, randomUUID()), /ORIGINAL_RESULT_UNKNOWN/);
+      const saved = f.vault.get<any>(`flow:${flow}`);
+      assert.equal(saved.pending, pending);
+      assert.equal(saved.commands[pending].lastError.code, error.code);
+      assert.equal(saved.commands[pending].lastLookupError.code, 1003);
+      assert.equal(f.remote.confirms, 0);
+      assert.equal(attempts, 1);
+    } finally { f.close(); }
+  }
+});
+
+
+test("manual US contact saves only email and still checks ownership and cart version", async () => {
+  const f = fixture();
+  try {
+    const flow = await f.flow();
+    await f.service.tool("session-a", "frontvia_cart", {flowId:flow,action:"add",variant_id:"variant",quantity:1}, "manual-add");
+    f.remote.cart.fulfillment_kind = "manual";
+    await f.service.tool("session-a", "frontvia_cart", {flowId:flow,action:"get"}, "manual-refresh");
+    const before = f.remote.writes;
+    await assert.rejects(f.service.contact("session-a",flow,f.remote.cart.version,{email:"invalid"},"manual-invalid"));
+    await assert.rejects(f.service.contact("another-session",flow,f.remote.cart.version,{email:"private@example.test"},"manual-foreign"));
+    assert.equal(f.remote.writes,before);
+    const version = f.remote.cart.version;
+    await f.service.contact("session-a",flow,version,{email:"private@example.test"},"manual-email");
+    assert.equal(f.remote.cart.email,"private@example.test");
+    assert.equal(f.remote.cart.shipping_address,undefined);
+    assert.equal(f.remote.writes,before+1);
+    await assert.rejects(f.service.contact("session-a",flow,version,{email:"other@example.test"},"manual-stale"));
+    assert.equal(f.remote.writes,before+1);
+  } finally { f.close(); }
+});
+
+test("physical carts cannot use email-only contact to bypass the required address", async () => {
+  const f = fixture();
+  try {
+    const flow = await f.flow();
+    await f.service.tool("session-a", "frontvia_cart", {flowId:flow,action:"add",variant_id:"variant",quantity:1}, "physical-add");
+    const before = f.remote.writes;
+    await assert.rejects(f.service.contact("session-a",flow,f.remote.cart.version,{email:"private@example.test"},"physical-email"));
+    assert.equal(f.remote.writes,before);
+  } finally { f.close(); }
 });

@@ -48,6 +48,7 @@ import { items, money, Lines, Totals, Order } from "./commerce-display.js";
 import { OrderList } from "./order-list.js";
 import { storefrontOrders } from "./order-summary.js";
 import { ProductGallery } from "./product-gallery.js";
+import { ManualContact } from "./manual-contact.js";
 import { ProductDescription } from "./product-description.js";
 import { StorefrontLoading } from "./storefront-loading.js";
 import { productImage } from "./product-image.js";
@@ -372,9 +373,12 @@ function StorefrontContent({
   }, [tab, data, now]);
   const contactReady = cartContactReady(data?.cart, data?.pricing?.country);
   const manualDelivery = manualCart(data?.cart);
+  const manualEmail = manualDelivery && data?.pricing?.country === "US";
   const freeOrder = data?.quote?.totals?.grand_total?.amount_minor === "0";
   const steps = defaultSteps.map((label, index) =>
-    manualDelivery && index === 1
+    manualEmail && index === 0
+      ? "联系邮箱"
+      : manualDelivery && index === 1
       ? "核对交付方式"
       : freeOrder && index === 3
         ? "确认零元订单"
@@ -1154,7 +1158,7 @@ function StorefrontContent({
                   </div>
                   <ol className="fv-checkout-steps" aria-label="结账进度">
                     {steps.map((label, index) =>
-                      manualDelivery && index === 0 ? null : (
+                      manualDelivery && !manualEmail && index === 0 ? null : (
                         <li
                           key={label}
                           aria-current={
@@ -1166,7 +1170,7 @@ function StorefrontContent({
                             {index < checkoutStep ? (
                               <Check />
                             ) : (
-                              index + (manualDelivery ? 0 : 1)
+                              index + (manualDelivery && !manualEmail ? 0 : 1)
                             )}
                           </span>
                           {label}
@@ -1197,6 +1201,13 @@ function StorefrontContent({
                           </div>
                         )}
                         {checkoutStep === 0 && (
+                          manualDelivery ? <ManualContact key={data.cart.id} email={data.cart.email}
+                            disabled={blocked} save={async email => {
+                              const ok = await action("contact", {expected_version:data.cart.version,
+                                patch:{email},actionId:crypto.randomUUID()});
+                              if (ok) setStep(1);
+                              return ok;
+                            }} /> :
                           <AddressForm
                             key={data.cart.id}
                             data={data}

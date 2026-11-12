@@ -1,3 +1,10 @@
+# Shared foundations are installed before Customer. The profile's own layer wins.
+- id: pap
+  name: '@awiki/dsh-pap/plugin'
+  config:
+    enabled: true
+    autoConnect: true
+    businessConsumers: ['dsh-frontvia-customer']
 - insert:
     - id: dsh-frontvia-customer
       name: dsh-frontvia-customer

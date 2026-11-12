@@ -33,14 +33,14 @@ export function summarizeToolResult(name: string, message: any): ToolSummary {
   const value = valueOf(message);
   if (value?.error || message?.isError || !value) {
     const errors: Record<string, string> = {
-      PERSONAL_LOGIN_REQUIRED: "请先到 Frontvia 服务登录个人账号。",
-      PERSONAL_ACCOUNT_CHANGED: "账号已变化，请登录原账号或新建聊天。",
-      PERSONAL_CHAT_ACCOUNT_CHANGED: "此聊天属于另一账号，请新建聊天。",
+      PERSONAL_LOGIN_REQUIRED: "请在公共 Identity/PAP 设置中选择身份并授权接入。",
+      PERSONAL_ACCOUNT_CHANGED: "身份已变化，请选择原公共身份或新建聊天。",
+      PERSONAL_CHAT_ACCOUNT_CHANGED: "此聊天属于另一身份，请新建聊天。",
       METHOD_UNAVAILABLE: "当前连接尚未开通这项服务，操作未执行。",
       PURCHASE_PROFILE_UNAVAILABLE: "当前连接尚未开通购物服务，操作未执行。",
       METHOD_NOT_ADVERTISED: "商家暂未开放这项服务。",
       NETWORK_TIMEOUT: "商家响应超时，请稍后重试。",
-      CONNECTION_DISCONNECTED: "连接已断开，请到 PAP 连接重新连接商家。",
+      CONNECTION_DISCONNECTED: "连接已断开，请在对话中提供店铺域名重新连接。",
       CANCELLED: "操作已取消。",
       ABORTED: "操作已取消。",
     };

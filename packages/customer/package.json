@@ -51,10 +51,10 @@
     "@deepseek-ai/dsh-credentials": "0.2.2-rc.1",
     "@deepseek-ai/dsh-system-prompt": "0.2.2-rc.1",
     "@deepseek-ai/dsh-tools": "0.2.2-rc.1",
-    "dsh-frontvia-pap": "0.1.0",
     "react": "^18.3.1",
     "react-dom": "18.3.1",
-    "dsh-frontvia-client": "0.1.0"
+    "@awiki/dsh-pap": "0.1.4",
+    "@agent-network-protocol/dsh-anp-identity": "0.1.16"
   },
   "dependencies": {
     "@radix-ui/react-tabs": "1.2.1",
@@ -64,9 +64,9 @@
     "zod": "4.3.6"
   },
   "devDependencies": {
-    "dsh-frontvia-pap": "workspace:*",
     "react-dom": "18.3.1",
-    "dsh-frontvia-client": "workspace:*"
+    "@awiki/dsh-pap": "file:../../../dsh-pap",
+    "@agent-network-protocol/dsh-anp-identity": "0.1.16"
   },
   "description": "Frontvia 商品、购物车、购买确认、订单及咨询插件。"
 }

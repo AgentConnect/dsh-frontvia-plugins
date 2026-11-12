@@ -1,7 +1,7 @@
 import { z } from "zod";
 import { shoppingActionSchema } from "./shopping-action.js";
 import { viewScopes } from "./view-scope.js";
-import { contactSchema } from "./core.js";
+import { contactSchema, manualContactSchema } from "./contact-fields.js";
 const ref = z.string().min(1).max(200);
 const common = {
   sessionId: ref,
@@ -14,12 +14,7 @@ const common = {
 // Purchase amount, buyer identity, signing material and tokens are intentionally
 // absent. The host derives these from its saved intent and current server data.
 export const uiSchemas = {
-  "personal-status": z.object({}).strict(),
-  "personal-code": z
-    .object({ phone: z.string().regex(/^\+[1-9][0-9]{7,14}$/) })
-    .strict(),
-  "personal-verify": z.object({ code: z.string().regex(/^\d{6}$/) }).strict(),
-  "personal-logout": z.object({}).strict(),
+  "identity-status": z.object({}).strict(),
   list: z.object({}).strict(),
   "open-store": z.object({ siteId: ref, actionId: z.uuid() }).strict(),
   view: z
@@ -42,7 +37,7 @@ export const uiSchemas = {
     .object({
       ...common,
       expected_version: ref,
-      patch: contactSchema,
+      patch: manualContactSchema.or(contactSchema),
       actionId: z.uuid(),
     })
     .strict(),

@@ -3,9 +3,8 @@ import assert from "node:assert/strict";
 import { mkdtempSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
-import { randomBytes, createHash } from "node:crypto";
-import { Vault, PapError } from "dsh-frontvia-pap/core";
-import { PROFILE } from "dsh-frontvia-client/core";
+import { randomBytes, createHash, randomUUID } from "node:crypto";
+import { Vault, PapError } from "../src/state.js";
 import { CustomerService, type PapPort } from "../src/core.js";
 import { schemas, tools } from "../src/tools.js";
 import {
@@ -55,53 +54,14 @@ const purchase = () => {
     },
   };
 };
-async function purchaseFlow(f: ReturnType<typeof fixture>) {
+async function historicalFlow(f: ReturnType<typeof fixture>) {
   f.remote.shoppingCapability = true;
   const flowId = await f.flow();
-  await legacyTool(
-    f.service,
-    "session",
-    "frontvia_consultation",
-    { flowId, action: "ask", text: "购买一件旅行包" },
-    "prepare",
-  );
+  await legacyTool(f.service,"session","frontvia_consultation",{flowId,action:"ask",text:"请介绍旅行包"},"original-question");
   f.remote.convo.status = "answered";
   f.remote.shopping = purchase();
-  return { flowId, view: await f.service.consultation.view("session", flowId) };
+  return flowId;
 }
-
-test("CNY free-text addresses reach owner confirmation without inventing region or city", async () => {
-  const f = fixture();
-  try {
-    const { flowId } = await purchaseFlow(f);
-    const address = f.remote.shopping.summary.shipping_address;
-    address.line1 = "测试省测试市测试路 1 号";
-    delete address.region;
-    delete address.city;
-    const before = f.remote.submits;
-    const view = await f.service.consultation.view("session", flowId);
-    assert.equal(view.shopping.state, "requires_confirmation");
-    assert.deepEqual(view.shopping.summary.shipping_address, address);
-    assert(view.shopping.intentId);
-    assert.equal(
-      f.remote.submits,
-      before,
-      "reading the card never confirms the order",
-    );
-    await f.service.consultation.confirmShopping(
-      "session",
-      flowId,
-      view.shopping.intentId,
-    );
-    assert.equal(f.remote.submits, before + 1);
-    const submit = f.remote.calls
-      .filter((c) => c.method === "consultation.messages.submit")
-      .at(-1);
-    assert.equal(submit.params.text, "确认购买 ABCDEF0123456789");
-  } finally {
-    f.close();
-  }
-});
 
 test("CNY address validation accepts optional locality fields but rejects incomplete recipient details", () => {
   const site = { issuer: "https://shop.test/companies/a" };
@@ -141,163 +101,14 @@ test("CNY address validation accepts optional locality fields but rejects incomp
   assert.throws(() => shoppingView(foreign, site), /SHOPPING_RESPONSE_INVALID/);
 });
 
-test("CNY confirmation is owner-only, bound to displayed quote/version, and idempotent across restart", async () => {
-  const f = fixture();
-  try {
-    const { flowId, view } = await purchaseFlow(f);
-    const intent = view.shopping.intentId;
-    await assert.rejects(
-      legacyTool(
-        f.service,
-        "session",
-        "frontvia_consultation",
-        {
-          flowId,
-          action: "ask",
-          text: "确认购买 ABCDEF0123456789",
-          expected_version: f.remote.convo.version,
-        },
-        "model-consent",
-      ),
-      /PURCHASE_OWNER_CONFIRMATION_REQUIRED/,
-    );
-    assert.equal(f.remote.submits, 1);
-    await f.service.consultation.confirmShopping("session", flowId, intent);
-    const submit = f.remote.calls
-      .filter((c) => c.method === "consultation.messages.submit")
-      .at(-1);
-    assert.equal(submit.params.text, "确认购买 ABCDEF0123456789");
-    assert.equal(submit.params.expected_version, 1);
-    f.restart();
-    await f.service.consultation.confirmShopping("session", flowId, intent);
-    assert.equal(f.remote.submits, 2);
-    await assert.rejects(
-      f.service.consultation.confirmShopping(
-        "different-session",
-        flowId,
-        intent,
-      ),
-      /FLOW_NOT_OWNED/,
-    );
-    f.remote.personalAccess = false;
-    await assert.rejects(
-      f.service.consultation.confirmShopping("session", flowId, intent),
-      /PERSONAL_ACCOUNT_CHANGED/,
-    );
-  } finally {
-    f.close();
-  }
-});
-
-test("CNY lost confirmation preserves the original key and cannot be replaced by another purchase", async () => {
-  const f = fixture();
-  try {
-    const { flowId, view } = await purchaseFlow(f);
-    f.remote.lose = true;
-    await assert.rejects(
-      f.service.consultation.confirmShopping(
-        "session",
-        flowId,
-        view.shopping.intentId,
-      ),
-      /NETWORK_UNCERTAIN/,
-    );
-    const original = structuredClone(
-      f.remote.calls.filter((c) => c.method.endsWith("messages.submit")).at(-1)
-        .params,
-    );
-    f.restart();
-    await assert.rejects(
-      f.service.consultation.confirmShopping(
-        "session",
-        flowId,
-        view.shopping.intentId,
-      ),
-      /RESOLVE_PENDING_OPERATION/,
-    );
-    await assert.rejects(
-      legacyTool(
-        f.service,
-        "session",
-        "frontvia_consultation",
-        { flowId, action: "ask", text: "再买一个", expected_version: 2 },
-        "new-purchase",
-      ),
-      /RESOLVE_PENDING_OPERATION/,
-    );
-    await legacyTool(
-      f.service,
-      "session",
-      "frontvia_consultation",
-      { flowId, action: "recover" },
-      "recover",
-    );
-    assert.deepEqual(
-      f.remote.calls.filter((c) => c.method.endsWith("messages.submit")).at(-1)
-        .params,
-      original,
-    );
-    assert.equal(f.remote.submits, 2);
-  } finally {
-    f.close();
-  }
-});
-
-test("CNY changed amount, expiry, conversation version or withdrawn capability requires new review", async () => {
-  for (const change of ["amount", "expiry", "version", "capability"]) {
-    const f = fixture(true);
-    try {
-      const { flowId, view } = await purchaseFlow(f);
-      const readsBefore = f.remote.calls.filter(
-        (call) => call.method === "consultation.capabilities.get",
-      ).length;
-      if (change === "amount")
-        f.remote.shopping.summary.totals.grand_total.amount_minor = "10501";
-      if (change === "expiry") f.remote.shopping.expires_at = 1;
-      if (change === "version") f.remote.convo.version++;
-      if (change === "capability") f.remote.shoppingCapability = false;
-      await assert.rejects(
-        f.service.consultation.confirmShopping(
-          "session",
-          flowId,
-          view.shopping.intentId,
-        ),
-        /SHOPPING_REVIEW_REQUIRED|SHOPPING_UNAVAILABLE/,
-      );
-      assert.equal(f.remote.submits, 1);
-      assert.equal(
-        f.remote.calls.filter(
-          (call) => call.method === "consultation.capabilities.get",
-        ).length,
-        readsBefore + 1,
-        "owner confirmation refreshes authority even while display metadata is cached",
-      );
-    } finally {
-      f.close();
-    }
-  }
-});
-
 for (const capability of [true, false])
   test(`CNY historical payment remains visible and validated with new purchasing=${capability}`, async () => {
     const f = fixture();
     try {
-      const { flowId, view: before } = await purchaseFlow(f);
+      const flowId = await historicalFlow(f);
       f.remote.shoppingCapability = capability;
-      if (!capability) {
-        assert.equal(
-          (await f.service.consultation.view("session", flowId)).shopping,
-          null,
-        );
-        await assert.rejects(
-          f.service.consultation.confirmShopping(
-            "session",
-            flowId,
-            before.shopping.intentId,
-          ),
-          /SHOPPING_UNAVAILABLE/,
-        );
-      }
+      assert.equal((await f.service.consultation.view("session",flowId)).shopping,null);
+      await assert.rejects(f.service.consultation.confirmShopping("session",flowId,randomUUID()),/DIRECT_COMMERCE_REQUIRED/);
       const expiry = new Date(Date.now() + 600000).toISOString();
       const url = `https://shop.test/companies/a/pay/checkout-1?expires=${Math.floor(Date.parse(expiry) / 1000)}&access=private-bearer`;
       f.remote.shopping = {
@@ -416,7 +227,7 @@ function fixture(cache = false) {
   };
   const respond = (data: any) => ({ result: { data: structuredClone(data) } });
   const pap = {
-    apiVersion: 2,
+    apiVersion: 3,
     ...(cache
       ? {
           capabilityCacheKey: () => (remote.personalAccess ? "one" : undefined),
@@ -444,7 +255,7 @@ function fixture(cache = false) {
       issuer: "issuer",
       resource: "resource",
       signedIn: false,
-      ...(remote.independent ? { personalSignedIn: true, authenticationProvider: PROFILE } : {}),
+      ...(remote.independent ? { personalSignedIn: true, authenticationProvider: "public-pap03" } : {}),
     }),
     status: () => [],
     connect: async () => ({ connectionRef: "consult-connection" }),
@@ -574,7 +385,6 @@ function fixture(cache = false) {
     service = new CustomerService(
       { dataDir: dir, sites: [] },
       pap,
-      { get: async () => undefined, set: async () => {} },
       vault,
     );
   return {
@@ -594,8 +404,7 @@ function fixture(cache = false) {
       service = new CustomerService(
         { dataDir: dir, sites: [] },
         pap,
-        { get: async () => undefined, set: async () => {} },
-        vault,
+          vault,
       );
     },
     close() {
@@ -1103,28 +912,17 @@ test("exact source metadata carries explicit original availability to its own UI
   }
 });
 
-test("consultation tools retain legacy purchase rejection and historical reading", async () => {
+test("PAP03 advice cannot expose or confirm a new legacy purchase, while history stays readable", async () => {
   const f = fixture();
   try {
-    const flowId = await f.flow();
-    assert(tools(f.service).some((t) => t.name === "frontvia_consultation"));
-    await assert.rejects(
-      f.service.tool(
-        "session",
-        "frontvia_consultation",
-        { flowId, action: "ask", text: "buy a coaster" },
-        "new-order",
-      ),
-      /DIRECT_COMMERCE_REQUIRED/,
-    );
-    assert.equal(f.remote.submits, 0);
-    assert.equal(
-      (await f.service.consultation.view("session", flowId)).flowId,
-      flowId,
-    );
-  } finally {
-    f.close();
-  }
+    const flowId = await historicalFlow(f);
+    assert(tools(f.service).some(tool=>tool.name==="frontvia_consultation"));
+    assert.equal((await f.service.consultation.view("session",flowId)).shopping,null);
+    await assert.rejects(f.service.consultation.confirmShopping("session",flowId,randomUUID()),/DIRECT_COMMERCE_REQUIRED/);
+    await assert.rejects(f.service.consultation.confirmShopping("another-session",flowId,randomUUID()),/FLOW_NOT_OWNED/);
+    assert.equal(f.remote.submits,1,"advice and reading never submit a purchase");
+    assert.equal((await f.service.consultation.view("session",flowId)).flowId,flowId);
+  } finally { f.close(); }
 });
 
 test("independent identity can ask and read advice without consultation purchase authority", async () => {
