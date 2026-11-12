@@ -49,8 +49,10 @@ pnpm pack:local
     domainAccess:
       enabled: true
       scopes: []
-      secretStore: keyring
+      secretStore: local-file
 ```
+
+当前 PAP 候选的 `keyring` 后端只支持 Linux Secret Service。Mac 显式选择上面的 `local-file`，使用与状态目录分离、仅当前用户可读的受保护目录保存 PAP 状态加密密钥；公共身份私钥仍由 Identity Provider 保管。Linux 已配置 Secret Service 时可显式改为 `keyring`。不做静默存储降级；`PAP_CREDENTIAL_UNAVAILABLE` 也可能来自不支持的存储后端，不代表需要重新注册身份。
 
 完整退出并重开 DSH 后，在「设置 → 协议管理」核对读取策略及“写入：每次确认”。首次提供店铺域名才建立具体连接；公开身份已发布不等于远端店铺已连接。设置中的 `Host 尚未开启全局域名接入` 说明缺少本段配置，反复创建身份不能解决。
 
