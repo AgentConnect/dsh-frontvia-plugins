@@ -12,7 +12,7 @@ Frontvia 业务插件：商品、购物车、地址、报价、订单和咨询�
 
 ## 使用
 
-1. 在公共 Identity/PAP 设置中完成一次身份准备、默认身份选择及域名接入授权。
+1. 安装后先完成下方 Host 接入配置，再在 DSH「设置 → 身份管理」创建／发布公共身份并保存默认身份。
 2. 在对话中说“去 `shop.example.com` 看一下商品”。不需要预配置商家、Agent URL 或 PAP 服务链接。
 3. Customer 复用公共 PAP 发现的购物和咨询 API。无咨询助手时，购物能力仍可独立使用。
 4. 卡片显示完整报价，购买按钮发起公共 PAP 的最终批准。未批准不下单，未知结果只核对原 operation，不重发购买。
@@ -21,7 +21,7 @@ Frontvia 业务插件：商品、购物车、地址、报价、订单和咨询�
 
 ## 本地开发
 
-所有 Frontvia 修改在 `/home/ecs-user/frontvia-space` 内进行。公共 PAP 本地候选位于相邻 `../dsh-pap`，不修改只读身份开发工作目录。
+使用独立工作目录。公共 PAP 本地候选位于相邻 `../dsh-pap`，不修改公共身份插件的实现。
 
 ```sh
 pnpm install --frozen-lockfile --ignore-scripts
@@ -35,6 +35,24 @@ pnpm pack:local
 安装候选必须与 DSH `0.2.2-rc.1` 匹配。显式运行 `scripts/install-desktop.mjs` 才会更新 desktop Profile；旧 Frontvia 包的替换使用 `--replace-legacy-frontvia`，只处理安装器原先放入 `.local-packages/frontvia` 的旧包，不删除身份、凭据或业务状态。安装器会把公共 Identity/PAP 的 bundle 放在 Customer 之前，修复旧版升级时保留错误顺序造成的后台启动失败；其他插件的选择和相对顺序保持不变。用户 Profile 自己的覆盖配置保持优先；公共 PAP 的自定义配置需保留 `businessConsumers: ['dsh-frontvia-customer']`。
 
 隔离 Host 可以通过原有 `scripts/harness.mjs` 加载候选；验收不得使用用户默认 Profile。普通验证不产生额外日志归档。
+
+### 一次性 Host 接入配置
+
+安装器不会代替所有者授予身份使用权限。所有者同意使用 PAP 后，在 desktop Profile 的 `cordis.patch.yml` 合并以下配置；已有消费者须保留。只增加实际安装的 PAP 适配器，不授予 Provider／私钥导出权限。
+
+```yaml
+- id: anp-identity
+  name: '@agent-network-protocol/dsh-anp-identity'
+  config:
+    allowConsumers: ['@awiki/dsh-plugin', '@agent-network-protocol/dsh-anp-identity/protocol-bootstrap', '@awiki/dsh-pap/plugin']
+    userConsumers: ['@agent-network-protocol/dsh-anp-identity/protocol-bootstrap', '@awiki/dsh-pap/plugin']
+    domainAccess:
+      enabled: true
+      scopes: []
+      secretStore: keyring
+```
+
+完整退出并重开 DSH 后，在「设置 → 协议管理」核对读取策略及“写入：每次确认”。首次提供店铺域名才建立具体连接；公开身份已发布不等于远端店铺已连接。设置中的 `Host 尚未开启全局域名接入` 说明缺少本段配置，反复创建身份不能解决。
 
 ## 迁移状态
 
