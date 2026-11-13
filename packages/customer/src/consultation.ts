@@ -54,7 +54,8 @@ export class ConsultationService {
     const f = this.vault.get<Flow>(`consultation:${flowId}`);
     if (!f || f.sessionId !== sessionId) fail("FLOW_NOT_OWNED");
     if (this.pap.canAccess?.(f.connectionRef) === false)
-      fail("PERSONAL_ACCOUNT_CHANGED");
+      fail(this.pap.isCurrentIdentity?.(f.connectionRef) === true
+        ? "PAP_DISCONNECTED" : "PERSONAL_ACCOUNT_CHANGED");
     if (!consultationSite(this.pap.sites().find((s) => s.id === f.siteId)))
       fail("CONSULTATION_UNAVAILABLE");
     return f;

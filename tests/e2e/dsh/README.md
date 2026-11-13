@@ -8,7 +8,7 @@ python3 tests/support/read-awiki-me-auth.py  # 只读 awiki.me 测试预设，�
 python3 tests/e2e/dsh/run.py
 ```
 
-需要 Node 24、当前本地 Customer / 公共 PAP 安装包、正式 Identity 0.1.16、Core Web 的 Playwright/Chromium 及 Core 拥有的隔离服务前提。使用实际 `dsh --profile frontvia-e2e` Web 进程和浏览器，测试 profile、业务状态和会话隔离，不修改用户默认 DSH 配置。专用 awiki.me 测试身份的加密状态和必要注册恢复材料保留，以便跨轮复用。
+需要 Node 24、当前本地 Customer 安装包、正式 Identity 0.1.17 与公共 PAP 0.1.6、Core Web 的 Playwright/Chromium 及 Core 拥有的隔离服务前提。使用实际 `dsh --profile frontvia-e2e` Web 进程和浏览器，测试 profile、业务状态和会话隔离，不修改用户默认 DSH 配置。专用 awiki.me 测试身份的加密状态和必要注册恢复材料保留，以便跨轮复用。
 
 测试专用网络插件只负责测试 HTTPS 域名映射和测试 CA，保留真实 PAP 传输及证书校验。Identity 使用正式实现，测试身份通过已部署的 `https://awiki.me` 注册/发布，CIMD/JWKS 从公网实际读取。预置身份是测试前置，不能声称 DSH 界面注册/邮件投递已验收。
 

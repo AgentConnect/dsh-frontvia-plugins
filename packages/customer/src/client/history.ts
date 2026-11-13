@@ -1,3 +1,4 @@
+import { presentationResult } from "../tool-presentation.js";
 import { catalogSnapshot } from "./catalog-history.js";
 /** Only pass the UI route's public reference, never list-row metadata. */
 export function shoppingReference(flow: {
@@ -39,7 +40,7 @@ function card(event: any) {
       : event.type === "tool/ptc-dispatch"
         ? d
         : null;
-  const v = readResult(m);
+  const v = presentationResult(d?.meta) ?? readResult(m);
   return v && Number.isInteger(d.turn)
     ? {
         turn: d.turn,

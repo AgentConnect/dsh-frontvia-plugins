@@ -1,6 +1,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { historyDefinition as history } from "../src/client/history.js";
+import { toolPresentation, renderToolValue } from "../src/tool-presentation.js";
 import { withHistoricalCatalog } from "../src/client/catalog-history.js";
 const ui = (flowId = "flow") => ({
   kind: "frontvia-customer",
@@ -108,4 +109,24 @@ test("new snapshots restore without preceding history, preserve empty specificat
   );
   assert.equal(next.cards.length, 1);
   assert.equal(empty.cards[0].catalog.variantProductId, "lamp");
+});
+
+
+test("native and nested tool history survives model text spill without carrying transaction state", () => {
+  const value = { ui: ui(), data: { items: [lamp], description: "x".repeat(60000) },
+    catalogSnapshot: { version: 1, products: { items: [lamp] } },
+    cart: { version: "private-live-cart" }, quote: { id: "private-quote" } };
+  const meta = toolPresentation(value);
+  const rendered = renderToolValue(value);
+  assert.equal(JSON.parse(rendered).catalogSnapshot, undefined);
+  assert.deepEqual(JSON.parse(rendered).data.items, [lamp]);
+  assert.doesNotMatch(JSON.stringify(meta), /private-live-cart|private-quote/);
+  const content = [{ type: "text", text: rendered.slice(0, 50000) + "(truncated by Host)" }];
+  for (const type of ["tool/result", "tool/ptc-dispatch"]) {
+    const e = { type, seq: 10, data: { turn: 3, meta, content,
+      message: { source: { callId: "large-catalog" }, content } } };
+    const state = start(e);
+    assert.equal(state.cards[0].ui.flowId, "flow");
+    assert.equal(state.cards[0].catalog.products.items[0].title, "台灯");
+  }
 });

@@ -198,7 +198,8 @@ export class CustomerService {
     const f = this.vault.get<Flow>(`flow:${flowId}`);
     if (!f || f.sessionId !== sessionId) fail("FLOW_NOT_OWNED");
     if (this.pap.canAccess?.(f.connectionRef) === false)
-      fail("PERSONAL_ACCOUNT_CHANGED");
+      fail(this.pap.isCurrentIdentity?.(f.connectionRef) === true
+        ? "PAP_DISCONNECTED" : "PERSONAL_ACCOUNT_CHANGED");
     const submitted = f.intent?.token && f.commands[f.intent.key];
     if (!f.pending && submitted && submitted.status === "done") {
       this.retireFailedConfirmation(f, submitted, submitted.result?.operation);
@@ -358,6 +359,9 @@ export class CustomerService {
   }
   async connect(sessionId: string, siteId: string) {
     if (!sessionId || sessionId.length > 200) fail("SESSION_REQUIRED");
+    // Public PAP restores local lifecycle state without reconnecting a Company.
+    // Check chat ownership before explicit discovery or business reads.
+    await this.pap.refresh?.();
     // A DSH chat retains its model context. Do not mix a second personal
     // account into a chat containing the first account's tool responses.
     for (const prefix of ["flow:", "consultation:"]) {
@@ -368,7 +372,9 @@ export class CustomerService {
         }>(key)!;
         if (
           saved.sessionId === sessionId &&
-          this.pap.canAccess?.(saved.connectionRef) === false
+          (this.pap.isCurrentIdentity
+            ? this.pap.isCurrentIdentity(saved.connectionRef)
+            : this.pap.canAccess?.(saved.connectionRef)) === false
         )
           fail("PERSONAL_CHAT_ACCOUNT_CHANGED");
       }
