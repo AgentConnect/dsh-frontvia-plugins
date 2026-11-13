@@ -1,5 +1,7 @@
 # Identity service and PAP direct Commerce implementation
 
+> 历史方案／执行记录：Frontvia 专属身份与 PAP 0.2 已退出当前版本。请使用仓库 README 所列公共 Identity、公共 PAP 和 Customer；不要按本文安装旧服务或插件。
+
 Authorized: local implementation of SPEC v0.2. Local commits additionally authorized by the user on 2026-11-06. No push/PR, remote repository creation, real installation/deployment, production migration or live SMS/payment performed.
 
 ## Workspaces and baseline

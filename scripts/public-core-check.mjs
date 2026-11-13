@@ -7,6 +7,7 @@ import {readFile, writeFile} from 'node:fs/promises';
 import https from 'node:https';
 import {randomUUID} from 'node:crypto';
 import {setTimeout as delay} from 'node:timers/promises';
+import {loadPublicPap,publicPapPackage} from '../tests/support/public-pap.mjs';
 
 const root=resolve(dirname(fileURLToPath(import.meta.url)),'..');
 const require=createRequire(join(root,'package.json'));
@@ -31,7 +32,8 @@ let fixture;
 let publisher;
 let stage='public_identity_registration';
 try{
-  console.log(JSON.stringify({stage,identityVersion:'0.1.17',nativeVersion:'0.2.6'}));
+  const selected=publicPapPackage();
+  console.log(JSON.stringify({stage,identityVersion:'0.1.17',nativeVersion:'0.2.6',papVersion:selected.version,papSource:selected.source}));
   const commerce=process.argv[2]?JSON.parse(await readFile(process.argv[2],'utf8')):undefined;
   const {awikiMeIdentity}=await import('../tests/support/awiki-me-identity.mjs');
   fixture=await awikiMeIdentity();
@@ -63,8 +65,7 @@ try{
       const {runDsh}=await import('../tests/e2e/dsh/run.mjs');
       await runDsh({fixture,commerce,root});
     }else{
-    const papModule=await import(pathToFileURL(resolve(root,'../dsh-pap/src/plugin.ts')).href);
-    const {SafeHttpsTransport}=await import(pathToFileURL(resolve(root,'../dsh-pap/src/network.ts')).href);
+    const {plugin:papModule,SafeHttpsTransport}=await loadPublicPap();
     const customerModule=await import(pathToFileURL(join(root,'packages/customer/src/index.ts')).href);
     const toolModule=await import('@deepseek-ai/dsh-tools');
     const executorModule=await import('@deepseek-ai/dsh-tool-executor-native');
@@ -132,6 +133,11 @@ try{
     console.log(JSON.stringify({status:'passed',case:'zero-merchants-domain-discovery-real-products',products:products.data.items.length,
       boundary:'Live awiki.me identity and public materials, actual Customer/PAP and Core/Medusa HTTPS. Local Company routing and system-test owner connection remain controlled seams.'}));
     const flowId=connected.flowId;
+    const sdk=customerContext.get('pap').acquireBusiness(customerContext);
+    const state=await sdk.status();assert(state.ok);
+    const companies=state.value.companies.filter(company=>company.domain===commerce.domain&&company.companyId===commerce.origin);
+    assert.equal(companies.length,1,'Current Company must be selected by the requested domain');
+    const companyRef=companies[0].companyRef;
     const ui=async(operation,payload={})=>{
       const route=routes.get('/api/frontvia-customer/'+operation);
       assert(route,'Actual Customer owner endpoint must be registered');
@@ -189,8 +195,8 @@ try{
       stage='same_domain_consultation';
       const operations=await customerContext.get('pap').acquireBusiness(customerContext).operations();
       assert(operations.ok);
-      const commerceOperation=operations.value.find(operation=>operation.operationId==='commerce.products.search');
-      const consultationOperation=operations.value.find(operation=>operation.operationId==='consultation.messages.submit');
+      const commerceOperation=operations.value.find(operation=>operation.companyRef===companyRef&&operation.operationId==='commerce.products.search');
+      const consultationOperation=operations.value.find(operation=>operation.companyRef===companyRef&&operation.operationId==='consultation.messages.submit');
       assert(commerceOperation&&consultationOperation);
       assert.equal(commerceOperation.companyRef,consultationOperation.companyRef);
       let conversation=await execute('frontvia_consultation',{action:'ask',flowId,text:'请说出当前店内商品的名称，以及它的交付方式；没有公开资料的内容不要编造。'});
@@ -217,10 +223,12 @@ try{
       await checkInterfaces({commerce,transport:nativeTransport,publications});
     }
     stage='real_protocol_replay_and_signature';
-    const sdk=customerContext.get('pap').acquireBusiness(customerContext);
     const catalogOperations=await sdk.operations();assert(catalogOperations.ok);
-    const catalogOperation=catalogOperations.value.find(operation=>operation.operationId==='commerce.products.search');
-    const fresh=await sdk.request({operationRef:catalogOperation.operationRef,query:{params:'{}'}});assert(fresh.ok);
+    const catalogOperation=catalogOperations.value.find(operation=>operation.companyRef===companyRef&&operation.operationId==='commerce.products.search');
+    assert(catalogOperation);
+    const fresh=await sdk.request({operationRef:catalogOperation.operationRef,query:{params:'{}'}});
+    if(!fresh.ok)console.log(JSON.stringify({stage,code:fresh.error.code,phase:fresh.error.phase,businessRequest:fresh.error.businessRequest,httpStatus:fresh.error.httpStatus}));
+    assert(fresh.ok);
     assert(lastCatalogRequest);
     const replay=await nativeTransport.request(lastCatalogRequest.url,lastCatalogRequest.options);
     assert.equal(replay.status,400);

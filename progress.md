@@ -1,4 +1,6 @@
 # Progress
+
+> 历史方案／执行记录：Frontvia 专属身份与 PAP 0.2 已退出当前版本。请使用仓库 README 所列公共 Identity、公共 PAP 和 Customer；不要按本文安装旧服务或插件。
 2026-11-06: fetched plugin and Frontvia baselines; isolated the Frontvia worktree; created local standalone identity repository. Preserved unrelated work and production state.
 Implemented independent identity service/client, external PAP grant, direct CN/CNY checkout/payer, migration and control/key recovery guards. Added runtime/contract documentation and local three-package installation preflight/rollback support; did not install.
 Verification: identity 9 PG tests + 1 host contract; plugin 106 checks; Frontvia 86 library checks plus account, external federation and direct payer/migration PG contracts. Full acceptance limits and reproducible commands are recorded in docs/implementation/dsh-identity-pap-commerce.md.

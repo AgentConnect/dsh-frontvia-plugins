@@ -10,7 +10,7 @@
   "scripts": {
     "build": "node scripts/build.mjs",
     "typecheck": "tsc --noEmit",
-    "test": "node --import tsx --test packages/customer/test/*.test.ts",
+    "test": "node --import tsx --test packages/customer/test/*.test.ts tests/support/*.test.mjs",
     "check": "pnpm typecheck && pnpm build && pnpm test",
     "pack:local": "node scripts/pack.mjs",
     "harness": "node scripts/harness.mjs",

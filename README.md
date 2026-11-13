@@ -53,7 +53,7 @@ pnpm pack:local
 `docs/` 中此前的 0.2、手机号私有身份、三插件安装及测试记录属于历史交付，不能作为当前候选的安装或验收说明。
 
 
-核心串联由 Core 拥有：`python3 platform/tests/pap03/commerce.py`，需先准备当前 Native/Platform 构建，先执行 `python3 tests/support/read-awiki-me-auth.py` 配置受保护的线上测试预设，并在任务环境提供 `DEEPSEEK_API_KEY`。它使用已部署的 awiki.me User Service、正式 Identity 0.1.16/Native 0.2.6 和当前本地 PAP 候选；业务数据库、角色、TLS 和 Claude 状态独立，不操作用户默认 Profile。
+核心串联由 Core 拥有：`python3 platform/tests/pap03/commerce.py`，需先准备当前 Native/Platform 构建，先执行 `python3 tests/support/read-awiki-me-auth.py` 配置受保护的线上测试预设，并在任务环境提供 `DEEPSEEK_API_KEY`。它使用已部署的 awiki.me User Service、正式 Identity 0.1.17/Native 0.2.6 和当前正式 PAP 包；业务数据库、角色、TLS 和 Claude 状态独立，不操作用户默认 Profile。
 
 MCP 测试投影仅描述工具的根对象参数；实际 Customer 仍执行完整 action 参数校验。模型只获得两个商家工具，购入批准由测试操作者走公共 PAP 的一次决定。身份通过 awiki.me 注册/发布并复用专用测试身份，Native 使用 Mock 支付；不将这些测试条件写成实际渠道或公共部署已通过。
 
@@ -62,4 +62,19 @@ MCP 测试投影仅描述工具的根对象参数；实际 Customer 仍执行完
 - 协议和对外接口系统测试：Core `platform/tests/system/pap03/run.py`；说明见该目录 README。
 - 实际 DSH Web / Chromium E2E：本仓库 `pnpm test:e2e:dsh`，说明见 [DSH E2E](tests/e2e/dsh/README.md)。覆盖域名浏览、卡片恢复、规格加购、邮箱、公共批准、原订单和实际咨询；工作台配置本轮不纳入。
 
-两类测试使用隔离资源；公共 PAP 的组件检查与真实 HTTP 系统用例分开计数。测试使用正式公共 Identity、本地 PAP 候选和 Native Mock；身份统一连接既有 awiki.me User Service，没有新部署 User Service 或对外 DSH 站点。
+两类测试使用隔离资源；公共 PAP 的组件检查与真实 HTTP 系统用例分开计数。测试使用正式公共 Identity、正式 PAP 0.1.6 和 Native Mock；身份统一连接既有 awiki.me User Service，没有新部署 User Service 或对外 DSH 站点。
+
+## 系统测试的公共包来源
+
+Frontvia 的系统／DSH E2E 测试默认使用本仓库锁定安装的正式 npm Identity 0.1.17、PAP 0.1.6；不读取相邻 `dsh-pap` 源码或构建产物，也不启动旧独立身份服务。身份始终使用 `https://awiki.me`。
+
+```sh
+node tests/support/public-pap.mjs
+pnpm check
+pnpm pack:local
+pnpm test:e2e:dsh
+```
+
+只有联调公共 PAP 时，显式设置 `FRONTVIA_PAP_TEST_PACKAGE_ROOT=/absolute/path/to/dsh-pap`，先在该目录完成构建，再用同一环境重打包和执行测试。候选路径缺失、包名错误或未构建时失败，不回退；输出标明 `explicit-local` 与实际版本，不能据此声称正式 npm 包已通过。默认正式包不会重建或修改公共仓库。
+
+旧 `docs/specs/`、`docs/implementation/`、`task_plan.md` 和 `progress.md` 的专用身份／PAP 0.2 内容只供历史追溯，不是当前安装或执行入口。现有身份、密钥、购物记录与结果未知交易不随源码清理删除。
