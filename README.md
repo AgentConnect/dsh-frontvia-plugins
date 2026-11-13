@@ -8,7 +8,17 @@ Frontvia 业务插件：商品、购物车、地址、报价、订单和咨询�
 | 公共 PAP | `@awiki/dsh-pap`；发现、Session、请求签名和一次操作批准 |
 | Customer | 本仓库 `packages/customer`；业务工具、卡片、报价核对及原 operation 恢复 |
 
-原 Frontvia 专属 Client/PAP 已退出当前构建。本地公共 PAP 候选基于 `0.1.4` 增加受限业务入口，尚未发布，不能用未修改的 npm `0.1.4` 冒充本候选。
+原 Frontvia 专属 Client/PAP 已退出当前构建。公共 PAP `0.1.5` 包含受限业务入口；Customer `0.1.1` 固定使用该版本，未修改的 npm `0.1.4` 不满足要求。
+
+## npm 安装与更新
+
+要求 Node.js >= 24.9.0、DSH runtime 0.2.2-rc.1。完全退出 DSH 后执行：
+
+```sh
+dsh plugin --profile web add @agent-network-protocol/dsh-anp-identity@0.1.16 @awiki/dsh-pap@0.1.5 dsh-frontvia-customer@0.1.1
+```
+
+已有 Profile 须按 Identity、PAP、Customer 顺序加载；启用 PAP 的 `enabled`、`autoConnect`，保留 `businessConsumers: ['dsh-frontvia-customer']`。Mac 上在 Identity 的 `domainAccess` 中显式设置 `secretStore: local-file`；PAP 默认 Secret Service 后端仅支持 Linux，不自动降级。Identity 自身的密钥后端无需修改。用户 Host 覆盖配置仍优先。
 
 ## 使用
 
@@ -38,7 +48,7 @@ pnpm pack:local
 
 ## 迁移状态
 
-公共身份、域名发现、Claude Code/DeepSeek 实际浏览、Core/Medusa 购物与公共一次批准、同域实际咨询的 focused 核心串联已通过。Customer 168 项与公共 PAP 147 项单测通过；这些结果不代表完整浏览器、真实支付渠道或跨平台验收。当前源码和候选配置的旧入口清理已完成；共享环境未切换，尚未部署或发布。当前进度见 Frontvia Core 的 `docs/plan/platform/pap03-shared-identity-domain-discovery-plan.md`。
+公共身份、域名发现、Claude Code/DeepSeek 实际浏览、Core/Medusa 购物与公共一次批准、同域实际咨询的 focused 核心串联已通过。Customer 168 项与公共 PAP 147 项单测通过；这些结果不代表完整浏览器、真实支付渠道或跨平台验收。当前源码和候选配置的旧入口清理已完成；npm 版本为 Customer 0.1.1 与公共 PAP 0.1.5，发布不自动切换共享环境或部署服务。当前进度见 Frontvia Core 的 `docs/plan/platform/pap03-shared-identity-domain-discovery-plan.md`。
 
 `docs/` 中此前的 0.2、手机号私有身份、三插件安装及测试记录属于历史交付，不能作为当前候选的安装或验收说明。
 

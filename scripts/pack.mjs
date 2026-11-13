@@ -22,22 +22,23 @@ for (const [folder, name] of bundles) {
   );
   if (result.error) throw result.error;
   if (result.status !== 0) process.exit(result.status ?? 1);
-  const path = resolve(out, `${name}-0.1.0.tgz`),
+  const { version } = JSON.parse(await readFile(resolve(folder, "package.json"), "utf8"));
+  const path = resolve(out, `${name}-${version}.tgz`),
     bytes = await readFile(path),
     sha256 = createHash("sha256").update(bytes).digest("hex");
   // pnpm caches local tarballs by URL. Content-addressed filenames prevent an
   // unchanged dev version from silently reinstalling an earlier bundle.
-  const immutable = resolve(out, `${name}-0.1.0-${sha256.slice(0, 12)}.tgz`);
+  const immutable = resolve(out, `${name}-${version}-${sha256.slice(0, 12)}.tgz`);
   await cp(path, immutable);
   artifacts.push({ name, path: immutable, sha256 });
 }
-// The public PAP patch is a local candidate, not an npm publication.
+// Local packaging never publishes either package to npm.
 const publicRoot=resolve(root,'../dsh-pap');
 const sdkBuild=spawn.sync('npm',['run','build'],{cwd:publicRoot,stdio:'inherit'});
 if(sdkBuild.error)throw sdkBuild.error;if(sdkBuild.status!==0)process.exit(sdkBuild.status??1);
 const sdkPack=spawn.sync('npm',['pack','--ignore-scripts','--json','--pack-destination',out],{cwd:publicRoot,encoding:'utf8'});
 if(sdkPack.error)throw sdkPack.error;if(sdkPack.status!==0)throw new Error('Public PAP local packaging failed');
-const sdk=JSON.parse(sdkPack.stdout)[0];if(sdk.name!=='@awiki/dsh-pap'||sdk.version!=='0.1.4')throw new Error('Public PAP candidate baseline changed');
+const sdk=JSON.parse(sdkPack.stdout)[0];if(sdk.name!=='@awiki/dsh-pap'||sdk.version!=='0.1.5')throw new Error('Public PAP candidate baseline changed');
 const sdkPath=resolve(out,sdk.filename),sdkBytes=await readFile(sdkPath),sdkHash=createHash('sha256').update(sdkBytes).digest('hex');
 const sdkImmutable=resolve(out,sdk.filename.replace(/\.tgz$/,'-'+sdkHash.slice(0,12)+'.tgz'));
 await cp(sdkPath,sdkImmutable);artifacts.push({name:'@awiki/dsh-pap',path:sdkImmutable,sha256:sdkHash,version:sdk.version,localPatch:true});

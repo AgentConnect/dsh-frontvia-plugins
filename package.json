@@ -39,7 +39,7 @@
     "tsx": "4.20.6",
     "typescript": "5.9.3",
     "zod": "4.3.6",
-    "@awiki/dsh-pap": "file:../dsh-pap",
+    "@awiki/dsh-pap": "0.1.5",
     "@agent-network-protocol/dsh-anp-identity": "0.1.16"
   }
 }

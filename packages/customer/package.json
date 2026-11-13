@@ -1,7 +1,6 @@
 {
   "name": "dsh-frontvia-customer",
-  "version": "0.1.0",
-  "private": true,
+  "version": "0.1.1",
   "type": "module",
   "main": "dist/index.js",
   "types": "src/index.ts",
@@ -53,7 +52,7 @@
     "@deepseek-ai/dsh-tools": "0.2.2-rc.1",
     "react": "^18.3.1",
     "react-dom": "18.3.1",
-    "@awiki/dsh-pap": "0.1.4",
+    "@awiki/dsh-pap": "0.1.5",
     "@agent-network-protocol/dsh-anp-identity": "0.1.16"
   },
   "dependencies": {
@@ -65,8 +64,17 @@
   },
   "devDependencies": {
     "react-dom": "18.3.1",
-    "@awiki/dsh-pap": "file:../../../dsh-pap",
+    "@awiki/dsh-pap": "0.1.5",
     "@agent-network-protocol/dsh-anp-identity": "0.1.16"
   },
-  "description": "Frontvia 商品、购物车、购买确认、订单及咨询插件。"
+  "description": "Frontvia 商品、购物车、购买确认、订单及咨询插件。",
+  "publishConfig": {
+    "access": "public",
+    "registry": "https://registry.npmjs.org"
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/AgentConnect/dsh-frontvia-plugins.git",
+    "directory": "packages/customer"
+  }
 }

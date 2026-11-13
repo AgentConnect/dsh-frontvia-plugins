@@ -8,9 +8,9 @@ Frontvia 身份服务、`identity-config.json`、手工 CIMD/JWKS 或购买签�
 
 - DSH Host：`0.2.2-rc.1`（Host 版本，不是 PAP 协议版本）。
 - 公共 Identity：`@agent-network-protocol/dsh-anp-identity@0.1.16`。
-- 公共 PAP：相邻 `../dsh-pap` 的本地候选，基于正式 `@awiki/dsh-pap@0.1.4`；
-  当前业务入口补丁尚未发布。未修改的 npm 0.1.4 不支持 Customer 当前入口。
-- Customer：本仓库构建的 `dsh-frontvia-customer`。
+- 公共 PAP：`@awiki/dsh-pap@0.1.5`，包含 Customer 所需受控业务入口。
+  未修改的 npm 0.1.4 不支持该入口。
+- Customer：`dsh-frontvia-customer@0.1.1`。
 
 公共 PAP 的 Host 配置需启用 `enabled`、`autoConnect`，并将实际安装包
 `dsh-frontvia-customer` 加入 `businessConsumers`。安装器提供这项配置；用户 Profile
@@ -59,3 +59,9 @@ CNY 内嵌支付调用发现的 `commerce.payments.hosted.start`，仅使用原�
 美国店铺的人工交付订单仍需要联系邮箱，卡片提供独立邮箱表单，不要求收货地址；中国大陆人工交付沿用现有联系要求。邮箱经 Owner UI 保存，不交给模型填写。
 
 身份测试默认 `https://awiki.me`，通过 `python3 tests/support/read-awiki-me-auth.py` 只读当前部署的测试手机号/OTP 配置。值仅保存在被 Git 忽略的受保护文件，真实身份注册、公钥发布及回读使用线上服务；专用身份的本地密钥与必要注册恢复材料保留以便复用，不修改线上服务配置。
+
+## macOS 凭据后端
+
+自动域名接入须在公共 Identity 的 `domainAccess` 中显式设置 `secretStore: local-file`。
+PAP 默认后端仅支持 Linux Secret Service；文件后端的目录为 0700、文件为 0600，
+不等同于 Keychain 隔离，不改变 Identity Provider 密钥后端，也不自动迁移既有凭据。

@@ -12,8 +12,8 @@ importers:
         specifier: 0.1.16
         version: 0.1.16(@deepseek-ai/cordis@4.1.0)(@deepseek-ai/dsh-api-remotes@0.2.2-rc.1(@deepseek-ai/cordis@4.1.0)(@deepseek-ai/dsh-scope@0.2.2-rc.1(@deepseek-ai/cordis@4.1.0)))(@deepseek-ai/dsh-client-connection@0.2.2-rc.1(@deepseek-ai/cordis@4.1.0)(@deepseek-ai/dsh-scope@0.2.2-rc.1(@deepseek-ai/cordis@4.1.0)))(@deepseek-ai/dsh-client-ui-layout@0.2.2-rc.1(@deepseek-ai/cordis@4.1.0))(@deepseek-ai/dsh-client-ui-renderer@0.2.2-rc.1(@deepseek-ai/cordis@4.1.0))(@deepseek-ai/dsh-client-ui-settings@0.2.2-rc.1(@deepseek-ai/cordis@4.1.0))(@deepseek-ai/dsh-credentials@0.2.2-rc.1(@deepseek-ai/cordis@4.1.0))(@deepseek-ai/dsh-system-prompt@0.2.2-rc.1(@deepseek-ai/cordis@4.1.0)(@deepseek-ai/dsh-llm@0.2.2-rc.1(@deepseek-ai/cordis@4.1.0))(@deepseek-ai/dsh-scope@0.2.2-rc.1(@deepseek-ai/cordis@4.1.0)))(@deepseek-ai/dsh-tools@0.2.2-rc.1(71e9b8099add9aaf7bb42662f07c41a3))(@deepseek-ai/dsh-typert-protocol@0.2.2-rc.1(@deepseek-ai/cordis@4.1.0))(react@18.3.1)
       '@awiki/dsh-pap':
-        specifier: file:../dsh-pap
-        version: file:../dsh-pap(398777274573ca16f2d6c095b1d7f9fb)
+        specifier: 0.1.5
+        version: 0.1.5(398777274573ca16f2d6c095b1d7f9fb)
       '@deepseek-ai/cordis':
         specifier: 4.1.0
         version: 4.1.0(@deepseek-ai/cordis-plugin-include@1.1.0)(@deepseek-ai/cordis-plugin-loader@1.1.0)
@@ -118,8 +118,8 @@ importers:
         specifier: 0.1.16
         version: 0.1.16(@deepseek-ai/cordis@4.1.0)(@deepseek-ai/dsh-api-remotes@0.2.2-rc.1(@deepseek-ai/cordis@4.1.0)(@deepseek-ai/dsh-scope@0.2.2-rc.1(@deepseek-ai/cordis@4.1.0)))(@deepseek-ai/dsh-client-connection@0.2.2-rc.1(@deepseek-ai/cordis@4.1.0)(@deepseek-ai/dsh-scope@0.2.2-rc.1(@deepseek-ai/cordis@4.1.0)))(@deepseek-ai/dsh-client-ui-layout@0.2.2-rc.1(@deepseek-ai/cordis@4.1.0))(@deepseek-ai/dsh-client-ui-renderer@0.2.2-rc.1(@deepseek-ai/cordis@4.1.0))(@deepseek-ai/dsh-client-ui-settings@0.2.2-rc.1(@deepseek-ai/cordis@4.1.0))(@deepseek-ai/dsh-credentials@0.2.2-rc.1(@deepseek-ai/cordis@4.1.0))(@deepseek-ai/dsh-system-prompt@0.2.2-rc.1(@deepseek-ai/cordis@4.1.0)(@deepseek-ai/dsh-llm@0.2.2-rc.1(@deepseek-ai/cordis@4.1.0))(@deepseek-ai/dsh-scope@0.2.2-rc.1(@deepseek-ai/cordis@4.1.0)))(@deepseek-ai/dsh-tools@0.2.2-rc.1(71e9b8099add9aaf7bb42662f07c41a3))(@deepseek-ai/dsh-typert-protocol@0.2.2-rc.1(@deepseek-ai/cordis@4.1.0))(react@18.3.1)
       '@awiki/dsh-pap':
-        specifier: file:../../../dsh-pap
-        version: file:../dsh-pap(398777274573ca16f2d6c095b1d7f9fb)
+        specifier: 0.1.5
+        version: 0.1.5(398777274573ca16f2d6c095b1d7f9fb)
       react-dom:
         specifier: 18.3.1
         version: 18.3.1(react@18.3.1)
@@ -219,8 +219,8 @@ packages:
       zod:
         optional: true
 
-  '@awiki/dsh-pap@file:../dsh-pap':
-    resolution: {directory: ../dsh-pap, type: directory}
+  '@awiki/dsh-pap@0.1.5':
+    resolution: {integrity: sha512-7vi9uvPbw7TYK9FtQgan7yGAfiLU4jfH5pxv/PbDYQ6OitdyblGRk6foWauWX2Urik0L1efliPIWohTNM+9yIQ==}
     engines: {node: ^22.19.0 || >=24.0.0}
     peerDependencies:
       '@agent-network-protocol/dsh-anp-identity': '>=0.1.15'
@@ -4815,7 +4815,7 @@ snapshots:
     optionalDependencies:
       zod: 4.3.6
 
-  '@awiki/dsh-pap@file:../dsh-pap(398777274573ca16f2d6c095b1d7f9fb)':
+  '@awiki/dsh-pap@0.1.5(398777274573ca16f2d6c095b1d7f9fb)':
     dependencies:
       '@deepseek-ai/cordis': 4.1.0(@deepseek-ai/cordis-plugin-include@1.1.0)(@deepseek-ai/cordis-plugin-loader@1.1.0)
       proper-lockfile: 4.1.2
