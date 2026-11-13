@@ -29,7 +29,7 @@ const artifacts = JSON.parse(
 const names = artifacts.artifacts.map(item=>item.name);
 const identityName='@agent-network-protocol/dsh-anp-identity';
 const identityVersion=artifacts.identityVersion;
-if(identityVersion!=='0.1.16')throw new Error('Rebuild the matched public identity candidate before installation');
+if(!/^\d+\.\d+\.\d+$/.test(identityVersion ?? ''))throw new Error('Rebuild the matched public identity candidate before installation');
 let replacingLegacy = [];
 const locks = { waitMs: 120000 };
 
@@ -119,7 +119,7 @@ async function rollback(previous, pair) {
       const current = await snapshot();
       const before = JSON.parse(previous.manifest).dependencies ?? {};
       const after = JSON.parse(current.manifest).dependencies ?? {};
-      if (before[identityName]!==after[identityName]&&!['0.1.16','^0.1.16','~0.1.16'].includes(after[identityName]))throw new Error('Public identity dependency changed concurrently');
+      if (before[identityName]!==after[identityName]&&![identityVersion,'^'+identityVersion,'~'+identityVersion].includes(after[identityName]))throw new Error('Public identity dependency changed concurrently');
       if (
         !isDeepStrictEqual(
           otherPackages(previous.manifest),

@@ -7,10 +7,10 @@ Frontvia 身份服务、`identity-config.json`、手工 CIMD/JWKS 或购买签�
 ## 依赖与 Host 配置
 
 - DSH Host：`0.2.2-rc.1`（Host 版本，不是 PAP 协议版本）。
-- 公共 Identity：`@agent-network-protocol/dsh-anp-identity@0.1.16`。
-- 公共 PAP：`@awiki/dsh-pap@0.1.5`，包含 Customer 所需受控业务入口。
-  未修改的 npm 0.1.4 不支持该入口。
-- Customer：`dsh-frontvia-customer@0.1.1`。
+- 公共 Identity：`@agent-network-protocol/dsh-anp-identity >=0.1.17`。
+- 公共 PAP：`@awiki/dsh-pap >=0.1.6`，包含 Customer 所需受控业务入口。
+  开发与发布验证使用正式 npm 0.1.6。
+- Customer：`dsh-frontvia-customer@0.1.2`。
 
 公共 PAP 的 Host 配置需启用 `enabled`、`autoConnect`，并将实际安装包
 `dsh-frontvia-customer` 加入 `businessConsumers`。安装器提供这项配置；用户 Profile
@@ -19,6 +19,20 @@ Frontvia 身份服务、`identity-config.json`、手工 CIMD/JWKS 或购买签�
 
 安装和本地打包命令见 [仓库 README](../README.md)。安装必须显式执行；开发、
 构建和打包本身不会修改用户 Profile、发布公共包或部署服务。
+
+
+首次使用须在当前 Profile 的 `cordis.patch.yml` 中显式开启域名接入（合并到已有同 ID 配置）：
+
+```yaml
+- id: anp-identity
+  config:
+    domainAccess:
+      enabled: true
+      scopes: []
+      secretStore: local-file
+```
+
+`local-file` 适用于 Mac 的 PAP 会话存储，不更改 Identity 私钥后端。保存后完全退出并重启 DSH，在公共 Identity 设置中创建／选择 awiki.me 身份、设为默认身份，并在协议管理中授权店铺域名。仅安装插件不会自动开启全局域名接入。
 
 ## 零商家配置
 

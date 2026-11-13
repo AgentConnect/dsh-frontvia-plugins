@@ -1,6 +1,6 @@
 {
   "name": "dsh-frontvia-customer",
-  "version": "0.1.1",
+  "version": "0.1.2",
   "type": "module",
   "main": "dist/index.js",
   "types": "src/index.ts",
@@ -52,8 +52,8 @@
     "@deepseek-ai/dsh-tools": "0.2.2-rc.1",
     "react": "^18.3.1",
     "react-dom": "18.3.1",
-    "@awiki/dsh-pap": "0.1.5",
-    "@agent-network-protocol/dsh-anp-identity": "0.1.16"
+    "@awiki/dsh-pap": ">=0.1.6",
+    "@agent-network-protocol/dsh-anp-identity": ">=0.1.17"
   },
   "dependencies": {
     "@radix-ui/react-tabs": "1.2.1",
@@ -64,8 +64,8 @@
   },
   "devDependencies": {
     "react-dom": "18.3.1",
-    "@awiki/dsh-pap": "0.1.5",
-    "@agent-network-protocol/dsh-anp-identity": "0.1.16"
+    "@awiki/dsh-pap": "0.1.6",
+    "@agent-network-protocol/dsh-anp-identity": "0.1.17"
   },
   "description": "Frontvia 商品、购物车、购买确认、订单及咨询插件。",
   "publishConfig": {

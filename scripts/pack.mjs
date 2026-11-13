@@ -1,6 +1,7 @@
 import { mkdir, readFile, writeFile, cp } from "node:fs/promises";
 import spawn from "cross-spawn";
-import { resolve } from "node:path";
+import { dirname, resolve } from "node:path";
+import { createRequire } from "node:module";
 import { createHash } from "node:crypto";
 import { pluginPackages } from "./plugin-packages.mjs";
 import { assertBundleInputs } from "./package-inputs.mjs";
@@ -33,15 +34,14 @@ for (const [folder, name] of bundles) {
   artifacts.push({ name, path: immutable, sha256 });
 }
 // Local packaging never publishes either package to npm.
-const publicRoot=resolve(root,'../dsh-pap');
-const sdkBuild=spawn.sync('npm',['run','build'],{cwd:publicRoot,stdio:'inherit'});
-if(sdkBuild.error)throw sdkBuild.error;if(sdkBuild.status!==0)process.exit(sdkBuild.status??1);
+const require = createRequire(resolve(root, 'package.json'));
+const publicRoot=dirname(require.resolve('@awiki/dsh-pap/package.json'));
 const sdkPack=spawn.sync('npm',['pack','--ignore-scripts','--json','--pack-destination',out],{cwd:publicRoot,encoding:'utf8'});
 if(sdkPack.error)throw sdkPack.error;if(sdkPack.status!==0)throw new Error('Public PAP local packaging failed');
-const sdk=JSON.parse(sdkPack.stdout)[0];if(sdk.name!=='@awiki/dsh-pap'||sdk.version!=='0.1.5')throw new Error('Public PAP candidate baseline changed');
+const sdk=JSON.parse(sdkPack.stdout)[0];if(sdk.name!=='@awiki/dsh-pap'||sdk.version!==require('./package.json').devDependencies['@awiki/dsh-pap'])throw new Error('Public PAP candidate baseline changed');
 const sdkPath=resolve(out,sdk.filename),sdkBytes=await readFile(sdkPath),sdkHash=createHash('sha256').update(sdkBytes).digest('hex');
 const sdkImmutable=resolve(out,sdk.filename.replace(/\.tgz$/,'-'+sdkHash.slice(0,12)+'.tgz'));
-await cp(sdkPath,sdkImmutable);artifacts.push({name:'@awiki/dsh-pap',path:sdkImmutable,sha256:sdkHash,version:sdk.version,localPatch:true});
+await cp(sdkPath,sdkImmutable);artifacts.push({name:'@awiki/dsh-pap',path:sdkImmutable,sha256:sdkHash,version:sdk.version,localPatch:false});
 await writeFile(
   resolve(out, "manifest.json"),
   JSON.stringify(
@@ -49,7 +49,7 @@ await writeFile(
       runtime: JSON.parse(await readFile(resolve("package.json"), "utf8"))
         .devDependencies["@deepseek-ai/dsh"],
       publication: "local-only",
-      identityVersion: "0.1.16",
+      identityVersion: require('@agent-network-protocol/dsh-anp-identity/package.json').version,
       artifacts,
     },
     null,
