@@ -65,3 +65,9 @@ CNY 内嵌支付调用发现的 `commerce.payments.hosted.start`，仅使用原�
 自动域名接入须在公共 Identity 的 `domainAccess` 中显式设置 `secretStore: local-file`。
 PAP 默认后端仅支持 Linux Secret Service；文件后端的目录为 0700、文件为 0600，
 不等同于 Keychain 隔离，不改变 Identity Provider 密钥后端，也不自动迁移既有凭据。
+
+## 重启后的卡片恢复
+
+Customer 依赖公共 PAP 的业务状态读取恢复当前公共身份的本地连接，再校验旧卡片的归属。
+该恢复不重新连接商家，不恢复用户已断开的 Session。身份切换、授权撤销或连接断开
+仍会拒绝旧卡片；这不等同于 DSH 个人账号退出。

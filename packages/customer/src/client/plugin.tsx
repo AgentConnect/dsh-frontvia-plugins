@@ -114,7 +114,7 @@ const errorText: Record<string, string> = {
   PAYMENT_LINK_UNAVAILABLE: "原订单付款入口已过期或暂不可用，请刷新核对。",
   INVALID_PAYMENT_LINK: "付款入口暂不可用，请刷新原订单。",
   INVALID_PAYMENT_QR: "二维码未通过核对，请刷新原订单后重试。",
-  PERSONAL_ACCOUNT_CHANGED: "请登录原个人账号后查看此记录。",
+  PERSONAL_ACCOUNT_CHANGED: "当前公共身份或商家连接与此记录不匹配，请检查身份及 PAP 连接后重新加载。",
   PERSONAL_LOGIN_REQUIRED: "请在公共身份/PAP 设置中选择身份并授权接入。",
   PERSONAL_CHAT_ACCOUNT_CHANGED: "此聊天已用于另一账号，请新建聊天后连接商家。",
   FLOW_NOT_OWNED: "这份购物进度不属于当前会话，请回到原聊天查看。",
