@@ -9,6 +9,8 @@ export function orderStatus(order: any): {
   label: string;
   variant: "secondary" | "success" | "warning";
 } {
+  const labels:Record<string,string>={awaiting_payment:'待付款',awaiting_fulfillment:'待履约',fulfilling:'履约中',awaiting_completion:'待商家确认完成',completed:'已完成',closing:'退款后关闭中',awaiting_closure:'退款后待结案',closed_refunded:'已关闭（已退款）',canceled:'已取消',attention:'需要处理',draft:'草稿',archived:'已归档'};
+  if(typeof order.business_status==='string')return {label:labels[order.business_status]??'状态待核对',variant:order.business_status==='completed'?'success':['attention','awaiting_payment','awaiting_closure'].includes(order.business_status)?'warning':'secondary'};
   if (order.status === "canceled")
     return { label: "已取消", variant: "secondary" };
   const payment = order.payment?.status;
@@ -28,8 +30,9 @@ export function orderStatus(order: any): {
     };
   if (payment === "failed") return { label: "支付失败", variant: "warning" };
   if (payment === "pending") return { label: "支付处理中", variant: "warning" };
-  if (order.fulfillment_status === "delivered" || order.status === "completed")
+  if (order.status === "completed")
     return { label: "已完成", variant: "success" };
+  if (order.fulfillment_status === "delivered")return {label:"已交付 · 待商家确认",variant:"secondary"};
   if (order.fulfillment_status === "shipped")
     return { label: "已发货", variant: "secondary" };
   if (["paid", "captured"].includes(payment))

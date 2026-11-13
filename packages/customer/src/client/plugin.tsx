@@ -82,6 +82,7 @@ import {
 } from "./ui.js";
 // @ts-ignore esbuild loads CSS as text.
 import styles from "./styles.css";
+import { ConnectionHelp } from "./connection-help.js";
 import { ConsultationCard } from "./consultation.js";
 export const inject = [
   "slots",
@@ -129,6 +130,7 @@ const errorText: Record<string, string> = {
   RESOLVE_PENDING_OPERATION: "上次操作结果尚未明确，请先核对原结果。",
   ORIGINAL_RESULT_UNKNOWN:
     "暂未查到原操作记录，请稍后再次核对。当前不会重复提交该操作。",
+  PAP_DISCONNECTED: "连接已断开，请在 DSH“设置 → PAP 连接”重新连接，再回来重新加载。",
   CONNECTION_DISCONNECTED: "连接已断开，请在 PAP 连接页重新连接。",
   CONNECTION_BINDING_CHANGED:
     "PAP 连接配置已变化，请先在连接页核对原配置。购物记录已保留。",
@@ -1305,13 +1307,15 @@ export function apply(ctx: any) {
     );
   }
   function Panel() {
+    const [help, setHelp] = useState(false);
     return (
       <>
         <style>{styles}</style>
+        <ConnectionHelp open={help} close={() => setHelp(false)} />
         <ServicePage
-          openAccount={() => ctx.layout.selectPanel("settings")}
+          openAccount={() => setHelp(true)}
           call={call}
-          openConnections={() => ctx.layout.selectPanel("settings")}
+          openConnections={() => setHelp(true)}
           renderFlow={(ui, startShopping, addedQuantity, initialError) => (
             <FlowCard
               key={ui.flowId}
@@ -1358,13 +1362,18 @@ export function apply(ctx: any) {
     initialError?: string;
     catalog?: CatalogSnapshot;
   }) {
+    const [help, setHelp] = useState(false);
     return ui.card === "consultation" ? (
       <section
         className={`fv${resume ? "" : " fv-inline"}`}
         aria-label="Frontvia 商家咨询"
       >
         <style>{styles}</style>
-        <ConsultationCard ui={ui} call={call} sendToAgent={sendToAgent} />
+        <ConnectionHelp open={help} close={() => setHelp(false)} />
+        <ConsultationCard ui={ui} call={call} sendToAgent={sendToAgent}
+          openPlugins={() => ctx.layout.selectPanel("plugins")}
+          openSettings={() => setHelp(true)}
+          openServices={() => ctx.layout.selectPanel("frontvia-customer")} />
       </section>
     ) : (
       <Shopping

@@ -58,3 +58,10 @@ test("order list deduplicates the current order and enriches only this flow's li
     ["unknown"],
   );
 });
+
+test('domain progress wins over refund or shipment shorthand; delivery is not completion',()=>{
+ assert.equal(orderStatus({business_status:'awaiting_closure',status:'completed',payment:{status:'refunded'}}).label,'退款后待结案');
+ assert.equal(orderStatus({business_status:'closed_refunded',status:'canceled'}).label,'已关闭（已退款）');
+ assert.notEqual(orderStatus({fulfillment_status:'delivered',payment:{status:'paid'}}).label,'已完成');
+ assert.equal(orderStatus({business_status:'fulfilling',payment:{status:'partially_refunded'}}).label,'履约中');
+});
