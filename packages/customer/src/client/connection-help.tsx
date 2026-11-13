@@ -26,7 +26,8 @@ export function ConnectionHelp({
         <li>
           在“身份管理”选择已发布的默认公共身份；没有可用身份时，先按页面引导创建并发布。
         </li>
-        <li>在“协议管理”检查 PAP 接入授权。首次接入时，在新会话中提供店铺域名；已连接的商家可从 Frontvia 服务打开。</li>
+        <li>在“协议管理”检查 PAP 接入授权；已断开的商家须在“PAP 连接”中点“重新连接”。</li>
+        <li>首次接入时，在会话中提供店铺域名；已连接的商家可从 Frontvia 服务打开。</li>
       </ol>
       <p>旧手机号连接的记录不会自动转给新公共身份，原聊天内容仍会保留。</p>
       <Button variant="outline" onClick={() => dialog.current?.close()}>

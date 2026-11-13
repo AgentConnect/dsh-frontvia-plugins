@@ -13,7 +13,7 @@ const require=createRequire(join(root,'package.json'));
 const hostRequire=createRequire(require.resolve('@deepseek-ai/dsh/package.json'));
 const identityRoot=dirname(require.resolve('@agent-network-protocol/dsh-anp-identity/package.json'));
 process.env.PYTHONDONTWRITEBYTECODE='1';
-assert.equal(require('@agent-network-protocol/dsh-anp-identity/package.json').version,'0.1.16');
+assert.equal(require('@agent-network-protocol/dsh-anp-identity/package.json').version,'0.1.17');
 const nativeRequire=createRequire(join(identityRoot,'package.json'));
 assert.equal(nativeRequire(join(dirname(nativeRequire.resolve('@agent-network-protocol/anp-identity/provider')),'package.json')).version,'0.2.6');
 
@@ -31,7 +31,7 @@ let fixture;
 let publisher;
 let stage='public_identity_registration';
 try{
-  console.log(JSON.stringify({stage,identityVersion:'0.1.16',nativeVersion:'0.2.6'}));
+  console.log(JSON.stringify({stage,identityVersion:'0.1.17',nativeVersion:'0.2.6'}));
   const commerce=process.argv[2]?JSON.parse(await readFile(process.argv[2],'utf8')):undefined;
   const {awikiMeIdentity}=await import('../tests/support/awiki-me-identity.mjs');
   fixture=await awikiMeIdentity();
@@ -41,7 +41,7 @@ try{
   assert.equal(new URL(metadata.client_id).origin,'https://awiki.me');
   assert.equal(fixture.evidence.observations.deviceAuthorizationRequests,0);
   assert(fixture.evidence.excludesInternalCredentials({metadata,jwks}));
-  console.log(JSON.stringify({status:'passed',case:'public-native-identity-register-publish',identityVersion:'0.1.16',nativeVersion:'0.2.6',
+  console.log(JSON.stringify({status:'passed',case:'public-native-identity-register-publish',identityVersion:'0.1.17',nativeVersion:'0.2.6',
     boundary:'Live awiki.me User Service and public CIMD/JWKS; protected dedicated test identity retained, local-file custody. No production service configuration changes.'}));
   if(commerce){
     stage='public_identity_https';

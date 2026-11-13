@@ -40,7 +40,7 @@ export async function runDsh({fixture,commerce,root}){
   const network=join(modules,'frontvia-e2e-network');await mkdir(network);
   await writeFile(join(network,'package.json'),JSON.stringify({name:'frontvia-e2e-network',version:'0.0.0',dsh:{bundle:{patch:'./cordis.patch.yml'}}}));
   await writeFile(join(network,'cordis.patch.yml'),JSON.stringify([{insert:[{id:'frontvia-e2e-network',name:join(root,'tests/e2e/dsh/network.mjs'),config:{ca:commerce.ca,origin:commerce.origin,transportModule:resolve(root,'../dsh-pap/lib/network.js')}}]}]));
-  await writeFile(join(profile,'package.json'),JSON.stringify({name:'frontvia-e2e-profile',private:true,dependencies:{'@agent-network-protocol/dsh-anp-identity':'0.1.16','@awiki/dsh-pap':'file:'+packs.artifacts.find(a=>a.name==='@awiki/dsh-pap').path,'dsh-frontvia-customer':'file:'+packs.artifacts.find(a=>a.name==='dsh-frontvia-customer').path},
+  await writeFile(join(profile,'package.json'),JSON.stringify({name:'frontvia-e2e-profile',private:true,dependencies:{'@agent-network-protocol/dsh-anp-identity':packs.identityVersion,'@awiki/dsh-pap':'file:'+packs.artifacts.find(a=>a.name==='@awiki/dsh-pap').path,'dsh-frontvia-customer':'file:'+packs.artifacts.find(a=>a.name==='dsh-frontvia-customer').path},
     dsh:{profile:{bundles:['@deepseek-ai/dsh-base','frontvia-e2e-network','@deepseek-ai/dsh-web-app','@agent-network-protocol/dsh-anp-identity','@awiki/dsh-pap','dsh-frontvia-customer']}}}));
   const customerConfig=join(fixture.root,'dsh-customer.json');
   await writeFile(customerConfig,JSON.stringify({dataDir:join(fixture.root,'dsh-customer'),storageKeyRef:'FRONTVIA_E2E_STATE',sites:[]}),{mode:0o600});

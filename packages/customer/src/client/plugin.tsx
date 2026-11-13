@@ -115,7 +115,7 @@ const errorText: Record<string, string> = {
   PAYMENT_LINK_UNAVAILABLE: "原订单付款入口已过期或暂不可用，请刷新核对。",
   INVALID_PAYMENT_LINK: "付款入口暂不可用，请刷新原订单。",
   INVALID_PAYMENT_QR: "二维码未通过核对，请刷新原订单后重试。",
-  PERSONAL_ACCOUNT_CHANGED: "请在设置中选择这条记录原先使用的公共身份；使用新身份时，请新建聊天后连接商家。",
+  PERSONAL_ACCOUNT_CHANGED: "当前公共身份或商家连接与此记录不匹配，请检查身份及 PAP 连接后重新加载。",
   PERSONAL_LOGIN_REQUIRED: "请在公共身份/PAP 设置中选择身份并授权接入。",
   PERSONAL_CHAT_ACCOUNT_CHANGED: "此聊天已用于另一账号，请新建聊天后连接商家。",
   FLOW_NOT_OWNED: "这份购物进度不属于当前会话，请回到原聊天查看。",
@@ -130,6 +130,7 @@ const errorText: Record<string, string> = {
   RESOLVE_PENDING_OPERATION: "上次操作结果尚未明确，请先核对原结果。",
   ORIGINAL_RESULT_UNKNOWN:
     "暂未查到原操作记录，请稍后再次核对。当前不会重复提交该操作。",
+  PAP_DISCONNECTED: "连接已断开，请在 DSH“设置 → PAP 连接”重新连接，再回来重新加载。",
   CONNECTION_DISCONNECTED: "连接已断开，请在 PAP 连接页重新连接。",
   CONNECTION_BINDING_CHANGED:
     "PAP 连接配置已变化，请先在连接页核对原配置。购物记录已保留。",

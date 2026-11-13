@@ -198,7 +198,8 @@ export class CustomerService {
     const f = this.vault.get<Flow>(`flow:${flowId}`);
     if (!f || f.sessionId !== sessionId) fail("FLOW_NOT_OWNED");
     if (this.pap.canAccess?.(f.connectionRef) === false)
-      fail("PERSONAL_ACCOUNT_CHANGED");
+      fail(this.pap.isCurrentIdentity?.(f.connectionRef) === true
+        ? "PAP_DISCONNECTED" : "PERSONAL_ACCOUNT_CHANGED");
     const submitted = f.intent?.token && f.commands[f.intent.key];
     if (!f.pending && submitted && submitted.status === "done") {
       this.retireFailedConfirmation(f, submitted, submitted.result?.operation);
@@ -358,10 +359,9 @@ export class CustomerService {
   }
   async connect(sessionId: string, siteId: string) {
     if (!sessionId || sessionId.length > 200) fail("SESSION_REQUIRED");
-    // Public PAP initializes on explicit domain connection after a Host restart.
-    // Restore its identity before comparing chat ownership; no business reads
-    // or saved flow data are exposed until the ownership check below passes.
-    await this.pap.prepareDomain?.(siteId);
+    // Public PAP restores local lifecycle state without reconnecting a Company.
+    // Check chat ownership before explicit discovery or business reads.
+    await this.pap.refresh?.();
     // A DSH chat retains its model context. Do not mix a second personal
     // account into a chat containing the first account's tool responses.
     for (const prefix of ["flow:", "consultation:"]) {
@@ -379,6 +379,7 @@ export class CustomerService {
           fail("PERSONAL_CHAT_ACCOUNT_CHANGED");
       }
     }
+    await this.pap.prepareDomain?.(siteId);
     const site = this.pap.sites().find((s) => s.id === siteId);
     if (consultationSite(site) && !site?.description?.methods.includes("commerce.capabilities.get"))
       return this.consultation.connect(sessionId, siteId);

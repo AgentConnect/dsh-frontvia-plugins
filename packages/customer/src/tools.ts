@@ -217,6 +217,8 @@ export function tools(service: CustomerService) {
                   ? "商家拒绝了当前 PAP Session。该码不能确定是旧会话、签名或服务端域名配置问题；不要让用户重新注册、反复登录或自动重试。保留错误码并核对商家连接。"
                   : e instanceof PapError && e.code === "PAP_CREDENTIAL_UNAVAILABLE"
                     ? "PAP 无法使用本机凭证。检查已发布默认身份和 PAP 安全存储后端；该码不代表必须重新注册身份，不读取或展示密钥。"
+                    : e instanceof PapError && e.code === "PAP_DISCONNECTED"
+                      ? "连接已断开，请用户在 DSH 设置的 PAP 连接中点击重新连接；不要自动恢复连接或重放购买。"
                     : e instanceof PapError && ["PAP_DEFAULT_IDENTITY_REQUIRED","PAP_PUBLISHED_IDENTITY_REQUIRED","PAP_DOMAIN_ACCESS_DISABLED","PAP_PERMISSION_DENIED","PUBLIC_PAP_UPDATE_REQUIRED"].includes(e.code)
                   ? "请用户在公共 Identity/PAP 设置核对默认身份、域名接入授权或公共包版本；无需填写商家链接，不索取账号凭据。"
                   : e instanceof PapError && ["IDENTITY_CHANGED","PERSONAL_ACCOUNT_CHANGED","PERSONAL_CHAT_ACCOUNT_CHANGED"].includes(e.code)

@@ -34,17 +34,30 @@ export function serviceFeedback(error: unknown) {
     };
   if (
     [
-      "PERSONAL_ACCOUNT_CHANGED",
       "IDENTITY_CHANGED",
       "PERSONAL_LOGIN_REQUIRED",
       "PUBLIC_IDENTITY_REQUIRED",
       "PAP_IDENTITY_REQUIRED",
       "PAP_PERMISSION_DENIED",
+      "PAP_DEFAULT_IDENTITY_REQUIRED",
+      "PAP_DEFAULT_IDENTITY_CHANGED",
+      "PAP_PUBLISHED_IDENTITY_REQUIRED",
+      "PAP_DOMAIN_ACCESS_DISABLED",
+      "PAP_DOMAIN_ACCESS_EXPIRED",
+      "PAP_CONSUMER_FORBIDDEN",
     ].includes(code)
   )
     return {
       code,
       text: "当前身份无法访问这条咨询。请先核对默认公共身份和 PAP 授权；旧手机号连接的记录不能直接用新身份恢复。",
+      action: "settings",
+      label: "查看设置步骤",
+      retry: true,
+    };
+  if (["PAP_DISCONNECTED", "PERSONAL_ACCOUNT_CHANGED"].includes(code))
+    return {
+      code,
+      text: "请在 DSH“设置 → PAP 连接”检查商家连接；已断开时点击“重新连接”，再回来重新加载。若身份与原记录不同，请先选择原公共身份。",
       action: "settings",
       label: "查看设置步骤",
       retry: true,
@@ -61,7 +74,6 @@ export function serviceFeedback(error: unknown) {
     [
       "CONSULTATION_UNAVAILABLE",
       "CLIENT_NOT_ALLOWED",
-      "PAP_DISCONNECTED",
       "METHOD_NOT_ADVERTISED",
       "PAP_OPERATION_NOT_FOUND",
     ].includes(code)

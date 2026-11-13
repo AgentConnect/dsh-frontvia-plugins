@@ -1,6 +1,27 @@
 # dsh-frontvia-customer
 
-Frontvia shopping tools and native chat cards for DeepSeek Harness 0.2.2-rc.1. Requires public Identity and public DSH PAP with the local business-consumer patch described in the repository README. PAP 0.3 handles discovery, request signing and final purchase approval; Customer keeps shopping and consultation cards. Merchant configuration may be empty: provide the shop domain in the conversation.
+Frontvia shopping tools and native chat cards for DeepSeek Harness 0.2.2-rc.1. Requires public Identity >=0.1.17 and public DSH PAP >=0.1.6. Install all three published plugins in the same DSH profile; no sibling source checkout is required. PAP 0.3 handles discovery, request signing and final purchase approval; Customer keeps shopping and consultation cards. Merchant configuration may be empty: provide the shop domain in the conversation.
+
+## Install and connect
+
+```sh
+dsh plugin --profile desktop add @agent-network-protocol/dsh-anp-identity@0.1.17 @awiki/dsh-pap@0.1.6 dsh-frontvia-customer@0.1.2
+```
+
+首次使用须在当前 Profile 的 `cordis.patch.yml` 中显式开启域名接入（合并到已有同 ID 配置）：
+
+```yaml
+- id: anp-identity
+  config:
+    domainAccess:
+      enabled: true
+      scopes: []
+      secretStore: local-file
+```
+
+`local-file` 适用于 Mac 的 PAP 会话存储，不更改 Identity 私钥后端。保存后完全退出并重启 DSH，在公共 Identity 设置中创建／选择 awiki.me 身份、设为默认身份，并在协议管理中授权店铺域名。仅安装插件不会自动开启全局域名接入。
+
+在对话中说“去 https://frontvia-xlgshi.awiki.info 看商品”；通过卡片选规格、加购和核对报价，最后由公共 PAP 批准下单。购物不要求安装 `@agent-network-protocol/dsh-anp`。
 
 人民币对话购物的收货地址与服务端一致：国家为 CN，姓名、电话和完整地址必填；省、市、邮编及补充地址是可选字符串。插件保留商家返回的地址原文，不要求把完整地址拆成省、市，也不自动补造这些字段。订单金额、确认摘要和付款链接仍单独校验。
 

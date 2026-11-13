@@ -10,17 +10,19 @@ export class Pap03Business implements PapPort {
   private transport:Pap03Transport;
   private connections=new Map<string,{store:StoreConnection;identity:string}>();
   private epoch='';
+  private readinessError?:PapRequestError;
   private publicState:any={state:'unconfigured'};
   constructor(private readonly pap:PapOperationsClient){this.transport=new Pap03Transport(pap);}
   async refresh(){
+    this.readinessError=undefined;
     const result=await this.pap.status();
-    if(!result.ok){this.epoch='';this.publicState={state:result.error.code};return;}
+    if(!result.ok){this.epoch='';this.publicState={state:result.error.code};this.readinessError=new PapRequestError(result.error);return;}
     const previous=this.epoch;
     const state=result.value as any;this.publicState=state;
     this.epoch=state?.state==='ready'&&state.identity?createHash('sha256').update(JSON.stringify(state.identity)).digest('hex'):'';
     if(this.epoch&&(previous!==this.epoch||!this.connections.size)){
       const catalog=await this.pap.operations();
-      if(!catalog.ok){this.epoch='';return;}
+      if(!catalog.ok){this.epoch='';this.publicState={state:catalog.error.code};this.readinessError=new PapRequestError(catalog.error);return;}
       const operations=Array.isArray(catalog.value)?catalog.value:[];
       for(const c of state.companies??[]){
         if(typeof c.domain!=='string'||typeof c.companyId!=='string'||typeof c.companyRef!=='string')continue;
@@ -35,25 +37,30 @@ export class Pap03Business implements PapPort {
   async prepareDomain(domain:string){await this.connect(domain);}
   async connect(domain:string){
     await this.refresh();
+    if(this.readinessError)throw this.readinessError;
     for(const [ref,value] of this.connections)if(value.store.domain===domain&&this.canAccess(ref))return {connectionRef:ref};
     const store=await this.transport.connect(domain);await this.refresh();
+    if(this.readinessError)throw this.readinessError;
     if(!this.epoch)fail('PUBLIC_IDENTITY_REQUIRED');
     const ref=createHash('sha256').update(JSON.stringify([store.companyRef,this.epoch])).digest('hex');
     this.connections.set(ref,{store,identity:this.epoch});
     return {connectionRef:ref};
   }
   private current(ref:string){
+    if(this.readinessError)throw this.readinessError;
     const value=this.connections.get(ref);
-    if(!value||!this.canAccess(ref))fail('IDENTITY_CHANGED');
+    if(!value||!this.isCurrentIdentity(ref))fail('IDENTITY_CHANGED');
+    if(!this.canAccess(ref))fail('PAP_DISCONNECTED');
     return value;
   }
   isCurrentIdentity(ref:string){
+    if(this.readinessError)throw this.readinessError;
     const value=this.connections.get(ref);
     return !!value&&!!this.epoch&&value.identity===this.epoch;
   }
   canAccess(ref:string){
     const value=this.connections.get(ref);
-    return this.isCurrentIdentity(ref)&&!!value&&Array.isArray(this.publicState.sessions)&&this.publicState.sessions.some((s:any)=>s.companyRef===value.store.companyRef&&s.connected&&!s.account);
+    return !!this.epoch&&this.isCurrentIdentity(ref)&&!!value&&Array.isArray(this.publicState.sessions)&&this.publicState.sessions.some((s:any)=>s.companyRef===value.store.companyRef&&s.connected&&!s.account);
   }
   sites():BusinessSite[]{
     return [...this.connections.entries()].filter(([ref])=>this.canAccess(ref)).map(([,v])=>({id:v.store.domain,domain:v.store.domain,label:v.store.name,issuer:v.store.companyId,resource:v.store.companyId,description:{profile:'frontvia.store.v1',methods:[...v.store.methods]}}));

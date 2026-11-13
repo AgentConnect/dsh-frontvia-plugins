@@ -41,3 +41,16 @@ test("credential and session failures do not prescribe identity recreation or bl
     assert.match(session.text, /错误码/);
   }
 });
+
+
+test("public PAP lifecycle errors point to current settings without claiming another identity", () => {
+  for (const code of ["PAP_DISCONNECTED", "PERSONAL_ACCOUNT_CHANGED"]) {
+    const feedback = serviceFeedback(new Error(code));
+    assert.match(feedback.text, /设置 → PAP 连接/);
+    assert.match(feedback.text, /重新连接/);
+    assert.doesNotMatch(feedback.text, /旧手机号/);
+  }
+  for (const code of ["PAP_DEFAULT_IDENTITY_REQUIRED", "PAP_PUBLISHED_IDENTITY_REQUIRED", "PAP_DOMAIN_ACCESS_DISABLED"]) {
+    assert.match(serviceFeedback(new Error(code)).text, /默认公共身份和 PAP 授权/);
+  }
+});
