@@ -1,12 +1,16 @@
 # dsh-frontvia-customer
 
-Frontvia shopping tools and native chat cards for DeepSeek Harness 0.2.2-rc.1. Requires public Identity >=0.1.17 and public DSH PAP >=0.1.6. Install all three published plugins in the same DSH profile; no sibling source checkout is required. PAP 0.3 handles discovery, request signing and final purchase approval; Customer keeps shopping and consultation cards. Merchant configuration may be empty: provide the shop domain in the conversation.
+Frontvia shopping tools and native chat cards for DeepSeek Harness 0.2.2-rc.1.
+The three plugins share one DSH profile. Install public Identity 0.1.17 or newer
+and a build of DSH PAP that supports PAP 1.0. Merchant configuration can be empty.
+Give Customer the shop domain in the conversation.
 
 ## Install and connect
 
-```sh
-dsh plugin --profile desktop add @agent-network-protocol/dsh-anp-identity@0.1.17 @awiki/dsh-pap@0.1.6 dsh-frontvia-customer@0.1.2
-```
+For this candidate, use the local PAP 1.0 and Customer builds described in
+[PAP 1.0 / UCP candidate](#pap-10--ucp-candidate). The public PAP 0.1.6 package
+supports only the retired protocol. The PAP 1.0 release will provide the
+registry package for this candidate.
 
 首次使用须在当前 Profile 的 `cordis.patch.yml` 中显式开启域名接入（合并到已有同 ID 配置）：
 
