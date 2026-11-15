@@ -66,8 +66,9 @@ async function run(){
       &&[config.origin,new URL(profileUrl).origin].includes(target.origin)
       &&/^\/[a-z0-9_./-]{0,180}$/i.test(target.pathname);
     const observe=fields=>{
-      if(discovery&&discoveryHttp.length<24)discoveryHttp.push({
-        peer:target.origin===config.origin?'company':'platform',path:target.pathname,...fields});
+      if(!discovery)return;
+      discoveryHttp.push({peer:target.origin===config.origin?'company':'platform',method:'GET',path:target.pathname,...fields});
+      if(discoveryHttp.length>12)discoveryHttp.shift();
     };
     try{
       const response=await base.request(url,options);
