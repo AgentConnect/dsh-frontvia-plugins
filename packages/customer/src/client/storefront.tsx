@@ -104,7 +104,9 @@ function AddressForm({
   next,
   form,
   setForm,
+  saveLabel,
 }: {
+  saveLabel?: string;
   form: Record<string, string>;
   setForm: (value: Record<string, string>) => void;
   data: any;
@@ -172,7 +174,7 @@ function AddressForm({
         。收货资料仅用于配送，不会发送给 AI 模型。
       </p>
       <Button type="submit" disabled={busy || saving}>
-        {saving && <Spinner />}保存地址，选择配送
+        {saving && <Spinner />}{saveLabel ?? "保存地址，选择配送"}
         <ArrowRight data-icon="inline-end" />
       </Button>
     </form>
@@ -424,6 +426,9 @@ function StorefrontContent({
   const deliveryReady = currentDeliveryReady(data?.cart, data?.delivery);
   const quoteExpired = !data?.quote || Date.parse(data.quote.expires_at) <= now;
   const intentExpired = !data?.intent || data.intent.expiresAt <= now;
+  const shippingDraft = data?.checkout?.fulfillment?.methods?.find((method:any)=>method.type==="shipping");
+  const destinationDraft = shippingDraft?.destinations?.find((destination:any)=>destination.id===shippingDraft.selected_destination_id) ?? shippingDraft?.destinations?.[0];
+  const confirmedAddress:Record<string,string> = destinationDraft ? {email:data.checkout.buyer?.email??"",recipient:destinationDraft.first_name??"",line1:destinationDraft.street_address??"",line2:destinationDraft.extended_address??"",city:destinationDraft.address_locality??"",region:destinationDraft.address_region??"",postal_code:destinationDraft.postal_code??"",phone:destinationDraft.phone_number??""} : {};
   const cartLines = locked ? [] : (data?.cart?.lines ?? []);
   const orderCount = (
     data?.order?.lines ??
@@ -1067,8 +1072,25 @@ function StorefrontContent({
                                 disabled={blocked}
                                 onClick={edit}
                               >
-                                返回修改购物车
+                                {data.capabilities?.ucp ? "取消草稿并修改购物车" : "返回修改购物车"}
                               </Button>
+                            )}
+                            {data.capabilities?.ucp && (
+                              <div className="fv-stack">
+                                <Button disabled={blocked} onClick={() => shop({action:"prepare"})}>
+                                  {data.checkout ? "查看结算草稿" : "创建结算草稿"}
+                                </Button>
+                                {data.checkout?.messages?.map((message:any,index:number) => (
+                                  <p className="fv-muted" key={index}>{message.content}</p>
+                                ))}
+                                <p className="fv-muted">可以查看结算信息；商家尚未开放付款提交。</p>
+                                {data.checkout && data.capabilities.ucpFulfillment && ["US","CN"].includes(data.pricing.country) && (
+                                  <AddressForm data={data} busy={blocked} action={action} saveLabel="保存到结算草稿"
+                                    form={addressDraft&&addressDraft.cartId===data.cart.id?addressDraft.values:confirmedAddress}
+                                    setForm={values=>setAddressDraft({cartId:data.cart.id,values})}
+                                    next={async()=>{setAddressDraft(undefined);}} />
+                                )}
+                              </div>
                             )}
                             <Button
                               disabled={blocked || !data.purchaseReady}

@@ -4,13 +4,16 @@ import {spawn} from 'node:child_process';
 import {randomBytes,randomUUID} from 'node:crypto';
 import http from 'node:http';
 import {mkdir,writeFile} from 'node:fs/promises';
-import {join,resolve} from 'node:path';
+import {join,resolve,isAbsolute} from 'node:path';
 import {pathToFileURL} from 'node:url';
 import {guidance} from '../packages/customer/src/tools.ts';
 
 export async function checkClaudeDomain({domain,execute,definitions,privateDir}){
   assert(process.env.DEEPSEEK_API_KEY,'Task DeepSeek credential required');
-  const sdk=resolve(import.meta.dirname,'../../frontvia-core/web/node_modules/@modelcontextprotocol/sdk/dist/esm');
+  const configuredCore=process.env.FRONTVIA_CORE_ROOT;
+  assert(configuredCore===undefined||isAbsolute(configuredCore),'Core candidate root must be absolute');
+  const core=configuredCore??resolve(import.meta.dirname,'../../frontvia-core');
+  const sdk=join(core,'web/node_modules/@modelcontextprotocol/sdk/dist/esm');
   const {Server}=await import(pathToFileURL(join(sdk,'server/index.js')).href);
   const {StreamableHTTPServerTransport}=await import(pathToFileURL(join(sdk,'server/streamableHttp.js')).href);
   const {ListToolsRequestSchema,CallToolRequestSchema}=await import(pathToFileURL(join(sdk,'types.js')).href);

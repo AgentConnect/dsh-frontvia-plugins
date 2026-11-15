@@ -145,3 +145,28 @@ owner view 支持 catalog/cart/checkout/order/order-detail 读取范围；同流
 加购异常按普通购物体验处理：自动结束本地等待并刷新购物车，不常驻“待确认”提示、不再自动重发该加购。已有购物车的追加加购使用丢弃标记阻止旧请求重放，商家已经生效的商品以重新读取的购物车为准。首次建车尚未取得 cart ID 时仅结束界面等待，保留原命令与幂等标识；刷新或重启后通过只读回执查询找回购物车，不自动重发或建立替代购物车。回执暂不可查时显示简短的购物车刷新入口。该处理不适用于下单或支付。修改数量等其他购物车操作仍可显式重试。安装更新后须完全退出桌面应用再启动，关闭窗口不会重载插件后台。
 
 购买确认的首次错误只保留安全的错误码、类型和 request_id，不保存原始错误消息或敏感详情。仅当商店明确返回未受理的拒绝（after_change 且无 operation_id）时，结束本地等待并要求重新核对后再次点击；网络错误、上游异常、已受理操作或仅查询不到记录仍保留原 pending，不自动重发购买。旧版本已经丢失首次错误的 pending 不会被此更新自动清除。
+
+## PAP 1.0 / UCP candidate
+
+When the public PAP client advertises UCP operations, Customer uses standard
+Catalog POST requests and standard Cart/Checkout/Order paths. Conversion to the
+existing card presentation occurs locally after the UCP response; the wire does
+not use a Commerce JSON-RPC envelope. Product IDs and purchasable variant IDs
+remain distinct. Cart edits send one complete PUT, carry the observed ETag in
+`If-Match`, and persist the original replacement and a deterministic UUID
+idempotency key in the existing encrypted command state for recovery.
+
+The nonpayment interface permits Cart editing and viewing an incomplete Checkout
+draft. It displays Business messages and does not expose paid completion or the
+legacy private confirmation flow for a UCP connection. Legacy extension
+operations remain available when separately advertised. The shared PAP Host must
+configure `ucpPlatformProfileUrl`; Customer never invents a product profile or
+handles signing keys.
+
+For isolated acceptance, `scripts/pap10-core-check.mjs` connects the real
+awiki.me Identity custodian to the independent Python wire runner through
+owner-only, temporary IPC. It signs only discovered operation targets and never
+exports private keys. Use `FRONTVIA_PAP_TEST_PACKAGE_ROOT` to select the built
+candidate PAP package. `FRONTVIA_CORE_ROOT` selects the isolated Core checkout
+for the Claude Code/DeepSeek domain-browsing test. These are explicit source
+integration checks and do not replace registry-package or production validation.

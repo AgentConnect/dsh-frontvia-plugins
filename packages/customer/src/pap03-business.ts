@@ -1,3 +1,4 @@
+import {ucpBusinessMethods} from './ucp-business.js';
 import {createHash} from 'node:crypto';
 import type {PapOperationsClient} from '@awiki/dsh-pap/product-api';
 import {Pap03Transport,PapRequestError,type StoreConnection} from './pap03-transport.js';
@@ -26,8 +27,9 @@ export class Pap03Business implements PapPort {
       const operations=Array.isArray(catalog.value)?catalog.value:[];
       for(const c of state.companies??[]){
         if(typeof c.domain!=='string'||typeof c.companyId!=='string'||typeof c.companyRef!=='string')continue;
-        const methods=operations.filter((op:any)=>op.companyRef===c.companyRef&&typeof op.operationId==='string').map((op:any)=>op.operationId);
-        const store={domain:c.domain,companyRef:c.companyRef,companyId:c.companyId,name:c.name??c.domain,methods};
+        const own=operations.filter((op:any)=>op.companyRef===c.companyRef);
+        const methods=[...new Set([...own.filter((op:any)=>typeof op.operationId==='string').map((op:any)=>op.operationId),...ucpBusinessMethods(own),...(own.some((op:any)=>op.channel==='ucp')?['commerce.capabilities.get']:[])])];
+        const store={ucp:own.some((op:any)=>op.channel==='ucp'),ucpCapabilities:c.ucpCapabilities,domain:c.domain,companyRef:c.companyRef,companyId:c.companyId,name:c.name??c.domain,methods};
         this.transport.restore(store);
         const ref=createHash('sha256').update(JSON.stringify([store.companyRef,this.epoch])).digest('hex');
         this.connections.set(ref,{store,identity:this.epoch});

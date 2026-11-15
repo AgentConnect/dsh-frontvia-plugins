@@ -1,4 +1,5 @@
 export function orderLabel(order: any): string {
+  if (typeof order.label === "string" && order.label) return order.label;
   if (order.display_number != null) return `订单 #${order.display_number}`;
   const id = String(order.id ?? order.order_id ?? "");
   return id ? `订单 ${id.length > 12 ? `…${id.slice(-12)}` : id}` : "订单";
