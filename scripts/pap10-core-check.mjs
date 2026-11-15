@@ -97,17 +97,42 @@ async function run(){
   }
   stage='public_pap_discovery';
   const connected=take(await sdk.connect(config.domain)),companyRef=connected.company.companyRef;
-  const owner=take(await manager.execute({action:'session/connect',companyRef,mode:'regular'}));
-  const other=take(await manager.execute({action:'session/connect',companyRef,mode:'anonymous'}));
-  const sessions={owner:owner.sessionRef,other:other.sessionRef};
-  const operations=take(await sdk.operations()).filter(operation=>operation.companyRef===companyRef);
-  assert(operations.some(operation=>operation.channel==='ucp'),'UCP candidate routes must be present');
-  await atomic('ucp-ready.json',{ready:true,profileUrl,users:['owner','other']});
-  console.log(JSON.stringify({status:'passed',case:'pap10-live-awiki-identity-and-product-profile',...sources}));
+  const openSession=async mode=>take(await manager.execute({action:'session/connect',companyRef,mode}));
+  const discovered=async()=>take(await sdk.operations()).filter(operation=>operation.companyRef===companyRef);
+  let operations=await discovered(),version=config.suite==='ucp'?'0.3':'1.0';
+  const owner=await openSession('regular');
+  const sessions={owner:owner.sessionRef,other:undefined};
+  const ready=async()=>{
+    assert(operations.some(operation=>operation.channel==='ucp'),'UCP candidate routes must be present');
+    sessions.other=(await openSession('anonymous')).sessionRef;
+    await atomic('ucp-ready.json',{ready:true,profileUrl,users:['owner','other']});
+    console.log(JSON.stringify({status:'passed',case:'pap10-live-awiki-identity-and-product-profile',...sources}));
+  };
+  if(version==='0.3'){
+    assert(!operations.some(operation=>operation.channel==='ucp'),'Initial Company must advertise only PAP 0.3');
+    await atomic('ucp-pap03-ready.json',{ready:true,profileUrl});
+  }else await ready();
   stage='restricted_signing_bridge';
   let lastId;
   for(;;){
     try{await access(join(control,'ucp-stop.json'));break;}catch{}
+    if(version==='0.3'){
+      const upgrade=await access(join(control,'ucp-upgrade.request')).then(()=>true,error=>{if(error.code!=='ENOENT')throw error;return false;});
+      if(upgrade){
+        stage='pap10_upgrade_discovery';
+        const updated=take(await sdk.connect(config.domain)).company;
+        assert.equal(updated.companyRef,companyRef);
+        assert.equal(updated.companyId,connected.company.companyId);
+        const next=await openSession('regular');
+        assert(typeof owner.subjectRef==='string'&&next.subjectRef===owner.subjectRef,'PAP upgrade must preserve the regular subject');
+        assert(next.sessionRef&&next.sessionRef!==owner.sessionRef,'PAP upgrade must open a new Session');
+        sessions.owner=next.sessionRef;
+        operations=await discovered();
+        version='1.0';
+        await ready();
+        stage='restricted_signing_bridge';
+      }
+    }
     let request;try{request=JSON.parse(await readFile(join(control,'ucp-sign.request.json'),'utf8'));}catch(error){if(error.code!=='ENOENT'&&!(error instanceof SyntaxError))throw error;await delay(40);continue;}
     if(request.id===lastId){await delay(40);continue;}lastId=request.id;
     try{
@@ -135,7 +160,7 @@ async function run(){
       assert(settled,'Signing approval timed out');const result=await dispatch;
       assert(capture.headers,'Public PAP dispatch must reach the exact transport target');
       const headers=Object.fromEntries(Object.entries(capture.headers).filter(([name])=>['poppy-session','poppy-version','poppy-extensions','ucp-agent','request-id'].includes(name.toLowerCase())));
-      assert.equal(headers['poppy-version'],'1.0');
+      assert.equal(headers['poppy-version'],version);
       await atomic('ucp-sign.response.json',{id:request.id,headers});
       void result;
     }catch(error){await atomic('ucp-sign.response.json',{id:request.id,error:/^[a-z][a-z0-9_]+$/i.test(error?.code??'')?error.code:'signing_rejected'});}
