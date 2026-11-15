@@ -120,7 +120,7 @@ owner view 支持 catalog/cart/checkout/order/order-detail 读取范围；同流
 `frontvia-customer/payment-start` 只接受会话和 flow 引用；付款链接、金额、
 收款方、订单及有效期由保存的结算和服务端回执确定，不接受模型或 UI 传入。
 公共 PAP 调用发现的 `commerce.payments.hosted.start` 操作，沿用服务端身份、
-订单、原确认及支付幂等约束。PAP 0.3 Session 由公共插件签名，卡片不持有协议凭据。
+订单、原确认及支付幂等约束。PAP 1.0 Session 由公共插件签名，卡片不持有协议凭据。
 
 二维码作为受限 SVG 图片显示，随 flow 加密保存以支持重开会话；不会进入模型
 上下文。卡片显示收款方和有效期，通过现有共享轮询及窗口重新聚焦读取原订单。

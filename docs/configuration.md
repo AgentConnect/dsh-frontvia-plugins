@@ -1,4 +1,4 @@
-# 公共身份与 PAP 0.3 配置
+# 公共身份与 PAP 1.0 配置
 
 当前构建只包含 `dsh-frontvia-customer`。身份创建/发布、默认身份选择及域名授权使用
 公共 Identity，发现、Session 签名与最终请求批准使用公共 DSH PAP。无需独立

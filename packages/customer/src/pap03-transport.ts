@@ -49,7 +49,7 @@ export class Pap03Transport {
       const methods=[...new Set([...legacyMethods,...ucpMethods,'commerce.capabilities.get'])].filter(name=>!['commerce.checkouts.confirm','commerce.checkouts.complete','commerce.quotes.create','commerce.quotes.get','commerce.payments.hosted.start'].includes(name));
       return {result:{data:{...data,ucp:true,ucpFulfillment:store.ucpCapabilities?.includes('dev.ucp.shopping.fulfillment')===true,methods:methods.map(method=>({method,availability:'supported'})),business_profiles:[{id:'frontvia.ucp_nonpayment.v1',availability:'supported'}]}}};
     }
-    const ucp=await requestUcp(method,params,operations,request=>this.send(request,signal));
+    const ucp=await requestUcp(method,params,operations,request=>this.send(request,signal,true));
     if(ucp!==undefined)return ucp;
     if((store.ucp||params.ucp_protocol===true)&&isUcpBusinessMethod(method))throw new Error('UCP_OPERATION_UNAVAILABLE');
     const matches=operations.filter(o=>o.operationId===method);
@@ -66,10 +66,10 @@ export class Pap03Transport {
     signal?.throwIfAborted();
     return (await this.send(request,signal)).body;
   }
-  private async send(request:UcpRequest,signal?:AbortSignal):Promise<UcpResponse> {
+  private async send(request:UcpRequest,signal?:AbortSignal,ucp=false):Promise<UcpResponse> {
     const response=value(await this.pap.request(request,signal)) as {status?:number;body?:unknown;bodyAvailable?:boolean;etag?:string};
     if(!response||typeof response.status!=='number'||response.bodyAvailable===false||!('body' in response))throw new Error('PAP_BUSINESS_RESPONSE_UNAVAILABLE');
-    if(response.status<200||response.status>=300)throw new PapRequestError({code:'business_http_error',businessRequest:'response_received',httpStatus:response.status,phase:'response'});
+    if(!ucp&&(response.status<200||response.status>=300))throw new PapRequestError({code:'business_http_error',businessRequest:'response_received',httpStatus:response.status,phase:'response'});
     return response as UcpResponse;
   }
 }

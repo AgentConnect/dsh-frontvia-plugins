@@ -8,7 +8,7 @@ const version='2026-08-25';
 const ucp={version};
 const product={id:'product-1',title:'Mug',description:{plain:'Ceramic'},price_range:{min:{amount:1250,currency:'USD'},max:{amount:1250,currency:'USD'}},variants:[{id:'variant-1',title:'Blue',description:{plain:'Blue ceramic'},price:{amount:1250,currency:'USD'}}]};
 function fixture(){
-  let loseNext=false;const receipts=new Map<string,any>();let effects=0;
+  let loseNext=false, rejection: {status:number;code:string;version:string}|undefined;const receipts=new Map<string,any>();let effects=0;
   const calls:any[]=[],store={companyRef:'shop',companyId:'https://shop.example',domain:'shop.example',name:'Shop',ucpCapabilities:['dev.ucp.shopping.fulfillment']};
   const specs=[['commerce.capabilities.get','GET'],['update_checkout','PUT'],['search_catalog','POST'],['get_product','POST'],['create_cart','POST'],['get_cart','GET'],['update_cart','PUT'],['create_checkout','POST'],['get_checkout','GET'],['cancel_checkout','POST'],['get_order','GET']];
   const operations=specs.map(([operationId,method])=>({companyRef:'shop',operationRef:operationId,operationId,method,channel:operationId==='commerce.capabilities.get'?'openapi':'ucp',pathParameters:['get_cart','update_cart','get_checkout','cancel_checkout','get_order','update_checkout'].includes(operationId)?['id']:[]}));
@@ -16,6 +16,11 @@ function fixture(){
   const sdk:PapOperationsClient={requestTimeoutMs:1000,connect:async()=>({ok:true,value:{company:store}}),status:async()=>({ok:true,value:{state:'ready',identity:{did:'test'},companies:[store],sessions:[{companyRef:'shop',connected:true}]}}),operations:async()=>({ok:true,value:operations}),request:async(input:any)=>{
     calls.push(structuredClone(input));
     if(input.idempotencyKey&&receipts.has(input.idempotencyKey))return structuredClone(receipts.get(input.idempotencyKey));
+    if (input.operationRef === 'update_cart' && rejection) {
+      const {status,code,version}=rejection;
+      rejection=undefined;
+      return {ok:true,value:{status,body:{ucp:{version,status:'error'},messages:[{type:'error',code}]}}};
+    }
     let body:any;
     if(input.operationRef==='commerce.capabilities.get')body={result:{data:{store_id:'shop',default_context:{country:'US',currency:'USD',locale:'en-US'},methods:[]}}};
     else if(input.operationRef==='search_catalog')body={ucp,products:[product],pagination:{has_next_page:false}};
@@ -31,7 +36,10 @@ function fixture(){
     if(input.idempotencyKey){effects++;receipts.set(input.idempotencyKey,structuredClone(response));if(loseNext){loseNext=false;return {ok:false,error:{code:'request_uncertain',businessRequest:'unknown'}};}}
     return response;
   }};
-  return {sdk,calls,transport:new Pap03Transport(sdk),lose(){loseNext=true;},effects:()=>effects};
+  return {sdk,calls,transport:new Pap03Transport(sdk),lose(){loseNext=true;},effects:()=>effects,
+    reject(code:string,status=409,responseVersion=version){rejection={code,status,version:responseVersion};},
+    externalEdit(){etag='"external"';cart.line_items[0].quantity=2;},
+  };
 }
 test('Customer UCP catalog uses standard POST payloads and projects product and SKU separately',async()=>{
  const f=fixture();const search:any=await f.transport.request('shop.example','commerce.products.search',{query:'mug',page:{limit:8}});
@@ -88,4 +96,61 @@ test('standard Order quantities and fulfillment events project without inventing
  const f=fixture();const response:any=await f.transport.request('shop.example','commerce.orders.get',{order_id:'order-1'});
  assert.deepEqual(f.calls.at(-1),{operationRef:'get_order',path:{id:'order-1'}});
  const order=response.result.data;assert.equal(order.lines[0].quantity,1);assert.equal(order.checkout_id,'draft-1');assert.equal(order.shipments[0].status,'shipped');assert.equal(order.shipments[0].tracking[0].tracking_number,'track-1');assert.equal(order.payment,undefined);assert.equal(order.status,undefined);
+});
+
+async function cartFlow(f: ReturnType<typeof fixture>) {
+ const saved=new Map<string,any>();
+ const vault={keys:(prefix:string)=>[...saved.keys()].filter(key=>key.startsWith(prefix)),get:<T>(key:string)=>structuredClone(saved.get(key)) as T|undefined,set:(key:string,value:unknown)=>{saved.set(key,structuredClone(value));}};
+ const service=new CustomerService({dataDir:'unused',sites:[]},new Pap03Business(f.sdk),vault);
+ const {flowId}=await service.connect('chat','shop.example');
+ const call=(args:object,command:string)=>service.tool('chat','frontvia_cart',{...args,flowId},command);
+ await call({action:'add',variant_id:'variant-1',quantity:1},'initial');
+ return {service,flowId,call,flow:()=>service.flow('chat',flowId)};
+}
+
+test('a definite UCP version conflict settles the command and reloads the current cart',async()=>{
+ const f=fixture(),c=await cartFlow(f);
+ f.externalEdit();
+ f.reject('version_conflict');
+ const edit={action:'update',line_id:'line-1',quantity:3,expected_version:'"v1"'};
+ await assert.rejects(c.call(edit,'stale'),{code:'CART_VERSION_CHANGED'});
+ assert.equal(c.flow().pending,undefined);
+ assert.equal(c.flow().cart.version,'"external"');
+ assert.equal(c.flow().cart.lines[0].quantity,2);
+ assert.equal(f.effects(),1);
+ await assert.rejects(c.call(edit,'stale'),{code:'CART_VERSION_CHANGED'});
+ assert.equal(f.calls.filter(call=>call.operationRef==='update_cart').length,1);
+ await c.call({...edit,expected_version:'"external"'},'new-edit');
+ assert.equal(c.flow().cart.lines[0].quantity,3);
+});
+
+test('pending, busy and malformed UCP responses retain the original persisted Cart write',async()=>{
+ for(const [code,responseVersion] of [['operation_pending',version],['resource_busy',version],['version_conflict','bad']]){
+  const f=fixture(),c=await cartFlow(f);
+  f.reject(code,409,responseVersion);
+  await assert.rejects(c.call({action:'update',line_id:'line-1',quantity:3,expected_version:'"v1"'},'pending'));
+  assert(c.flow().pending);
+  const original=f.calls.findLast(call=>call.operationRef==='update_cart');
+  await c.service.tool('chat','frontvia_orders',{action:'recover',flowId:c.flowId},'recover');
+  assert.deepEqual(f.calls.findLast(call=>call.operationRef==='update_cart'),original);
+  assert.equal(c.flow().pending,undefined);
+  assert.equal(c.flow().cart.lines[0].quantity,3);
+ }
+});
+
+test('repeat adding a SKU preserves its line ID and handles quantity and inventory rejection',async()=>{
+ const f=fixture(),c=await cartFlow(f);
+ const add=(quantity:number,command:string)=>c.call({action:'add',variant_id:'variant-1',quantity,expected_version:c.flow().cart.version},command);
+ await add(2,'again');
+ assert.deepEqual(f.calls.findLast(call=>call.operationRef==='update_cart').body.line_items,
+   [{id:'line-1',item:{id:'variant-1'},quantity:3}]);
+ await assert.rejects(add(98,'too-many'),{code:'CART_QUANTITY_LIMIT'});
+ assert.equal(f.calls.filter(call=>call.operationRef==='update_cart').length,1);
+ assert.equal(c.flow().pending,undefined);
+ f.reject('out_of_stock');
+ await assert.rejects(add(2,'stock'),{code:'OUT_OF_STOCK'});
+ assert.equal(c.flow().pending,undefined);
+ assert.equal(c.flow().cart.lines[0].quantity,3);
+ await add(1,'smaller');
+ assert.equal(c.flow().cart.lines[0].quantity,4);
 });

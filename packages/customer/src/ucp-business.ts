@@ -3,6 +3,30 @@ import {createHash} from 'node:crypto';
 export type UcpOperation={operationRef:string;operationId?:string;channel?:string;method:string;pathParameters?:string[]};
 export type UcpRequest={operationRef:string;path?:Record<string,string>;body?:unknown;idempotencyKey?:string;ifMatch?:string};
 export type UcpResponse={status:number;body:any;etag?:string};
+export type CartRejection = 'CART_VERSION_CHANGED' | 'CART_QUANTITY_LIMIT' | 'OUT_OF_STOCK';
+
+export class UcpCartRejection extends Error {
+  constructor(readonly code: CartRejection) {
+    super(code);
+  }
+}
+
+class UcpResponseError extends Error {
+  constructor(readonly status: number, readonly code?: string) {
+    super(code ? `UCP_${code.toUpperCase()}` : 'UCP_OPERATION_FAILED');
+  }
+}
+
+function responseError(response: UcpResponse) {
+  const body = response.body;
+  const messages = body?.messages;
+  const code = body?.ucp?.version === '2026-08-25' && body.ucp.status === 'error'
+    && Array.isArray(messages) && messages.length === 1 && messages[0]?.type === 'error'
+    && typeof messages[0].code === 'string' && /^[a-z][a-z0-9_]{0,63}$/.test(messages[0].code)
+    ? messages[0].code as string : undefined;
+  return new UcpResponseError(response.status, code);
+}
+
 const mapped:Record<string,string>={
   'commerce.products.search':'search_catalog','commerce.products.get':'get_product','commerce.variants.list':'get_product','commerce.variants.get':'get_product',
   'commerce.carts.create':'create_cart','commerce.carts.get':'get_cart','commerce.carts.lines.add':'update_cart','commerce.carts.lines.update':'update_cart','commerce.carts.lines.remove':'update_cart','commerce.carts.update':'update_cart','commerce.carts.cancel':'cancel_cart',
@@ -60,10 +84,22 @@ export async function requestUcp(method:string,params:Record<string,any>,operati
   if(id==='update_cart'){
     const read=operations.filter(entry=>entry.channel==='ucp'&&entry.operationId==='get_cart');if(read.length!==1)throw new Error('METHOD_NOT_ADVERTISED');
     const current=params.ucp_cart_snapshot?{body:params.ucp_cart_snapshot,etag:params.ucp_cart_snapshot.version}:await send({operationRef:read[0].operationRef,path});
-    if(current.body.id!==params.cart_id)throw new Error('CART_VERSION_CHANGED');
-    if(!current.etag||params.expected_version!==current.etag)throw new Error('CART_VERSION_CHANGED');
+    if ('status' in current && (current.status < 200 || current.status >= 300))
+      throw responseError(current);
+    if(current.body.id!==params.cart_id)throw new Error('INVALID_UCP_RESPONSE');
+    if(!current.etag||params.expected_version!==current.etag) {
+      if (params.ucp_cart_snapshot) throw new UcpCartRejection('CART_VERSION_CHANGED');
+      throw new Error('CART_VERSION_CHANGED');
+    }
     ifMatch=current.etag;body=cartInput(current.body);
-    if(method==='commerce.carts.lines.add')body.line_items.push({item:{id:params.line.variant_id},quantity:params.line.quantity});
+    if (method === 'commerce.carts.lines.add') {
+      const line = body.line_items.find((line: any) => line.item.id === params.line.variant_id);
+      const quantity = (line?.quantity ?? 0) + params.line.quantity;
+      if (!Number.isSafeInteger(quantity) || quantity < 1 || quantity > 100)
+        throw new UcpCartRejection('CART_QUANTITY_LIMIT');
+      if (line) line.quantity = quantity;
+      else body.line_items.push({item:{id:params.line.variant_id},quantity});
+    }
     else if(method==='commerce.carts.lines.remove'){
       if(!body.line_items.some((line:any)=>line.id===params.line_id))throw new Error('LINE_NOT_FOUND');
       body.line_items=body.line_items.filter((line:any)=>line.id!==params.line_id);
@@ -81,8 +117,16 @@ export async function requestUcp(method:string,params:Record<string,any>,operati
   }
   if(id==='cancel_cart'||id==='cancel_checkout')body={};
   const response=await send({operationRef:op.operationRef,...(path?{path}:{}),...(body===undefined?{}:{body}),...(key?{idempotencyKey:key}:{}),...(ifMatch?{ifMatch}:{})});
+  if (response.status < 200 || response.status >= 300 || response.body?.ucp?.status === 'error') {
+    const error = responseError(response);
+    if (id === 'update_cart' && (error.status === 409 || error.status === 412) && error.code === 'version_conflict')
+      throw new UcpCartRejection('CART_VERSION_CHANGED');
+    if ((id === 'update_cart' || id === 'create_cart') && error.status === 409 && error.code === 'out_of_stock')
+      throw new UcpCartRejection('OUT_OF_STOCK');
+    throw error;
+  }
   const result=object(response.body),envelope=object(result.ucp);
-  if(envelope.version!=='2026-08-25'||envelope.status==='error')throw new Error('UCP_OPERATION_FAILED');
+  if(envelope.version!=='2026-08-25')throw new Error('INVALID_UCP_RESPONSE');
   let data:any;
   if(id==='search_catalog'){
     if(!Array.isArray(result.products))throw new Error('INVALID_UCP_RESPONSE');

@@ -1,4 +1,4 @@
-import { ucpCheckoutContact, isUcpBusinessMethod } from "./ucp-business.js";
+import { ucpCheckoutContact, isUcpBusinessMethod, UcpCartRejection, type CartRejection } from "./ucp-business.js";
 import { viewScopes, type ViewScope } from "./view-scope.js";
 import { createHash, randomUUID } from "node:crypto";
 import {
@@ -48,6 +48,7 @@ type Command = {
   params: any;
   status: "pending" | "done" | "discarded";
   waitEnded?: boolean;
+  cartRejection?: CartRejection;
   lastError?: SavedRpcError;
   lastLookupError?: SavedRpcError;
   result?: any;
@@ -535,6 +536,7 @@ export class CustomerService {
     )
       fail("IDEMPOTENCY_CONFLICT");
     if (old?.status === "discarded") fail("OPERATION_DISCARDED");
+    if (old?.cartRejection) fail(old.cartRejection);
     if (old?.status === "done") return old.result;
     if (f.pending) fail("RESOLVE_PENDING_OPERATION");
     // Cancellation before admission must not create an unknown remote operation.
@@ -548,12 +550,25 @@ export class CustomerService {
     f.commands[key] = command;
     f.pending = key;
     this.save(f);
-    const response = await this.pap.request(
-      f.connectionRef,
-      method,
-      command.params,
-      signal,
-    );
+    return this.dispatchWrite(f, command, signal);
+  }
+  private async dispatchWrite(f: Flow, command: Command, signal?: AbortSignal) {
+    let response;
+    try {
+      response = await this.pap.request(f.connectionRef, command.method, command.params, signal);
+    } catch (error) {
+      if (!(error instanceof UcpCartRejection)) throw error;
+      command.status = "done";
+      command.cartRejection = error.code;
+      delete f.pending;
+      this.save(f);
+      if (f.cart) {
+        const cart = await this.read(f, "carts.get", { cart_id: f.cart.id });
+        this.apply(f, command.method, { resource: cart });
+        this.save(f);
+      }
+      fail(error.code);
+    }
     return this.finishWrite(f, command, response);
   }
   private async finishWrite(f: Flow, command: Command, response: any) {
@@ -684,6 +699,7 @@ export class CustomerService {
     );
     if (original) {
       if (original.status === "discarded") fail("OPERATION_DISCARDED");
+      if (original.cartRejection) fail(original.cartRejection);
       if (original.status === "done")
         return this.result(f, "cart", original.result);
       return this.result(f, "order", await this.recover(f));
@@ -1435,8 +1451,7 @@ export class CustomerService {
       if (c.params.ucp_protocol === true) {
         // UCP has no generic operation lookup. Replay the persisted request/key;
         // the Business returns the original idempotent outcome, never a new purchase.
-        const response = await this.pap.request(f.connectionRef, c.method, c.params);
-        await this.finishWrite(f, c, response);
+        await this.dispatchWrite(f, c);
         return this.refresh(f);
       }
       const r = await this.pap.request(

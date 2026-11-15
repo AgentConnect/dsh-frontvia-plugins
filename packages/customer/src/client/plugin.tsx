@@ -126,6 +126,8 @@ const errorText: Record<string, string> = {
   CONFIRMATION_EXPIRED: "确认已过期，请重新核对当前报价。",
   CONTACT_NOT_SAVED: "收货信息未保存，请重试。",
   CONTACT_REQUIRED: "请先填写并保存完整的收货信息。",
+  CART_QUANTITY_LIMIT: "同一规格最多可加购 100 件，请减少数量后重试。",
+  OUT_OF_STOCK: "库存不足，请减少数量或选择其他规格。",
   CART_VERSION_CHANGED: "购物车已更新，请刷新后重试。",
   RESOLVE_PENDING_OPERATION: "上次操作结果尚未明确，请先核对原结果。",
   ORIGINAL_RESULT_UNKNOWN:
