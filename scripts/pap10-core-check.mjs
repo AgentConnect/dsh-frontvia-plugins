@@ -9,7 +9,8 @@ import {pathToFileURL,fileURLToPath} from 'node:url';
 import {readFile,writeFile,rename,rm,access} from 'node:fs/promises';
 import https from 'node:https';
 import {setTimeout as delay} from 'node:timers/promises';
-import {loadPublicPap} from '../tests/support/public-pap.mjs';
+import {randomUUID} from 'node:crypto';
+import {loadPublicIdentity,loadPublicPap,publicIdentityPackage,publicPapPackage} from '../tests/support/public-pap.mjs';
 
 const root=resolve(dirname(fileURLToPath(import.meta.url)),'..');
 const require=createRequire(join(root,'package.json'));
@@ -23,7 +24,16 @@ const capabilityNames=['catalog.search','catalog.lookup','cart','checkout','orde
 const productProfile={ucp:{version:VERSION,services:{'dev.ucp.shopping':[{version:VERSION,transport:'rest',spec:`https://ucp.dev/${VERSION}/specification/overview/`,schema:`https://ucp.dev/${VERSION}/services/shopping/rest.openapi.json`}]},payment_handlers:{},capabilities:Object.fromEntries(capabilityNames.map(name=>[`dev.ucp.shopping.${name}`,[{version:VERSION,...(name==='fulfillment'?{extends:['dev.ucp.shopping.checkout','dev.ucp.shopping.catalog.search','dev.ucp.shopping.catalog.lookup']}:{}),spec:`https://ucp.dev/${VERSION}/specification/shopping/${name.startsWith('catalog.')?'catalog':name}/`,schema:`https://ucp.dev/${VERSION}/schemas/shopping/${name.replace('.','_')}.json`}]] ))}};
 let fixture,publisher,stage='configuration';
 const take=result=>{if(!result.ok)throw new Error(result.error?.code??'public_pap_failed');return result.value;};
-try{
+async function run(){
+  assert.equal(publicPapPackage().source,'explicit-local','PAP 1.0 verification requires an explicit PAP candidate');
+  assert.equal(publicIdentityPackage().source,'explicit-local','PAP 1.0 verification requires an explicit Identity candidate');
+  const [selected,selectedIdentity]=await Promise.all([loadPublicPap(),loadPublicIdentity()]);
+  const sources={papSource:selected.source,papVersion:selected.version,papRoot:selected.root,
+    identitySource:selectedIdentity.source,identityVersion:selectedIdentity.version,identityRoot:selectedIdentity.root,nativeVersion:selectedIdentity.nativeVersion};
+  if(process.argv[2]==='--preflight'){
+    console.log(JSON.stringify({stage:'candidate_package_preflight',...sources}));
+    return;
+  }
   const config=JSON.parse(await readFile(process.argv[2],'utf8'));
   const control=resolve(config.controlDir),profileUrl=`https://agent.test:${config.identityPort}/.well-known/ucp`;
   const atomic=async(name,value)=>{const target=join(control,name),temporary=target+'.tmp';await writeFile(temporary,JSON.stringify(value),{mode:0o600});await rename(temporary,target);};
@@ -33,9 +43,9 @@ try{
   });
   await new Promise((resolve,reject)=>{publisher.once('error',reject);publisher.listen(config.identityPort,'127.0.0.1',resolve);});
   stage='live_identity';
-  const {awikiMeIdentity}=await import('../tests/support/awiki-me-identity.mjs');fixture=await awikiMeIdentity();
+  const {awikiMeIdentity}=await import('../tests/support/awiki-me-identity.mjs');fixture=await awikiMeIdentity(selectedIdentity);
   assert.equal(new URL(JSON.parse(fixture.publicMaterials.metadata).client_id).origin,'https://awiki.me');
-  const selected=await loadPublicPap();
+  assert.equal(fixture.identityPackage.root,selectedIdentity.root);
   const Manager=(await import(pathToFileURL(join(selected.root,'lib/management-remote.js')).href)).default;
   const Customer=await import(pathToFileURL(join(root,'packages/customer/src/index.ts')).href);
   const Tools=await import('@deepseek-ai/dsh-tools');const Executor=await import('@deepseek-ai/dsh-tool-executor-native');
@@ -66,6 +76,25 @@ try{
   const customerContext=[...ctx.loader.entries()].find(entry=>entry.options.name==='dsh-frontvia-customer').fiber.ctx;
   const managerContext=[...ctx.loader.entries()].find(entry=>entry.options.name===MANAGER).fiber.ctx;
   const service=customerContext.get('pap'),sdk=service.acquireBusiness(customerContext),manager=managerContext.get('pap').acquireManagement(managerContext);
+  if(config.suite==='dsh-ucp'){
+    stage='claude_ucp_domain_browsing';
+    const registry=customerContext.get('tools');
+    const execute=async(name,args)=>{
+      const batch=await registry.execute({calls:[{type:'tool_call',id:randomUUID(),name,arguments:JSON.stringify(args)}],
+        agent:{id:'pap10-customer'},signal:new AbortController().signal});
+      assert.equal(batch.results.length,1);
+      const result=batch.results[0].result;
+      assert(!result.isError&&!result.value?.error,'Customer tool call failed');
+      return result.value;
+    };
+    const {checkClaudeDomain}=await import('./claude-public-shopping.mjs');
+    console.log(JSON.stringify(await checkClaudeDomain({domain:config.domain,execute,definitions:registry.definitions(),privateDir:fixture.root})));
+    assert(take(await sdk.operations()).some(operation=>operation.channel==='ucp'),'UCP candidate routes must be present');
+    stage='dsh_web_ucp_e2e';
+    const {runDsh}=await import('../tests/e2e/dsh/run.mjs');
+    await runDsh({fixture,commerce:{...config,ucpPlatformProfileUrl:profileUrl},root});
+    return;
+  }
   stage='public_pap_discovery';
   const connected=take(await sdk.connect(config.domain)),companyRef=connected.company.companyRef;
   const owner=take(await manager.execute({action:'session/connect',companyRef,mode:'regular'}));
@@ -74,7 +103,7 @@ try{
   const operations=take(await sdk.operations()).filter(operation=>operation.companyRef===companyRef);
   assert(operations.some(operation=>operation.channel==='ucp'),'UCP candidate routes must be present');
   await atomic('ucp-ready.json',{ready:true,profileUrl,users:['owner','other']});
-  console.log(JSON.stringify({status:'passed',case:'pap10-live-awiki-identity-and-product-profile',papSource:selected.source}));
+  console.log(JSON.stringify({status:'passed',case:'pap10-live-awiki-identity-and-product-profile',...sources}));
   stage='restricted_signing_bridge';
   let lastId;
   for(;;){
@@ -112,5 +141,7 @@ try{
     }catch(error){await atomic('ucp-sign.response.json',{id:request.id,error:/^[a-z][a-z0-9_]+$/i.test(error?.code??'')?error.code:'signing_rejected'});}
     finally{capture=undefined;}
   }
-}catch(error){process.exitCode=1;console.log(JSON.stringify({status:'failed',stage,error:error?.code??error?.name??'bridge_failed'}));}
+}
+try{await run();}
+catch(error){process.exitCode=1;console.log(JSON.stringify({status:'failed',stage,error:error?.code??error?.name??'bridge_failed'}));}
 finally{if(publisher)await new Promise(resolve=>publisher.close(resolve));await fixture?.dispose();hooks.deregister();}

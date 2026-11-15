@@ -166,7 +166,11 @@ handles signing keys.
 For isolated acceptance, `scripts/pap10-core-check.mjs` connects the real
 awiki.me Identity custodian to the independent Python wire runner through
 owner-only, temporary IPC. It signs only discovered operation targets and never
-exports private keys. Use `FRONTVIA_PAP_TEST_PACKAGE_ROOT` to select the built
-candidate PAP package. `FRONTVIA_CORE_ROOT` selects the isolated Core checkout
-for the Claude Code/DeepSeek domain-browsing test. These are explicit source
-integration checks and do not replace registry-package or production validation.
+exports private keys. Select the built PAP and Identity candidates with
+`FRONTVIA_PAP_TEST_PACKAGE_ROOT` and `FRONTVIA_IDENTITY_TEST_PACKAGE_ROOT`.
+The candidates carry manifest versions PAP 0.1.6, Identity 0.1.17 and Customer
+0.1.2, with the published Native Identity 0.2.6 binding. Set
+`FRONTVIA_CORE_ROOT` to the isolated Core checkout for the Claude
+Code/DeepSeek domain-browsing and DSH Web browser tests. Run
+`node --import tsx scripts/pap10-core-check.mjs --preflight` from the plugin
+checkout to verify which packages the bridge loads.

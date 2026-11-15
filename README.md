@@ -95,7 +95,19 @@ pnpm pack:local
 pnpm test:e2e:dsh
 ```
 
-只有联调公共 PAP 时，显式设置 `FRONTVIA_PAP_TEST_PACKAGE_ROOT=/absolute/path/to/dsh-pap`，先在该目录完成构建，再用同一环境重打包和执行测试。候选路径缺失、包名错误或未构建时失败，不回退；输出标明 `explicit-local` 与实际版本，不能据此声称正式 npm 包已通过。默认正式包不会重建或修改公共仓库。
+PAP 1.0 / UCP 2026-08-25 联调使用已构建的 Identity 和 PAP 源码候选。候选保留 manifest 版本 Identity 0.1.17、PAP 0.1.6 和 Customer 0.1.2，Native Identity 仍使用锁定的 registry 0.2.6。源码验收与正式 npm 包验收分别记录。`--preflight` 导入选定的模块并打印绝对路径和版本，配置缺失或候选无法加载时以非零退出。
+
+```sh
+# 在各候选 SDK 包目录安装其锁文件依赖并运行 npm run build
+export FRONTVIA_PAP_TEST_PACKAGE_ROOT=/absolute/path/to/dsh-pap
+export FRONTVIA_IDENTITY_TEST_PACKAGE_ROOT=/absolute/path/to/anp-identity/packages/dsh-anp-identity
+export FRONTVIA_CORE_ROOT=/absolute/path/to/frontvia-core
+node --import tsx scripts/pap10-core-check.mjs --preflight
+pnpm build
+pnpm pack:local
+```
+
+设置 `FRONTVIA_IDENTITY_TEST_AUTH_FILE` 指向已有的 0600 awiki.me 测试输入，将 `FRONTVIA_IDENTITY_TEST_STATE` 指向任务专用受保护工作状态。Core 的 `platform/tests/pap03/commerce.py --suite pap10` 和 `--suite ucp` 复用这两个候选包。产品用例使用 `python3 tests/e2e/dsh/run.py --ucp`，需继承 `DEEPSEEK_API_KEY`。构建和临时 profile 都在候选或测试工作目录内。
 
 旧 `docs/specs/`、`docs/implementation/`、`task_plan.md` 和 `progress.md` 的专用身份／PAP 0.2 内容只供历史追溯，不是当前安装或执行入口。现有身份、密钥、购物记录与结果未知交易不随源码清理删除。
 

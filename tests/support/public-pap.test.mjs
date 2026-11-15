@@ -3,7 +3,7 @@ import {mkdtempSync,writeFileSync,mkdirSync,rmSync} from 'node:fs';
 import {tmpdir} from 'node:os';
 import {join} from 'node:path';
 import test from 'node:test';
-import {publicPapPackage} from './public-pap.mjs';
+import {publicIdentityPackage,publicPapPackage} from './public-pap.mjs';
 
 test('PAP tests select the installed registry package without a sibling checkout',()=>{
   const selected=publicPapPackage({});
@@ -27,5 +27,20 @@ test('an explicit missing, relative or wrong PAP candidate never falls back to r
     const selected=publicPapPackage({FRONTVIA_PAP_TEST_PACKAGE_ROOT:root});
     assert.equal(selected.source,'explicit-local');assert.equal(selected.version,'0.1.7');
     assert.equal(selected.dependencyRoot,join(root,'node_modules'));
+  }finally{rmSync(root,{recursive:true});}
+});
+
+test('Identity defaults to the locked registry package and validates explicit candidate roots',()=>{
+  const selected=publicIdentityPackage({});
+  assert.equal(selected.source,'registry');
+  assert.equal(selected.version,'0.1.17');
+  assert.equal(selected.nativeVersion,'0.2.6');
+  assert.throws(()=>publicIdentityPackage({FRONTVIA_IDENTITY_TEST_PACKAGE_ROOT:'../anp-identity'}));
+  assert.throws(()=>publicIdentityPackage({FRONTVIA_IDENTITY_TEST_PACKAGE_ROOT:selected.root}));
+  assert.throws(()=>publicIdentityPackage({FRONTVIA_IDENTITY_TEST_PACKAGE_ROOT:publicPapPackage({}).root}));
+  const root=mkdtempSync(join(tmpdir(),'frontvia-identity-selection-'));
+  try{
+    writeFileSync(join(root,'package.json'),JSON.stringify({name:'@agent-network-protocol/dsh-anp-identity',version:'0.1.17'}));
+    assert.throws(()=>publicIdentityPackage({FRONTVIA_IDENTITY_TEST_PACKAGE_ROOT:root}));
   }finally{rmSync(root,{recursive:true});}
 });

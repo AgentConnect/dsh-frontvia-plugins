@@ -21,3 +21,21 @@ python3 tests/e2e/dsh/run.py
 公共包来源由 `tests/support/public-pap.mjs` 选择：默认正式 npm 包，显式本地联调使用 `FRONTVIA_PAP_TEST_PACKAGE_ROOT` 并先重打包。开始时输出实际 PAP 版本及来源；源码候选结果不代表 registry 包验收。
 
 复用已发布测试身份时，DSH 本轮只复制 Host 的公开 catalog 与 manager-settings 到拥有的临时目录；原生 Provider 继续在原保护目录托管密钥。这样保留空商家测试前置，不删除历史连接、不复制私钥或凭据；DSH 退出后临时 Host 状态随拥有 runner 清理。首次启动的 Preview Notice 必须确认关闭后再操作商城。
+
+## PAP 1.0 与 UCP 非支付结算
+
+在已构建的候选上运行 `python3 tests/e2e/dsh/run.py --ucp`。设置
+`FRONTVIA_CORE_ROOT` 为包含 `commerce.py --suite dsh-ucp` 的 Core，
+设置 `FRONTVIA_PAP_TEST_PACKAGE_ROOT` 与
+`FRONTVIA_IDENTITY_TEST_PACKAGE_ROOT` 为已构建候选包的绝对路径。沿用上文
+的浏览器、隔离 Native 构建及 PostgreSQL 前提。设置
+`FRONTVIA_IDENTITY_TEST_AUTH_FILE` 和 `FRONTVIA_IDENTITY_TEST_STATE`
+为受保护的测试输入与任务身份工作状态；后者承载活跃的本机签名状态，
+供 Claude 连接店铺后在独立 DSH Web 进程恢复。Agent 执行使用 Claude Code
+与 DeepSeek `deepseek-flash[1m]`，从受保护环境继承 `DEEPSEEK_API_KEY`。
+
+本用例先从实际域名发现和读取商品，再通过浏览器中的 Frontvia 服务页完成
+商品详情、加购、改量、创建草稿及重新打开。通过 DSH 实际发出的 PAP 1.0 请求
+确认选用了 UCP 目录、Cart 和 Checkout 路由。Core runner 核对一个真实 Cart、
+一个 Checkout 草稿及 Native Checkout、额度、付款会话和订单零增长。
+浏览器 suite 输出 3 条逐用例结果，Claude 浏览单独输出 1 条结果。

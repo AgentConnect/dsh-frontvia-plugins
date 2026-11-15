@@ -3,22 +3,21 @@ import {Context} from '@deepseek-ai/cordis';
 import Loader from '@deepseek-ai/cordis-plugin-loader';
 import Registry from '@deepseek-ai/dsh-typert-registry';
 import Credentials from '@deepseek-ai/dsh-credentials-local';
-import Identity from '@agent-network-protocol/dsh-anp-identity';
-import * as Provider from '@agent-network-protocol/dsh-anp-identity/provider';
-import Manager from '@agent-network-protocol/dsh-anp-identity/management-remote';
-import * as Bootstrap from '@agent-network-protocol/dsh-anp-identity/protocol-bootstrap';
 import {mkdir,mkdtemp,readFile,writeFile,rm,lstat} from 'node:fs/promises';
 import {randomBytes} from 'node:crypto';
 import {join,resolve} from 'node:path';
 import {tmpdir} from 'node:os';
 import {setTimeout as delay} from 'node:timers/promises';
+import {loadPublicIdentity} from './public-pap.mjs';
 
 const SERVICE='@agent-network-protocol/dsh-anp-identity';
 const MANAGER=SERVICE+'/management-remote';
 const PROVIDER=SERVICE+'/provider';
 
 /** Real public User Service. Retain only the dedicated encrypted test identity, not run artifacts. */
-export async function awikiMeIdentity(){
+export async function awikiMeIdentity(identityPackage=undefined){
+  identityPackage??=await loadPublicIdentity();
+  const {plugin:{default:Identity},provider:Provider,manager:{default:Manager},bootstrap:Bootstrap}=identityPackage;
   const authFile=process.env.FRONTVIA_IDENTITY_TEST_AUTH_FILE??resolve('.local/identity/awiki-me/auth.json');
   assert(authFile,'Protected awiki.me test authentication input is required');
   const input=await lstat(authFile);
@@ -99,7 +98,7 @@ export async function awikiMeIdentity(){
     else assert.equal(phase.phase,'published','Live registration blocked; retain original identity state for reconciliation');
     await readPublished();
     return {
-      root,identityRoot,credentialsFile,origin:auth.origin,get ctx(){return ctx;},get publicRef(){return reference;},get publicMaterials(){return materials;},
+      root,identityRoot,identityPackage,credentialsFile,origin:auth.origin,get ctx(){return ctx;},get publicRef(){return reference;},get publicMaterials(){return materials;},
       evidence:{observations,excludesInternalCredentials(value){
         const visit=v=>!v||typeof v!=='object'||Object.entries(v).every(([key,item])=>!['access_token','refresh_token','otp_code','private_key','d','k'].includes(key)&&visit(item));
         return visit(value)&&!JSON.stringify(value).includes(auth.phone);

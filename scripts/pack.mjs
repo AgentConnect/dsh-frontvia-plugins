@@ -1,11 +1,10 @@
 import { mkdir, readFile, writeFile, cp } from "node:fs/promises";
 import spawn from "cross-spawn";
 import { resolve } from "node:path";
-import { createRequire } from "node:module";
 import { createHash } from "node:crypto";
 import { pluginPackages } from "./plugin-packages.mjs";
 import { assertBundleInputs } from "./package-inputs.mjs";
-import {publicPapPackage} from "../tests/support/public-pap.mjs";
+import {publicIdentityPackage,publicPapPackage} from "../tests/support/public-pap.mjs";
 const root = resolve("."),
   out = resolve(".local/packages");
 const bundles = pluginPackages.map(({ folder, name }) => [
@@ -13,6 +12,7 @@ const bundles = pluginPackages.map(({ folder, name }) => [
   name,
 ]);
 // Validate every dependency before packing or publishing a new manifest.
+const selectedPap=publicPapPackage(),selectedIdentity=publicIdentityPackage();
 for (const [folder, name] of bundles) await assertBundleInputs(folder, name);
 await mkdir(out, { recursive: true });
 const artifacts = [];
@@ -35,15 +35,19 @@ for (const [folder, name] of bundles) {
   artifacts.push({ name, path: immutable, sha256 });
 }
 // Local packaging never publishes either package to npm.
-const require = createRequire(resolve(root, 'package.json'));
-const selectedPap=publicPapPackage();
-const publicRoot=selectedPap.root;
-const sdkPack=spawn.sync('npm',['pack','--ignore-scripts','--json','--pack-destination',out],{cwd:publicRoot,encoding:'utf8'});
-if(sdkPack.error)throw sdkPack.error;if(sdkPack.status!==0)throw new Error('Public PAP local packaging failed');
-const sdk=JSON.parse(sdkPack.stdout)[0];if(sdk.name!=='@awiki/dsh-pap'||sdk.version!==selectedPap.version)throw new Error('Public PAP candidate baseline changed');
-const sdkPath=resolve(out,sdk.filename),sdkBytes=await readFile(sdkPath),sdkHash=createHash('sha256').update(sdkBytes).digest('hex');
-const sdkImmutable=resolve(out,sdk.filename.replace(/\.tgz$/,'-'+sdkHash.slice(0,12)+'.tgz'));
-await cp(sdkPath,sdkImmutable);artifacts.push({name:'@awiki/dsh-pap',path:sdkImmutable,sha256:sdkHash,version:sdk.version,localPatch:selectedPap.source==='explicit-local'});
+async function packDependency(name,selected){
+  const packed=spawn.sync('npm',['pack','--ignore-scripts','--json','--pack-destination',out],{cwd:selected.root,encoding:'utf8'});
+  if(packed.error)throw packed.error;
+  if(packed.status!==0)throw new Error(`Local packaging failed for ${name}`);
+  const {name:actualName,version,filename}=JSON.parse(packed.stdout)[0];
+  if(actualName!==name||version!==selected.version)throw new Error(`Selected package changed for ${name}`);
+  const path=resolve(out,filename),bytes=await readFile(path),sha256=createHash('sha256').update(bytes).digest('hex');
+  const immutable=resolve(out,filename.replace(/\.tgz$/,'-'+sha256.slice(0,12)+'.tgz'));
+  await cp(path,immutable);
+  return {name,path:immutable,sha256,version,localPatch:selected.source==='explicit-local'};
+}
+artifacts.push(await packDependency('@awiki/dsh-pap',selectedPap));
+const identityArtifact=await packDependency('@agent-network-protocol/dsh-anp-identity',selectedIdentity);
 await writeFile(
   resolve(out, "manifest.json"),
   JSON.stringify(
@@ -53,7 +57,11 @@ await writeFile(
       publication: "local-only",
       papSource: selectedPap.source,
       papRoot: selectedPap.root,
-      identityVersion: require('@agent-network-protocol/dsh-anp-identity/package.json').version,
+      identitySource: selectedIdentity.source,
+      identityRoot: selectedIdentity.root,
+      identityVersion: selectedIdentity.version,
+      nativeIdentityVersion: selectedIdentity.nativeVersion,
+      identityArtifact,
       artifacts,
     },
     null,
