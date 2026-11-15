@@ -31,7 +31,9 @@ python3 tests/e2e/dsh/run.py
 的浏览器、隔离 Native 构建及 PostgreSQL 前提。设置
 `FRONTVIA_IDENTITY_TEST_AUTH_FILE` 和 `FRONTVIA_IDENTITY_TEST_STATE`
 为受保护的测试输入与任务身份工作状态；后者承载活跃的本机签名状态，
-供 Claude 连接店铺后在独立 DSH Web 进程恢复。Agent 执行使用 Claude Code
+供 Claude 连接店铺后在独立 DSH Web 进程恢复。PAP 1.0 验收从专用已发布
+身份的工作副本加载原批准记录与本机密钥托管，再从 awiki.me 回读 CIMD/JWKS。
+已发布身份的验收无需恢复原路径绑定的注册工作流。Agent 执行使用 Claude Code
 与 DeepSeek `deepseek-flash[1m]`，从受保护环境继承 `DEEPSEEK_API_KEY`。
 
 本用例先从实际域名发现和读取商品，再通过浏览器中的 Frontvia 服务页完成

@@ -43,7 +43,7 @@ async function run(){
   });
   await new Promise((resolve,reject)=>{publisher.once('error',reject);publisher.listen(config.identityPort,'127.0.0.1',resolve);});
   stage='live_identity';
-  const {awikiMeIdentity}=await import('../tests/support/awiki-me-identity.mjs');fixture=await awikiMeIdentity(selectedIdentity);
+  const {awikiMeIdentity}=await import('../tests/support/awiki-me-identity.mjs');fixture=await awikiMeIdentity(selectedIdentity,{reusePublished:true});
   assert.equal(new URL(JSON.parse(fixture.publicMaterials.metadata).client_id).origin,'https://awiki.me');
   assert.equal(fixture.identityPackage.root,selectedIdentity.root);
   const Manager=(await import(pathToFileURL(join(selected.root,'lib/management-remote.js')).href)).default;
@@ -168,5 +168,9 @@ async function run(){
   }
 }
 try{await run();}
-catch(error){process.exitCode=1;console.log(JSON.stringify({status:'failed',stage,error:error?.code??error?.name??'bridge_failed'}));}
+catch(error){
+  process.exitCode=1;
+  const location=String(error?.stack??'').match(/(?:awiki-me-identity|pap10-core-check)\.mjs:\d+:\d+/)?.[0];
+  console.log(JSON.stringify({status:'failed',stage,error:error?.code??error?.name??'bridge_failed',location}));
+}
 finally{if(publisher)await new Promise(resolve=>publisher.close(resolve));await fixture?.dispose();hooks.deregister();}

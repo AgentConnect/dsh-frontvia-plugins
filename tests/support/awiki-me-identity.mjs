@@ -15,7 +15,7 @@ const MANAGER=SERVICE+'/management-remote';
 const PROVIDER=SERVICE+'/provider';
 
 /** Real public User Service. Retain only the dedicated encrypted test identity, not run artifacts. */
-export async function awikiMeIdentity(identityPackage=undefined){
+export async function awikiMeIdentity(identityPackage=undefined,{reusePublished=false}={}){
   identityPackage??=await loadPublicIdentity();
   const {plugin:{default:Identity},provider:Provider,manager:{default:Manager},bootstrap:Bootstrap}=identityPackage;
   const authFile=process.env.FRONTVIA_IDENTITY_TEST_AUTH_FILE??resolve('.local/identity/awiki-me/auth.json');
@@ -28,16 +28,16 @@ export async function awikiMeIdentity(identityPackage=undefined){
   const persistent=resolve(process.env.FRONTVIA_IDENTITY_TEST_STATE??'.local/identity/awiki-me');
   await mkdir(persistent,{recursive:true,mode:0o700});
   const identityRoot=join(persistent,'identity'),credentialsFile=join(persistent,'.credentials.yaml');
-  const root=await mkdtemp(join(tmpdir(),'frontvia-live-identity-'));
   const enrollment=join(persistent,'enrollment.json');
   let seed;
   try{seed=JSON.parse(await readFile(enrollment,'utf8'));}
   catch(error){
-    if(error.code!=='ENOENT')throw error;
+    if(error.code!=='ENOENT'||reusePublished)throw error;
     const suffix=randomBytes(5).toString('hex');
     seed={handle:'systestmd'+suffix,requestId:'frontvia-awiki-me-'+suffix,path:'/awiki/user/frontvia'+randomBytes(12).toString('hex')};
     await writeFile(enrollment,JSON.stringify(seed),{flag:'wx',mode:0o600});
   }
+  const root=await mkdtemp(join(tmpdir(),'frontvia-live-identity-'));
   const registration={id:'frontvia-live-phone',requestId:seed.requestId,stateRoot:join(persistent,'bootstrap'),origin:auth.origin,
     phone:auth.phone,clientName:'Frontvia dedicated PAP test identity',capabilities:{mcpMachine:false,papSession:true,papAccount:false},redirectUris:[],pollIntervalMs:200};
   let ctx,remote,managerContext,reference,materials,disposed=false;
@@ -69,8 +69,8 @@ export async function awikiMeIdentity(identityPackage=undefined){
     await ctx.loader.create({name:PROVIDER,config:{stateRoot:identityRoot,rootKeyProvider:'local-file'}});
     await ctx.loader.await();
     await until(()=>ctx.get('anpIdentity').health(),v=>v.status==='ready');
-    await ctx.loader.create({name:MANAGER,config:{registrationBootstrap:registration}});
-    await ctx.loader.create({name:Bootstrap.PROTOCOL_BOOTSTRAP_CONSUMER,config:{requestId:seed.requestId,profile:'e1',identityOnly:true,label:'Frontvia awiki.me test',
+    await ctx.loader.create({name:MANAGER,...(!reusePublished?{config:{registrationBootstrap:registration}}:{})});
+    if(!reusePublished)await ctx.loader.create({name:Bootstrap.PROTOCOL_BOOTSTRAP_CONSUMER,config:{requestId:seed.requestId,profile:'e1',identityOnly:true,label:'Frontvia awiki.me test',
       domain:'awiki.me',path:seed.path,handle:seed.handle+'.awiki.me'}});
     await ctx.loader.await();
     managerContext=[...ctx.loader.entries()].find(e=>e.options.name===MANAGER).fiber.ctx;
@@ -79,23 +79,44 @@ export async function awikiMeIdentity(identityPackage=undefined){
     await ctx.loader.await();
   };
   const readPublished=async()=>{
-    const view=await until(status,v=>v?.phase==='published');reference=view.reference;assert(reference&&view.clientId);
-    const reply=await originalFetch(view.clientId,{redirect:'error'});assert.equal(reply.status,200);
+    let clientId,keyId;
+    if(reusePublished){
+      // Published custody can be reopened from an isolated store. The enrollment broker
+      // is bound to its original absolute path and is needed only to register or publish.
+      const authority=manager(),{request}=await authority.getRequest(seed.requestId);
+      assert(request.kind==='create'&&request.caller.consumer===Bootstrap.PROTOCOL_BOOTSTRAP_CONSUMER
+        &&request.status==='approved'&&request.executionStatus==='succeeded'&&request.result?.reference);
+      reference=request.result.reference;
+      const publication=await authority.publicationStatus(reference);
+      assert(publication.state==='published'&&publication.capabilities?.papSession&&publication.keyId);
+      ({clientId,keyId}=publication);
+    }else{
+      const view=await until(status,v=>v?.phase==='published');
+      ({reference,clientId}=view);
+    }
+    assert(reference&&clientId);
+    assert.equal(new URL(clientId).origin,auth.origin);
+    const reply=await originalFetch(clientId,{redirect:'error'});assert.equal(reply.status,200);
     const metadata=await reply.text(),document=JSON.parse(metadata);
-    assert.equal(document.client_id,view.clientId);assert.equal(new URL(document.client_id).origin,auth.origin);
+    assert.equal(document.client_id,clientId);
+    assert.equal(new URL(document.jwks_uri).origin,auth.origin);
     const jwks=await originalFetch(document.jwks_uri,{redirect:'error'});assert.equal(jwks.status,200);
-    materials={metadata,jwks:await jwks.text()};
+    const keys=await jwks.text();
+    if(keyId)assert(JSON.parse(keys).keys.some(key=>key.kid===keyId),'Published PAP key missing from live JWKS');
+    materials={metadata,jwks:keys};
   };
   try{
     await start();
-    const view=await until(status,v=>v?.phase);
-    if(view.phase==='awaiting_approval'){
-      const review=await manager().getRequest(seed.requestId);
-      if(review.request.status==='pending')await manager().decide({requestId:seed.requestId,expectedVersion:review.request.version,decision:'approve'});
+    if(!reusePublished){
+      const view=await until(status,v=>v?.phase);
+      if(view.phase==='awaiting_approval'){
+        const review=await manager().getRequest(seed.requestId);
+        if(review.request.status==='pending')await manager().decide({requestId:seed.requestId,expectedVersion:review.request.version,decision:'approve'});
+      }
+      const phase=await until(status,v=>['awaiting_phone_verification','published','blocked','registration_uncertain'].includes(v?.phase));
+      if(phase.phase==='awaiting_phone_verification')await remote.submitRegistrationOtp({code:auth.code});
+      else assert.equal(phase.phase,'published','Live registration blocked; retain original identity state for reconciliation');
     }
-    const phase=await until(status,v=>['awaiting_phone_verification','published','blocked','registration_uncertain'].includes(v?.phase));
-    if(phase.phase==='awaiting_phone_verification')await remote.submitRegistrationOtp({code:auth.code});
-    else assert.equal(phase.phase,'published','Live registration blocked; retain original identity state for reconciliation');
     await readPublished();
     return {
       root,identityRoot,identityPackage,credentialsFile,origin:auth.origin,get ctx(){return ctx;},get publicRef(){return reference;},get publicMaterials(){return materials;},
