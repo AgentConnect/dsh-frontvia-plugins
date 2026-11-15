@@ -23,7 +23,12 @@ const VERSION='2026-08-25';
 const capabilityNames=['catalog.search','catalog.lookup','cart','checkout','order','fulfillment'];
 const productProfile={ucp:{version:VERSION,services:{'dev.ucp.shopping':[{version:VERSION,transport:'rest',spec:`https://ucp.dev/${VERSION}/specification/overview/`,schema:`https://ucp.dev/${VERSION}/services/shopping/rest.openapi.json`}]},payment_handlers:{},capabilities:Object.fromEntries(capabilityNames.map(name=>[`dev.ucp.shopping.${name}`,[{version:VERSION,...(name==='fulfillment'?{extends:['dev.ucp.shopping.checkout','dev.ucp.shopping.catalog.search','dev.ucp.shopping.catalog.lookup']}:{}),spec:`https://ucp.dev/${VERSION}/specification/shopping/${name.startsWith('catalog.')?'catalog':name}/`,schema:`https://ucp.dev/${VERSION}/schemas/shopping/${name.replace('.','_')}.json`}]] ))}};
 let fixture,publisher,stage='configuration';
-const take=result=>{if(!result.ok)throw new Error(result.error?.code??'public_pap_failed');return result.value;};
+const discoveryHttp=[];
+const safeCode=value=>typeof value==='string'&&/^[a-z][a-z0-9_]{0,79}$/i.test(value)?value:undefined;
+const take=result=>{
+  if(!result.ok)throw Object.assign(new Error('Public PAP operation failed'),{code:safeCode(result.error?.code)??'public_pap_failed'});
+  return result.value;
+};
 async function run(){
   assert.equal(publicPapPackage().source,'explicit-local','PAP 1.0 verification requires an explicit PAP candidate');
   assert.equal(publicIdentityPackage().source,'explicit-local','PAP 1.0 verification requires an explicit Identity candidate');
@@ -56,7 +61,22 @@ async function run(){
       capture.headers=structuredClone(options.headers);
       return {url,status:418,headers:{'content-type':'application/json'},body:Buffer.from('{}')};
     }
-    return base.request(url,options);
+    const target=new URL(url);
+    const discovery=(options.method??'GET')==='GET'&&!options.headers?.['poppy-session']
+      &&[config.origin,new URL(profileUrl).origin].includes(target.origin)
+      &&/^\/[a-z0-9_./-]{0,180}$/i.test(target.pathname);
+    const observe=fields=>{
+      if(discovery&&discoveryHttp.length<24)discoveryHttp.push({
+        peer:target.origin===config.origin?'company':'platform',path:target.pathname,...fields});
+    };
+    try{
+      const response=await base.request(url,options);
+      observe({status:response.status});
+      return response;
+    }catch(error){
+      observe({error:safeCode(error?.code)??'transport_failed'});
+      throw error;
+    }
   }};
   const NETWORK='@fixture/frontvia-pap10-host',MANAGER='@awiki/dsh-pap/management-remote';
   const network={apply(context){context.provide('papHost',{transport});context.provide('profileContext',{name:'pap10-core',dir:fixture.root});context.provide('systemPrompt',{tools(){return()=>{};},section(){return()=>{};}});context.provide('connection',{browserPeer:{principal:{kind:'owner'}},fetch:{register(){return()=>{};}}});}};
@@ -95,15 +115,18 @@ async function run(){
     await runDsh({fixture,commerce:{...config,ucpPlatformProfileUrl:profileUrl},root});
     return;
   }
-  stage='public_pap_discovery';
+  stage='public_pap_connect';
   const connected=take(await sdk.connect(config.domain)),companyRef=connected.company.companyRef;
   const openSession=async mode=>take(await manager.execute({action:'session/connect',companyRef,mode}));
   const discovered=async()=>take(await sdk.operations()).filter(operation=>operation.companyRef===companyRef);
+  stage='public_pap_operations';
   let operations=await discovered(),version=config.suite==='ucp'?'0.3':'1.0';
+  stage='pap_regular_session';
   const owner=await openSession('regular');
   const sessions={owner:owner.sessionRef,other:undefined};
   const ready=async()=>{
     assert(operations.some(operation=>operation.channel==='ucp'),'UCP candidate routes must be present');
+    stage='pap_anonymous_session';
     sessions.other=(await openSession('anonymous')).sessionRef;
     await atomic('ucp-ready.json',{ready:true,profileUrl,users:['owner','other']});
     console.log(JSON.stringify({status:'passed',case:'pap10-live-awiki-identity-and-product-profile',...sources}));
@@ -123,6 +146,7 @@ async function run(){
         const updated=take(await sdk.connect(config.domain)).company;
         assert.equal(updated.companyRef,companyRef);
         assert.equal(updated.companyId,connected.company.companyId);
+        stage='pap10_upgrade_session';
         const next=await openSession('regular');
         assert(typeof owner.subjectRef==='string'&&next.subjectRef===owner.subjectRef,'PAP upgrade must preserve the regular subject');
         assert(next.sessionRef&&next.sessionRef!==owner.sessionRef,'PAP upgrade must open a new Session');
@@ -158,12 +182,13 @@ async function run(){
         await delay(30);
       }
       assert(settled,'Signing approval timed out');const result=await dispatch;
+      if(!capture.headers)take(result);
       assert(capture.headers,'Public PAP dispatch must reach the exact transport target');
       const headers=Object.fromEntries(Object.entries(capture.headers).filter(([name])=>['poppy-session','poppy-version','poppy-extensions','ucp-agent','request-id'].includes(name.toLowerCase())));
       assert.equal(headers['poppy-version'],version);
       await atomic('ucp-sign.response.json',{id:request.id,headers});
       void result;
-    }catch(error){await atomic('ucp-sign.response.json',{id:request.id,error:/^[a-z][a-z0-9_]+$/i.test(error?.code??'')?error.code:'signing_rejected'});}
+    }catch(error){await atomic('ucp-sign.response.json',{id:request.id,error:safeCode(error?.code)??'signing_rejected'});}
     finally{capture=undefined;}
   }
 }
@@ -171,6 +196,7 @@ try{await run();}
 catch(error){
   process.exitCode=1;
   const location=String(error?.stack??'').match(/(?:awiki-me-identity|pap10-core-check)\.mjs:\d+:\d+/)?.[0];
-  console.log(JSON.stringify({status:'failed',stage,error:error?.code??error?.name??'bridge_failed',location}));
+  console.log(JSON.stringify({status:'failed',stage,error:safeCode(error?.code)??safeCode(error?.name)??'bridge_failed',
+    location,...(discoveryHttp.length?{discoveryHttp}:{})}));
 }
 finally{if(publisher)await new Promise(resolve=>publisher.close(resolve));await fixture?.dispose();hooks.deregister();}
