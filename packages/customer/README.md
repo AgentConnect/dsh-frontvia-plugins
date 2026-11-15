@@ -1,16 +1,17 @@
 # dsh-frontvia-customer
 
 Frontvia shopping tools and native chat cards for DeepSeek Harness 0.2.2-rc.1.
-The three plugins share one DSH profile. Install public Identity 0.1.17 or newer
+The three plugins share one DSH profile. Install public Identity 0.1.18 or newer
 and a build of DSH PAP that supports PAP 1.0. Merchant configuration can be empty.
 Give Customer the shop domain in the conversation.
 
 ## Install and connect
 
-For this candidate, use the local PAP 1.0 and Customer builds described in
-[PAP 1.0 / UCP candidate](#pap-10--ucp-candidate). The public PAP 0.1.6 package
-supports only the retired protocol. The PAP 1.0 release will provide the
-registry package for this candidate.
+Install the PAP 1.0 package set in the selected DSH profile.
+
+```sh
+dsh plugin --profile desktop add @agent-network-protocol/dsh-anp-identity@0.1.18 @awiki/dsh-pap@0.2.0 dsh-frontvia-customer@0.2.0
+```
 
 首次使用须在当前 Profile 的 `cordis.patch.yml` 中显式开启域名接入（合并到已有同 ID 配置）：
 
@@ -172,8 +173,8 @@ awiki.me Identity custodian to the independent Python wire runner through
 owner-only, temporary IPC. It signs only discovered operation targets and never
 exports private keys. Select the built PAP and Identity candidates with
 `FRONTVIA_PAP_TEST_PACKAGE_ROOT` and `FRONTVIA_IDENTITY_TEST_PACKAGE_ROOT`.
-The candidates carry manifest versions PAP 0.1.6, Identity 0.1.17 and Customer
-0.1.2, with the published Native Identity 0.2.6 binding. Set
+The corresponding npm versions are PAP 0.2.0, Identity 0.1.18 and Customer
+0.2.0, with the published Native Identity 0.2.6 binding. Set
 `FRONTVIA_CORE_ROOT` to the isolated Core checkout for the Claude
 Code/DeepSeek domain-browsing and DSH Web browser tests. Run
 `node --import tsx scripts/pap10-core-check.mjs --preflight` from the plugin

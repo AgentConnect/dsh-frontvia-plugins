@@ -7,9 +7,9 @@ Frontvia 身份服务、`identity-config.json`、手工 CIMD/JWKS 或购买签�
 ## 依赖与 Host 配置
 
 - DSH Host：`0.2.2-rc.1`（Host 版本，不是 PAP 协议版本）。
-- 公共 Identity：`@agent-network-protocol/dsh-anp-identity >=0.1.17`。
-- 公共 PAP 使用支持 1.0 和受控业务入口的 DSH PAP 构建。本候选使用本地包，已发布的 0.1.6 只支持已退役协议。
-- Customer：`dsh-frontvia-customer@0.1.2`。
+- 公共 Identity：`@agent-network-protocol/dsh-anp-identity >=0.1.18`。
+- 公共 PAP 使用支持 PAP 1.0 和受控业务入口的 `@awiki/dsh-pap ^0.2.0`。
+- Customer：`dsh-frontvia-customer@0.2.0`。
 
 公共 PAP 的 Host 配置需启用 `enabled`、`autoConnect`，并将实际安装包
 `dsh-frontvia-customer` 加入 `businessConsumers`。安装器提供这项配置；用户 Profile
