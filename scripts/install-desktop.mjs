@@ -27,6 +27,12 @@ const cli =
 const artifacts = JSON.parse(
   await readFile(resolve(".local/packages/manifest.json"), "utf8"),
 );
+// Explicit source builds install the verified Identity artifact as well.
+if (artifacts.identitySource === 'explicit-local') {
+  if (!artifacts.identityArtifact || artifacts.identityArtifact.name !== '@agent-network-protocol/dsh-anp-identity')
+    throw new Error('Missing verified local Identity artifact');
+  artifacts.artifacts.push(artifacts.identityArtifact);
+}
 const names = artifacts.artifacts.map(item=>item.name);
 const identityName='@agent-network-protocol/dsh-anp-identity';
 const identityVersion=artifacts.identityVersion;
@@ -120,7 +126,8 @@ async function rollback(previous, pair) {
       const current = await snapshot();
       const before = JSON.parse(previous.manifest).dependencies ?? {};
       const after = JSON.parse(current.manifest).dependencies ?? {};
-      if (before[identityName]!==after[identityName]&&![identityVersion,'^'+identityVersion,'~'+identityVersion].includes(after[identityName]))throw new Error('Public identity dependency changed concurrently');
+      const identityPair = pair.find(item => item.name === identityName);
+      if (before[identityName]!==after[identityName]&&![identityVersion,'^'+identityVersion,'~'+identityVersion].includes(after[identityName])&&!(identityPair&&pointsTo(after[identityName],identityPair.path)))throw new Error('Public identity dependency changed concurrently');
       if (
         !isDeepStrictEqual(
           otherPackages(previous.manifest),
@@ -197,8 +204,10 @@ await withFileLock(
         "--profile",
         "desktop",
         "add",
-        `${identityName}@${identityVersion}`,
-        ...pair.filter(item=>item.name!=="dsh-frontvia-customer").map(item=>item.path),
+        ...(pair.some(item=>item.name===identityName)
+          ? pair.filter(item=>item.name===identityName).map(item=>item.path)
+          : [`${identityName}@${identityVersion}`]),
+        ...pair.filter(item=>item.name!=="dsh-frontvia-customer"&&item.name!==identityName).map(item=>item.path),
         ...pair.filter(item=>item.name==="dsh-frontvia-customer").map(item=>item.path),
       ]);
       await withFileLock(manifestPath, async () => {
@@ -212,6 +221,11 @@ await withFileLock(
       }, locks);
       const installedIdentity=JSON.parse(await readFile(join(profile,"node_modules",identityName,"package.json"),"utf8"));
       if(installedIdentity.version!==identityVersion)throw new Error("Installed identity does not match the candidate");
+      if (artifacts.identitySource === 'explicit-local') {
+        const source = await readFile(join(artifacts.identityRoot, 'lib', 'index.js'));
+        const installed = await readFile(join(profile, 'node_modules', identityName, 'lib', 'index.js'));
+        if (!source.equals(installed)) throw new Error('Installed Identity differs from the verified source build');
+      }
       for (const { name } of pair.filter(item=>pluginPackages.some(p=>p.name===item.name))) {
         const folder = join(
           "packages",
