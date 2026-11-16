@@ -36,11 +36,20 @@ export class Pap03Business implements PapPort {
       }
     }
   }
-  async prepareDomain(domain:string){await this.connect(domain);}
+  async prepareDomain(domain:string){
+    await this.refresh();
+    if(this.readinessError)throw this.readinessError;
+    // Explicit user connection re-discovers the protocol and lets PAP choose a
+    // compatible session. Restored lifecycle state may predate a server upgrade.
+    await this.discoverDomain(domain);
+  }
   async connect(domain:string){
     await this.refresh();
     if(this.readinessError)throw this.readinessError;
     for(const [ref,value] of this.connections)if(value.store.domain===domain&&this.canAccess(ref))return {connectionRef:ref};
+    return this.discoverDomain(domain);
+  }
+  private async discoverDomain(domain:string){
     const store=await this.transport.connect(domain);await this.refresh();
     if(this.readinessError)throw this.readinessError;
     if(!this.epoch)fail('PUBLIC_IDENTITY_REQUIRED');

@@ -54,18 +54,26 @@ test('inline payment uses a discovered operation and refuses foreign payment lin
  assert.equal(f.calls.length,0);await business.hostedPayment(connectionRef,link,id);
  assert.deepEqual(f.calls,[{operationRef:'payment',body:{checkout_id:id,expires,access}}]);
 });
-test('same chat restores its flow from public lifecycle state without another domain connect',async()=>{
+test('explicit same-chat connect re-discovers PAP while preserving its flow and identity fence',async()=>{
  const f=fixture(),s=shopping(f);
  const first=await s.service().connect('chat','shop.example');
  const restored=await s.service().connect('chat','shop.example');
  assert.equal(restored.flowId,first.flowId);assert.equal(s.saved.size,1);
  assert.deepEqual(f.calls.map(call=>call.operationRef),['capabilities','capabilities']);
- assert.equal(f.connects.length,1);
+ assert.equal(f.connects.length,2);
  f.changeIdentity();const count=f.calls.length;
  await assert.rejects(s.service().connect('chat','shop.example'),{code:'PERSONAL_CHAT_ACCOUNT_CHANGED'});
  assert.equal(f.calls.length,count,'changed identity must not read business data');
- assert.equal(f.connects.length,1,'changed chat identity must be rejected before domain discovery');
+ assert.equal(f.connects.length,2,'changed chat identity must be rejected before domain discovery');
  assert.equal(s.saved.size,1);
+});
+test('explicit preparation refreshes restored sessions without reconnecting ordinary reads',async()=>{
+ const f=fixture(),first=new Pap03Business(f.sdk);await first.connect('shop.example');
+ const restored=new Pap03Business(f.sdk);await restored.refresh();
+ await restored.prepareDomain('shop.example');
+ const {connectionRef}=await restored.connect('shop.example');
+ await restored.request(connectionRef,'commerce.products.search',{});
+ assert.equal(f.connects.length,2);assert.equal(f.calls.length,1);
 });
 test('public business projection does not restore disconnected sessions after restart',async()=>{
  const f=fixture(),first=new Pap03Business(f.sdk);const {connectionRef}=await first.connect('shop.example');
