@@ -396,6 +396,13 @@ function StorefrontContent({
           manualDelivery ? 1 : 0,
           step ?? (data?.intent ? 3 : data?.quote ? 2 : 1),
         );
+  const ucpDraftMethod = data?.checkout && data.checkout.status !== "canceled"
+    ? "commerce.checkouts.get"
+    : "commerce.checkouts.create";
+  const ucpDraftAvailable = data?.capabilities?.ucp && data.capabilities.methods?.some(
+    (method: { method: string; availability: string }) =>
+      method.method === ucpDraftMethod && method.availability === "supported",
+  );
   const deliveryRequested = useRef(false);
   const [preparingDelivery, setPreparingDelivery] = useState(false);
   const prepareDelivery = async () => {
@@ -590,10 +597,15 @@ function StorefrontContent({
                     <ShoppingCart />
                     购物车 {count > 0 ? `(${count})` : ""}
                   </TabsTrigger>
-                  <TabsTrigger value="orders">
-                    <Package />
-                    我的订单
-                  </TabsTrigger>
+                  {(!data.capabilities?.ucp || data.capabilities.methods?.some(
+                    (method: { method: string; availability: string }) =>
+                      method.method === "commerce.orders.get" && method.availability === "supported",
+                  )) && (
+                    <TabsTrigger value="orders">
+                      <Package />
+                      我的订单
+                    </TabsTrigger>
+                  )}
                 </TabsList>
                 <Button
                   variant="ghost"
@@ -1075,7 +1087,7 @@ function StorefrontContent({
                                 {data.capabilities?.ucp ? "取消草稿并修改购物车" : "返回修改购物车"}
                               </Button>
                             )}
-                            {data.capabilities?.ucp && (
+                            {ucpDraftAvailable && (
                               <div className="fv-stack">
                                 <Button disabled={blocked} onClick={() => shop({action:"prepare"})}>
                                   {data.checkout ? "查看结算草稿" : "创建结算草稿"}
@@ -1092,7 +1104,7 @@ function StorefrontContent({
                                 )}
                               </div>
                             )}
-                            <Button
+                            {(!data.capabilities?.ucp || ucpDraftAvailable) && <Button
                               disabled={blocked || !data.purchaseReady}
                               onClick={() => {
                                 setTab("checkout");
@@ -1111,8 +1123,8 @@ function StorefrontContent({
                                 ? "继续结账"
                                 : "去结账"}
                               <ArrowRight data-icon="inline-end" />
-                            </Button>
-                            {!data.purchaseReady && (
+                            </Button>}
+                            {!data.purchaseReady && !ucpDraftAvailable && (
                               <p className="fv-muted">商家购买服务尚未就绪。</p>
                             )}
                           </div>

@@ -7,11 +7,15 @@ import type {PapOperationsClient} from '@awiki/dsh-pap/product-api';
 const version='2026-08-25';
 const ucp={version};
 const product={id:'product-1',title:'Mug',description:{plain:'Ceramic'},price_range:{min:{amount:1250,currency:'USD'},max:{amount:1250,currency:'USD'}},variants:[{id:'variant-1',title:'Blue',description:{plain:'Blue ceramic'},price:{amount:1250,currency:'USD'}}]};
-function fixture(){
+function fixture(cartOnly=false){
   let loseNext=false, rejection: {status:number;code:string;version:string}|undefined;const receipts=new Map<string,any>();let effects=0;
   const calls:any[]=[],store={companyRef:'shop',companyId:'https://shop.example',domain:'shop.example',name:'Shop',ucpCapabilities:['dev.ucp.shopping.fulfillment']};
   const specs=[['commerce.capabilities.get','GET'],['update_checkout','PUT'],['search_catalog','POST'],['get_product','POST'],['create_cart','POST'],['get_cart','GET'],['update_cart','PUT'],['create_checkout','POST'],['get_checkout','GET'],['cancel_checkout','POST'],['get_order','GET']];
-  const operations=specs.map(([operationId,method])=>({companyRef:'shop',operationRef:operationId,operationId,method,channel:operationId==='commerce.capabilities.get'?'openapi':'ucp',pathParameters:['get_cart','update_cart','get_checkout','cancel_checkout','get_order','update_checkout'].includes(operationId)?['id']:[]}));
+  const legacy = cartOnly ? ['commerce.checkouts.create','commerce.checkouts.get','commerce.orders.get'] : [];
+  const offered = cartOnly
+    ? [...specs.filter(([id])=>!id.includes('checkout')&&id!=='get_order'),...legacy.map(id=>[id,'POST'])]
+    : specs;
+  const operations=offered.map(([operationId,method])=>({companyRef:'shop',operationRef:operationId,operationId,method,channel:operationId.startsWith('commerce.')?'openapi':'ucp',pathParameters:['get_cart','update_cart','get_checkout','cancel_checkout','get_order','update_checkout'].includes(operationId)?['id']:[]}));
   let etag='"v1"',cart:any={ucp,id:'cart-1',currency:'USD',line_items:[{id:'line-1',item:{id:'variant-1',title:'Mug',price:1250},quantity:1,totals:[{type:'subtotal',amount:1250},{type:'total',amount:1250}]},{id:'line-2',item:{id:'variant-2',title:'Plate',price:1000},quantity:1,totals:[{type:'subtotal',amount:1000},{type:'total',amount:1000}]}],totals:[{type:'subtotal',amount:2250},{type:'total',amount:2250}]};
   const sdk:PapOperationsClient={requestTimeoutMs:1000,connect:async()=>({ok:true,value:{company:store}}),status:async()=>({ok:true,value:{state:'ready',identity:{did:'test'},companies:[store],sessions:[{companyRef:'shop',connected:true}]}}),operations:async()=>({ok:true,value:operations}),request:async(input:any)=>{
     calls.push(structuredClone(input));
@@ -22,7 +26,7 @@ function fixture(){
       return {ok:true,value:{status,body:{ucp:{version,status:'error'},messages:[{type:'error',code}]}}};
     }
     let body:any;
-    if(input.operationRef==='commerce.capabilities.get')body={result:{data:{store_id:'shop',default_context:{country:'US',currency:'USD',locale:'en-US'},methods:[]}}};
+    if(input.operationRef==='commerce.capabilities.get')body={result:{data:{store_id:'shop',default_context:{country:'US',currency:'USD',locale:'en-US'},methods:legacy.map(method=>({method,availability:'supported'}))}}};
     else if(input.operationRef==='search_catalog')body={ucp,products:[product],pagination:{has_next_page:false}};
     else if(input.operationRef==='get_product')body={ucp,product};
     else if(input.operationRef==='create_checkout'||input.operationRef==='get_checkout'||input.operationRef==='update_checkout')body={...cart,ucp:{version,payment_handlers:{}},id:'draft-1',status:'incomplete',links:[],messages:[{type:'error',code:'payment_method_unavailable',severity:'recoverable',content:'Payment is unavailable'}],...(input.operationRef==='update_checkout'?{buyer:input.body.buyer,fulfillment:input.body.fulfillment}:{})};
@@ -153,4 +157,16 @@ test('repeat adding a SKU preserves its line ID and handles quantity and invento
  assert.equal(c.flow().cart.lines[0].quantity,3);
  await add(1,'smaller');
  assert.equal(c.flow().cart.lines[0].quantity,4);
+});
+
+test('a Cart-only UCP connection cannot persist or dispatch checkout through legacy routes',async()=>{
+ const f=fixture(true), c=await cartFlow(f);
+ const connected=await f.transport.connect('shop.example');
+ for (const method of ['commerce.checkouts.create','commerce.checkouts.get','commerce.orders.get'])
+  assert(!connected.methods.includes(method));
+ await assert.rejects(c.service.tool('chat','frontvia_checkout',{action:'prepare',flowId:c.flowId},'checkout'),
+   {code:'METHOD_UNAVAILABLE'});
+ assert.equal(c.flow().pending,undefined);
+ assert.equal(f.effects(),1);
+ assert(!f.calls.some(call=>String(call.operationRef).includes('checkout')));
 });

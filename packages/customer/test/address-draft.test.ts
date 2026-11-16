@@ -130,6 +130,33 @@ const button = (tree: ReactTestRenderer, label: string): ReactTestInstance =>
   tree.root
     .findAllByType("button")
     .find((n) => text(n.props.children) === label)!;
+
+test("Cart-only storefront keeps the Cart visible without Checkout or Order actions", async () => {
+  let tree!: ReactTestRenderer;
+  try {
+    await act(async () => {
+      tree = create(React.createElement(Storefront, {
+        draftScope: "ucp-cart-only",
+        data: {
+          ...initial(),
+          purchaseReady: false,
+          capabilities: { ucp: true, methods: [{ method: "commerce.carts.get", availability: "supported" }] },
+        },
+        busy: false,
+        error: "",
+        now: Date.now(),
+        action: async () => true,
+      }));
+    });
+    assert(tree.root.findAll((node) => node.children.includes("Mug")).length);
+    assert(tree.root.findAll((node) => node.children.includes("商家购买服务尚未就绪。")).length);
+    for (const label of ["创建结算草稿", "查看结算草稿", "去结账", "继续结账", "我的订单"])
+      assert.equal(button(tree, label), undefined);
+  } finally {
+    await act(async () => tree?.unmount());
+  }
+});
+
 const address = (tree: ReactTestRenderer) =>
   tree.root.findAllByType("input").find((n) => n.props.name === "line1")!;
 const click = async (tree: ReactTestRenderer, label: string) => {

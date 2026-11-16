@@ -299,6 +299,9 @@ export class CustomerService {
       : fetch();
   }
   private requireMethod(f: Flow, method: string) {
+    if (f.cart && Boolean(f.cart.ucp) !== Boolean(f.capabilities?.ucp) && isUcpBusinessMethod(method)
+      && /^commerce\.(carts|checkouts)\./.test(method))
+      fail("METHOD_UNAVAILABLE");
     const advertised = this.pap.sites().find((s) => s.id === f.siteId)
       ?.description?.methods;
     if (advertised && !advertised.includes(method))
@@ -1463,7 +1466,7 @@ export class CustomerService {
         c.lastLookupError = safeRpcError(r.error);
         this.save(f);
         if (
-          retryCart &&
+          retryCart && !f.capabilities?.ucp &&
           r.error.code === 1003 &&
           !r.error.data?.operation_id &&
           this.retryableCart(f)
