@@ -1,17 +1,59 @@
 import assert from 'node:assert/strict';
 import {spawn,execFileSync} from 'node:child_process';
+import {createHash,X509Certificate} from 'node:crypto';
 import {createRequire} from 'node:module';
+import {createServer} from 'node:http';
+import {connect} from 'node:net';
 import {mkdir,readFile,writeFile,symlink,readdir,open,cp} from 'node:fs/promises';
 import {join,resolve,isAbsolute} from 'node:path';
 import {setTimeout as delay} from 'node:timers/promises';
 import {publicIdentityPackage,publicPapPackage} from '../../support/public-pap.mjs';
 
+/** Scope the browser's CONNECT tunnel to the isolated HTTPS peer. */
+async function checkoutBrowserProxy(origin){
+  const target=new URL(origin);
+  assert.equal(target.protocol,'https:');
+  assert.equal(target.hostname,'company-a.test');
+  const port=Number(target.port);
+  assert(Number.isSafeInteger(port)&&port>0&&port<=65535);
+  const sockets=new Set();
+  const server=createServer((_request,response)=>{response.writeHead(403);response.end();});
+  server.on('connect',(request,downstream,head)=>{
+    if(request.url!==target.host){
+      downstream.end('HTTP/1.1 403 Forbidden\r\n\r\n');
+      return;
+    }
+    const upstream=connect(port,'127.0.0.1',()=>{
+      downstream.write('HTTP/1.1 200 Connection Established\r\n\r\n');
+      if(head.length)upstream.write(head);
+      downstream.pipe(upstream).pipe(downstream);
+    });
+    sockets.add(downstream);
+    downstream.on('error',()=>upstream.destroy());
+    downstream.on('close',()=>{sockets.delete(downstream);upstream.destroy();});
+    upstream.on('error',()=>downstream.destroy());
+    upstream.on('close',()=>downstream.destroy());
+  });
+  await new Promise((resolve,reject)=>{
+    server.once('error',reject);
+    server.listen(0,'127.0.0.1',resolve);
+  });
+  return {
+    options:{server:'http://127.0.0.1:'+server.address().port,bypass:'127.0.0.1,localhost'},
+    async close(){
+      for(const socket of sockets)socket.destroy();
+      await new Promise(resolve=>server.close(resolve));
+    },
+  };
+}
+
 /** Full DSH CLI/Web process and browser; no mocked Context or connection owner. */
 export async function runDsh({fixture,commerce,root}){
   const started=performance.now();
   const selectedPap=publicPapPackage(),selectedIdentity=publicIdentityPackage();
-  const ucp=commerce.suite==='dsh-ucp';
-  const suite=ucp?'dsh-ucp-e2e':'dsh-e2e';
+  const fullFlow=commerce.suite==='dsh-ucp-full';
+  const ucp=commerce.suite==='dsh-ucp'||fullFlow;
+  const suite=fullFlow?'dsh-ucp-full-e2e':ucp?'dsh-ucp-e2e':'dsh-e2e';
   console.log(JSON.stringify({suite,papVersion:selectedPap.version,papSource:selectedPap.source,
     identityVersion:selectedIdentity.version,identitySource:selectedIdentity.source,nativeVersion:selectedIdentity.nativeVersion}));
   const home=join(fixture.root,'dsh-home'),profile=join(home,'profiles','frontvia-e2e');
@@ -36,7 +78,6 @@ export async function runDsh({fixture,commerce,root}){
   const dependencies={[identityName]:packs.identityVersion};
   for(const artifact of archives){
     const target=join(modules,artifact.name);await mkdir(target,{recursive:true});
-    const {createHash}=await import('node:crypto');
     assert.equal(createHash('sha256').update(await readFile(artifact.path)).digest('hex'),artifact.sha256);
     execFileSync('tar',['-xzf',artifact.path,'-C',target,'--strip-components=1']);
     const dependencyRoot=artifact.name==='@awiki/dsh-pap'?selectedPap.dependencyRoot
@@ -45,7 +86,8 @@ export async function runDsh({fixture,commerce,root}){
     dependencies[artifact.name]='file:'+artifact.path;
   }
   const serviceEntry=[...fixture.ctx.loader.entries()].find(e=>e.options.name==='@agent-network-protocol/dsh-anp-identity');
-  let identityHostRoot=serviceEntry.options.config.stateRoot;
+  const identitySeedRoot=serviceEntry.options.config.stateRoot;
+  let identityHostRoot=identitySeedRoot;
   if(!ucp){
     const managerEntry=[...fixture.ctx.loader.entries()].find(e=>e.options.name==='@agent-network-protocol/dsh-anp-identity/management-remote');
     const context=managerEntry.fiber.ctx,identity=context.get('anpIdentity');
@@ -53,12 +95,15 @@ export async function runDsh({fixture,commerce,root}){
     await identity.configureDefaultIdentity(context,{expectedVersion:selection.version,identity:fixture.publicRef});
     const permissions=await identity.protocolManagement(context),rule={mode:'allow_all',outside:'ask',domains:[]};
     await identity.configureProtocolPolicy(context,{expectedVersion:permissions.policy.version,policy:{read:rule,write:rule}});
+  }
+  if(!ucp){
     identityHostRoot=join(fixture.root,'dsh-identity-host');
     await mkdir(identityHostRoot,{mode:0o700});
-    // Start the legacy browser journey with its own empty connection state.
+    // Keep the published identity and owner settings while giving this browser
+    // its own PAP connections and authorization ledger.
     await writeFile(join(identityHostRoot,'catalog-v1.json'),
-      await readFile(join(serviceEntry.options.config.stateRoot,'catalog-v1.json')),{mode:0o600});
-    await cp(join(serviceEntry.options.config.stateRoot,'manager-settings'),join(identityHostRoot,'manager-settings'),{recursive:true});
+      await readFile(join(identitySeedRoot,'catalog-v1.json')),{mode:0o600});
+    await cp(join(identitySeedRoot,'manager-settings'),join(identityHostRoot,'manager-settings'),{recursive:true});
   }
   const identityConfig={...serviceEntry.options.config,stateRoot:identityHostRoot,allowConsumers:[...(serviceEntry.options.config.allowConsumers??[]),'@awiki/dsh-pap/plugin'],
     userConsumers:[...(serviceEntry.options.config.userConsumers??[]),'@awiki/dsh-pap/plugin'],domainAccess:{enabled:true,identity:fixture.publicRef,scopes:[],secretStore:'local-file'}};
@@ -81,7 +126,7 @@ export async function runDsh({fixture,commerce,root}){
   const child=spawn(process.execPath,[join(root,'node_modules/@deepseek-ai/dsh/lib/bin.js'),'--profile','frontvia-e2e','--host','127.0.0.1','--port','0','--no-open'],
     {cwd:workspace,env:{...process.env,DSH_HOME:home,DSH_TELEMETRY_DISABLED:'1'},stdio:['ignore',log.fd,log.fd]});
   await log.close();
-  let browser;
+  let browser,browserProxy;
   try{
     let url;const deadline=Date.now()+90000;
     while(Date.now()<deadline){
@@ -97,7 +142,14 @@ export async function runDsh({fixture,commerce,root}){
     assert(isAbsolute(core),'Core candidate root must be absolute');
     const require=createRequire(join(core,'web/package.json'));
     const {chromium}=require('playwright-core');
-    browser=await chromium.launch({headless:true,args:['--no-sandbox']});
+    const args=['--no-sandbox'];
+    if(fullFlow){
+      const certificate=new X509Certificate(await readFile(commerce.cert));
+      const spki=createHash('sha256').update(certificate.publicKey.export({type:'spki',format:'der'})).digest('base64');
+      args.push(`--ignore-certificate-errors-spki-list=${spki}`);
+      browserProxy=await checkoutBrowserProxy(commerce.origin);
+    }
+    browser=await chromium.launch({headless:true,args,...(browserProxy?{proxy:browserProxy.options}:{})});
     const page=await browser.newPage({viewport:{width:1440,height:1000}});
     await page.goto(url,{waitUntil:'domcontentloaded'});
     // A fresh profile always has the preview notice; late client startup must
@@ -113,8 +165,13 @@ export async function runDsh({fixture,commerce,root}){
     });
     await page.getByRole('button',{name:'Frontvia 服务',exact:true}).click({timeout:30000});
     if(ucp){
-      const {shopUcp}=await import('./ucp-shopping.mjs');
-      await shopUcp({page,commerce,logPath});
+      if(fullFlow){
+        const {shopUcpFullFlow}=await import('./ucp-full-flow.mjs');
+        await shopUcpFullFlow({page,commerce,logPath});
+      }else{
+        const {shopUcp}=await import('./ucp-shopping.mjs');
+        await shopUcp({page,commerce,logPath});
+      }
       return;
     }
     await page.getByText('提供店铺域名即可开始',{exact:true}).waitFor({state:'visible',timeout:30000});
@@ -124,8 +181,12 @@ export async function runDsh({fixture,commerce,root}){
     await shopping({page,commerce,workspace});
   }catch(error){
     const failedPage=browser?.contexts()[0]?.pages()[0];
-    if(failedPage)console.log(JSON.stringify({suite,case:'browser-failure-context',buttonCount:await failedPage.getByRole('button').count(),headings:await failedPage.getByRole('heading').allTextContents(),
-      dialogs:await failedPage.getByRole('dialog').evaluateAll(nodes=>nodes.map(node=>node.getAttribute('aria-label')??document.getElementById(node.getAttribute('aria-labelledby'))?.textContent))}));
+    if(failedPage){
+      const alerts=(await failedPage.getByRole('alert').allTextContents()).flatMap(text=>text.match(/\b[a-zA-Z][a-zA-Z_]{2,60}_[a-zA-Z_]{2,40}\b/g)??[]);
+      console.log(JSON.stringify({suite,case:'browser-failure-context',buttonCount:await failedPage.getByRole('button').count(),headings:await failedPage.getByRole('heading').allTextContents(),
+        dialogs:await failedPage.getByRole('dialog').evaluateAll(nodes=>nodes.map(node=>node.getAttribute('aria-label')??document.getElementById(node.getAttribute('aria-labelledby'))?.textContent)),
+        alerts:[...new Set(alerts)].slice(0,12)}));
+    }
     const output=await readFile(logPath,'utf8');
     for(const line of output.split('\n').filter(line=>line.startsWith('{"event":"frontvia-e2e-http"')).slice(-12))console.log(line);
     // Emit fixed loader diagnostics, never the log's URLs, credentials or user data.
@@ -133,7 +194,7 @@ export async function runDsh({fixture,commerce,root}){
       loaderFailures:[...output.matchAll(/(?:Cannot find (?:package|module)|ERR_[A-Z_]+|INCOMPATIBLE[^\s]*)[^\n]*/g)].map(v=>v[0].slice(0,240)).slice(-8)}));
     throw error;
   }finally{
-    await browser?.close();
+    try{await browser?.close();}finally{await browserProxy?.close();}
     if(child.exitCode===null){child.kill('SIGTERM');await Promise.race([new Promise(r=>child.once('exit',r)),delay(10000)]);if(child.exitCode===null){child.kill('SIGKILL');await new Promise(r=>child.once('exit',r));}}
   }
 }

@@ -25,6 +25,13 @@ export const uiSchemas = {
     .strict(),
   shopping: shoppingActionSchema.extend(common).strict(),
   review: z.object(common).strict(),
+  "prepare-purchase": z.object({ ...common, actionId: z.uuid() }).strict(),
+  "approve-handoff": z.object({
+    ...common, actionId: z.uuid(), challenge: z.string().regex(/^[A-Za-z0-9_-]{43}$/),
+  }).strict(),
+  "confirm-ucp": z.object({ ...common, actionId: z.uuid() }).strict(),
+  "cancel-ucp-checkout": z.object({ ...common, actionId: z.uuid() }).strict(),
+  "refresh-ucp-checkout": z.object(common).strict(),
   "order-cancel": z.object(common).strict(),
   "payment-start": z.object(common).strict(),
   recover: z.object(common).strict(),

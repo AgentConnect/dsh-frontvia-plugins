@@ -180,6 +180,73 @@ function AddressForm({
     </form>
   );
 }
+function UcpCheckoutActions({data, busy, action, now}: {
+  data: any;
+  busy: boolean;
+  action: Action;
+  now: number;
+}) {
+  const checkout = data.checkout;
+  const [challenge, setChallenge] = useState("");
+  const [paired, setPaired] = useState(false);
+  const field = useId();
+  const processing = checkout.status === "complete_in_progress";
+  useEffect(() => {
+    setChallenge("");
+    setPaired(false);
+  }, [checkout.id]);
+  useEffect(() => {
+    if (!processing || busy) return;
+    const timer = setTimeout(() => void action("refresh-ucp-checkout"), 4000);
+    return () => clearTimeout(timer);
+  }, [checkout.id, processing, busy]);
+  const amount = checkout.totals?.grand_total;
+  const expired = checkout.expires_at && Date.parse(checkout.expires_at) <= now;
+  const editable = checkout.status === "incomplete";
+  const mayPrepare = ["incomplete", "ready_for_complete", "requires_escalation"].includes(checkout.status);
+  const submitBlocked = busy || data.pending;
+  return <div className="fv-stack">
+    {processing && <p role="status">购买处理中，正在核对原结算。</p>}
+    {checkout.status === "canceled" && <p role="status">本次结算已取消。</p>}
+    {checkout.status === "completed" && <p role="status">购买完成。</p>}
+    {!editable && amount && <p>结算合计 {money(amount)}</p>}
+    {mayPrepare && !checkout.handoff && <Button disabled={submitBlocked || !checkout.buyer?.email || !amount}
+      onClick={() => action("prepare-purchase", {actionId:crypto.randomUUID()})}>
+      核对并继续
+    </Button>}
+    {checkout.canConfirm && !expired && <Button disabled={submitBlocked}
+      onClick={() => action("confirm-ucp", {actionId:crypto.randomUUID()})}>
+      确认购买 {money(amount)}
+    </Button>}
+    {checkout.handoff && <div className="fv-stack">
+      <a href={checkout.handoff} target="_blank" rel="noopener noreferrer">
+        {checkout.status === "completed" ? "在浏览器查看订单与售后" : "在浏览器继续"}
+      </a>
+      <form className="fv-stack" onSubmit={async event => {
+        event.preventDefault();
+        if (await action("approve-handoff", {challenge:challenge.trim(),actionId:crypto.randomUUID()})) {
+          setChallenge("");
+          setPaired(true);
+        }
+      }}>
+        <Field>
+          <FieldLabel htmlFor={field}>浏览器配对代码</FieldLabel>
+          <Input id={field} value={challenge} maxLength={43} autoComplete="off"
+            onChange={event => {setChallenge(event.target.value);setPaired(false);}} />
+        </Field>
+        <Button type="submit" variant="outline" disabled={busy || !/^[A-Za-z0-9_-]{43}$/.test(challenge.trim())}>
+          授权浏览器
+        </Button>
+      </form>
+      {paired && <p role="status">已授权，请回到原浏览器页面。</p>}
+    </div>}
+    {checkout.handoff && mayPrepare && !editable && <Button variant="outline" disabled={submitBlocked}
+      onClick={() => action("cancel-ucp-checkout", {actionId:crypto.randomUUID()})}>
+      取消本次结算
+    </Button>}
+    <Button variant="outline" disabled={busy} onClick={() => action("refresh-ucp-checkout")}>刷新结算状态</Button>
+  </div>;
+}
 function Logistics({ order }: { order: any }) {
   const shipments = order.shipments ?? [];
   return (
@@ -403,6 +470,7 @@ function StorefrontContent({
     (method: { method: string; availability: string }) =>
       method.method === ucpDraftMethod && method.availability === "supported",
   );
+  const ucpConfirmation = data?.capabilities?.ucpCheckoutConfirmation === true;
   const deliveryRequested = useRef(false);
   const [preparingDelivery, setPreparingDelivery] = useState(false);
   const prepareDelivery = async () => {
@@ -414,14 +482,14 @@ function StorefrontContent({
     }
   };
   useEffect(() => {
-    if (tab !== "checkout" || checkoutStep !== 1) {
+    if (ucpConfirmation || tab !== "checkout" || checkoutStep !== 1) {
       deliveryRequested.current = false;
       return;
     }
     if (blocked || deliveryRequested.current || !data?.cart) return;
     deliveryRequested.current = true;
     void prepareDelivery();
-  }, [tab, checkoutStep, blocked, data?.cart]);
+  }, [tab, checkoutStep, blocked, data?.cart, ucpConfirmation]);
   const deliveryCurrent =
     !!data?.delivery &&
     !!data?.cart &&
@@ -1078,7 +1146,7 @@ function StorefrontContent({
                           </Button>
                         ) : (
                           <div className="fv-stack">
-                            {data.checkout && (
+                            {data.checkout && (!ucpConfirmation || data.checkout.status === "incomplete") && (
                               <Button
                                 variant="outline"
                                 disabled={blocked}
@@ -1089,22 +1157,43 @@ function StorefrontContent({
                             )}
                             {ucpDraftAvailable && (
                               <div className="fv-stack">
-                                <Button disabled={blocked} onClick={() => shop({action:"prepare"})}>
+                                {(!ucpConfirmation || !data.checkout) && <Button disabled={blocked} onClick={() => shop({action:"prepare"})}>
                                   {data.checkout ? "查看结算草稿" : "创建结算草稿"}
-                                </Button>
+                                </Button>}
                                 {data.checkout?.messages?.map((message:any,index:number) => (
                                   <p className="fv-muted" key={index}>{message.content}</p>
                                 ))}
-                                <p className="fv-muted">可以查看结算信息；商家尚未开放付款提交。</p>
-                                {data.checkout && data.capabilities.ucpFulfillment && ["US","CN"].includes(data.pricing.country) && (
+                                {!ucpConfirmation && <p className="fv-muted">可以查看结算信息；商家尚未开放付款提交。</p>}
+                                {ucpConfirmation && data.checkout?.status === "incomplete" && manualDelivery && (
+                                  <ManualContact email={data.checkout.buyer?.email} disabled={blocked} save={email => action("contact", {
+                                    expected_version:data.cart.version, patch:{email}, actionId:crypto.randomUUID(),
+                                  })} />
+                                )}
+                                {data.checkout && (!ucpConfirmation || data.checkout.status === "incomplete" && !manualDelivery)
+                                    && data.capabilities.ucpFulfillment && ["US","CN"].includes(data.pricing.country) && (
                                   <AddressForm data={data} busy={blocked} action={action} saveLabel="保存到结算草稿"
                                     form={addressDraft&&addressDraft.cartId===data.cart.id?addressDraft.values:confirmedAddress}
                                     setForm={values=>setAddressDraft({cartId:data.cart.id,values})}
                                     next={async()=>{setAddressDraft(undefined);}} />
                                 )}
+                                {ucpConfirmation && data.checkout?.status === "incomplete" && shippingDraft?.groups?.map((group:any) => (
+                                  <FieldSet key={group.id}>
+                                    <FieldLegend>配送方式</FieldLegend>
+                                    {group.options?.map((option:any) => (
+                                      <Button key={option.id} variant="outline" aria-pressed={group.selected_option_id === option.id}
+                                        disabled={blocked} onClick={() => action("shopping", {
+                                          intent:{action:"select-delivery",groupId:group.id,optionId:option.id},
+                                          expected_version:data.checkout.version,actionId:crypto.randomUUID(),
+                                        })}>
+                                        {option.title}
+                                      </Button>
+                                    ))}
+                                  </FieldSet>
+                                ))}
+                                {ucpConfirmation && data.checkout && <UcpCheckoutActions data={data} busy={busy} action={action} now={now} />}
                               </div>
                             )}
-                            {(!data.capabilities?.ucp || ucpDraftAvailable) && <Button
+                            {(!data.capabilities?.ucp || ucpDraftAvailable && !ucpConfirmation) && <Button
                               disabled={blocked || !data.purchaseReady}
                               onClick={() => {
                                 setTab("checkout");
@@ -1606,7 +1695,10 @@ function StorefrontContent({
                           </CardContent>
                         </Card>
                         <div className="fv-stack">
-                          {!orderDetail && (
+                          {ucpConfirmation && data.checkout?.id === selectedOrder.checkout_id && (
+                            <UcpCheckoutActions data={data} busy={busy} action={action} now={now} />
+                          )}
+                          {!orderDetail && !ucpConfirmation && (
                             <PaymentCard
                               data={data}
                               now={now}

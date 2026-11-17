@@ -50,9 +50,11 @@ export async function loadPublicPap(){
 
 export async function loadPublicIdentity(){
   const selected=publicIdentityPackage();
-  const [plugin,provider,manager,bootstrap]=await Promise.all(
-    ['index.js','provider.js','management-remote.js','protocol-bootstrap.js']
-      .map(entry=>import(pathToFileURL(join(selected.root,'lib',entry)).href)));
+  const modules=[];
+  for(const entry of ['index.js','provider.js','management-remote.js','protocol-bootstrap.js']){
+    modules.push(await import(pathToFileURL(join(selected.root,'lib',entry)).href));
+  }
+  const [plugin,provider,manager,bootstrap]=modules;
   return {...selected,plugin,provider,manager,bootstrap};
 }
 

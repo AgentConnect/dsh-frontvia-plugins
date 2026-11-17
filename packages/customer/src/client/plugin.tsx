@@ -94,6 +94,9 @@ export const inject = [
 ];
 type UI = { flowId: string; sessionId: string; card: string };
 const errorText: Record<string, string> = {
+  HANDOFF_UNAVAILABLE: "当前结算无法进行浏览器授权。",
+  HANDOFF_APPROVAL_FAILED: "未能授权浏览器，请核对原页面显示的配对代码。",
+  UCP_HANDOFF_AUTHORIZATION_REQUIRED: "配对代码无效或已过期，请回到原浏览器页面刷新。",
   CONFIRMATION_REJECTED: "购买确认未被商店受理，请重新核对订单后再确认。",
   CART_ALREADY_SUBMITTED:
     "商品已生成订单，请到“我的订单”查看。继续加购会使用新的购物车。",
@@ -129,6 +132,7 @@ const errorText: Record<string, string> = {
   CART_QUANTITY_LIMIT: "同一规格最多可加购 100 件，请减少数量后重试。",
   OUT_OF_STOCK: "库存不足，请减少数量或选择其他规格。",
   CART_VERSION_CHANGED: "购物车已更新，请刷新后重试。",
+  UCP_ETAG_MISMATCH: "结算信息已在另一处更新，请核对最新内容后重新保存。",
   RESOLVE_PENDING_OPERATION: "上次操作结果尚未明确，请先核对原结果。",
   ORIGINAL_RESULT_UNKNOWN:
     "暂未查到原操作记录，请稍后再次核对。当前不会重复提交该操作。",

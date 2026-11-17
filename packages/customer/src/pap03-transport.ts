@@ -1,4 +1,4 @@
-import {requestUcp,ucpBusinessMethods,isUcpBusinessMethod,type UcpRequest,type UcpResponse} from './ucp-business.js';
+import {requestUcp,ucpBusinessMethods,isUcpBusinessMethod,UCP_CHECKOUT_CONFIRMATION,type UcpRequest,type UcpResponse} from './ucp-business.js';
 import type {PapOperationsClient, ProductResult} from '@awiki/dsh-pap/product-api';
 import {PapError} from './state.js';
 
@@ -58,7 +58,9 @@ export class Pap03Transport {
       const methods=[...new Set([...legacyMethods.filter(allowedLegacyMethod),...ucpMethods,'commerce.capabilities.get'])];
       const ucpFulfillment = ucpMethods.includes('commerce.checkouts.update')
         && store.ucpCapabilities?.includes('dev.ucp.shopping.fulfillment')===true;
-      return {result:{data:{...data,ucp:true,ucpFulfillment,methods:methods.map(method=>({method,availability:'supported'})),business_profiles:[{id:'frontvia.ucp_nonpayment.v1',availability:'supported'}]}}};
+      const ucpCheckoutConfirmation = store.ucpCapabilities?.includes(UCP_CHECKOUT_CONFIRMATION) === true
+        && ['commerce.checkouts.prepare','commerce.checkouts.confirm','commerce.checkouts.handoff.approve'].every(method=>ucpMethods.includes(method));
+      return {result:{data:{...data,ucp:true,ucpFulfillment,ucpCheckoutConfirmation,methods:methods.map(method=>({method,availability:'supported'})),business_profiles:[{id:'frontvia.ucp_nonpayment.v1',availability:'supported'}]}}};
     }
     const ucp=await requestUcp(method,params,operations,request=>this.send(request,signal,true));
     if(ucp!==undefined)return ucp;

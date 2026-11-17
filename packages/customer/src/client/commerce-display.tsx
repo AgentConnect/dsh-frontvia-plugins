@@ -109,6 +109,19 @@ export function Order({ order }: { order: any }) {
   const status = order.payment?.status;
   const paid = status === "paid" || status === "captured";
   const summary = orderStatus(order);
+  const adjustments = Array.isArray(order.adjustments) ? order.adjustments.filter((entry: any) =>
+    ["cancellation", "refund", "return"].includes(entry.type),
+  ) : [];
+  const adjustmentLabel: Record<string, string> = {
+    cancellation: "订单取消",
+    refund: "退款",
+    return: "退货",
+  };
+  const adjustmentStatus: Record<string, string> = {
+    completed: "已完成",
+    pending: "处理中",
+    failed: "处理失败",
+  };
   const payment: Record<string, string> = {
     paid: "已付款",
     not_required: "无需付款",
@@ -228,6 +241,17 @@ export function Order({ order }: { order: any }) {
           )}
         </section>
       ))}
+      {adjustments.length > 0 && <section className="fv-stack" aria-label="售后进展">
+        <h4>售后进展</h4>
+        <ul>{adjustments.map((entry: any) => {
+          const amount = entry.totals?.find((total: any) => total.type === "total")?.amount;
+          return <li key={entry.id}>
+            {adjustmentLabel[entry.type]} {adjustmentStatus[entry.status] ?? ""}
+            {Number.isSafeInteger(amount) && <> · {money({amount_minor:Math.abs(amount),currency:order.currency})}</>}
+            {entry.occurred_at && <> · <time dateTime={entry.occurred_at}>{entry.occurred_at}</time></>}
+          </li>;
+        })}</ul>
+      </section>}
       <Separator />
       <div className="fv-total">
         <span>订单合计</span>

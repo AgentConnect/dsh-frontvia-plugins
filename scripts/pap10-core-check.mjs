@@ -32,7 +32,8 @@ const take=result=>{
 async function run(){
   assert.equal(publicPapPackage().source,'explicit-local','PAP 1.0 verification requires an explicit PAP candidate');
   assert.equal(publicIdentityPackage().source,'explicit-local','PAP 1.0 verification requires an explicit Identity candidate');
-  const [selected,selectedIdentity]=await Promise.all([loadPublicPap(),loadPublicIdentity()]);
+  const selected=await loadPublicPap();
+  const selectedIdentity=await loadPublicIdentity();
   const sources={papSource:selected.source,papVersion:selected.version,papRoot:selected.root,
     identitySource:selectedIdentity.source,identityVersion:selectedIdentity.version,identityRoot:selectedIdentity.root,nativeVersion:selectedIdentity.nativeVersion};
   if(process.argv[2]==='--preflight'){
@@ -42,11 +43,13 @@ async function run(){
   const config=JSON.parse(await readFile(process.argv[2],'utf8'));
   const control=resolve(config.controlDir),profileUrl=`https://agent.test:${config.identityPort}/.well-known/ucp`;
   const atomic=async(name,value)=>{const target=join(control,name),temporary=target+'.tmp';await writeFile(temporary,JSON.stringify(value),{mode:0o600});await rename(temporary,target);};
-  publisher=https.createServer({key:await readFile(config.key),cert:await readFile(config.cert)},(request,response)=>{
-    if(request.method!=='GET'||request.url!=='/.well-known/ucp'){response.writeHead(404);response.end();return;}
-    response.writeHead(200,{'content-type':'application/json','cache-control':'public, max-age=300'});response.end(JSON.stringify(productProfile));
-  });
-  await new Promise((resolve,reject)=>{publisher.once('error',reject);publisher.listen(config.identityPort,'127.0.0.1',resolve);});
+  if(!config.externallyHostedProfile){
+    publisher=https.createServer({key:await readFile(config.key),cert:await readFile(config.cert)},(request,response)=>{
+      if(request.method!=='GET'||request.url!=='/.well-known/ucp'){response.writeHead(404);response.end();return;}
+      response.writeHead(200,{'content-type':'application/json','cache-control':'public, max-age=300'});response.end(JSON.stringify(productProfile));
+    });
+    await new Promise((resolve,reject)=>{publisher.once('error',reject);publisher.listen(config.identityPort,'127.0.0.1',resolve);});
+  }
   stage='live_identity';
   const {awikiMeIdentity}=await import('../tests/support/awiki-me-identity.mjs');fixture=await awikiMeIdentity(selectedIdentity,{reusePublished:true});
   assert.equal(new URL(JSON.parse(fixture.publicMaterials.metadata).client_id).origin,'https://awiki.me');
@@ -97,7 +100,7 @@ async function run(){
   const customerContext=[...ctx.loader.entries()].find(entry=>entry.options.name==='dsh-frontvia-customer').fiber.ctx;
   const managerContext=[...ctx.loader.entries()].find(entry=>entry.options.name===MANAGER).fiber.ctx;
   const service=customerContext.get('pap'),sdk=service.acquireBusiness(customerContext),manager=managerContext.get('pap').acquireManagement(managerContext);
-  if(config.suite==='dsh-ucp'){
+  if(config.suite==='dsh-ucp'||config.suite==='dsh-ucp-full'){
     stage='claude_ucp_domain_browsing';
     const registry=customerContext.get('tools');
     const execute=async(name,args)=>{

@@ -16,7 +16,19 @@ export async function apply(ctx,config){
       const headers=new Headers(options?.headers);
       const pap10=headers.get('poppy-version')==='1.0'&&headers.has('poppy-session')
         &&headers.get('ucp-agent')===`profile="${config.ucpPlatformProfileUrl}"`;
-      console.log(JSON.stringify({event:'frontvia-e2e-http',operation,method:options.method,status:response.status,pap10}));
+      let checkout;
+      if(operation.includes('/prepare')){
+        try{
+          const payload=JSON.parse(Buffer.from(response.body).toString());
+          checkout={state:payload.checkout?.status,hasHandoff:typeof payload.checkout?.continue_url==='string',
+            merchantOrigin:!!payload.checkout?.continue_url&&new URL(payload.checkout.continue_url).origin===config.origin,
+            revisionValid:Number.isSafeInteger(payload.revision),hasFrame:!!payload.confirmation,
+            frameHashLength:payload.confirmation?.snapshot_hash?.length,
+            frameAmountMatches:payload.confirmation?.amount_minor===String(payload.checkout?.totals?.find(t=>t.type==='total')?.amount),
+            reason:typeof payload.messages?.[0]?.code==='string'&&/^[a-z_]{1,80}$/.test(payload.messages[0].code)?payload.messages[0].code:undefined};
+        }catch{}
+      }
+      console.log(JSON.stringify({event:'frontvia-e2e-http',operation,method:options.method,status:response.status,pap10,...(checkout?{checkout}:{})}));
     }
     const operation=pathname.split('/api/')[1];
     if(operation){

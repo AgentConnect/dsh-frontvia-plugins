@@ -1,7 +1,18 @@
 import {createHash} from 'node:crypto';
 
 export type UcpOperation={operationRef:string;operationId?:string;channel?:string;method:string;pathParameters?:string[]};
-export type UcpRequest={operationRef:string;path?:Record<string,string>;body?:unknown;idempotencyKey?:string;ifMatch?:string};
+export type UcpRequest={operationRef:string;path?:Record<string,string>;body?:unknown;idempotencyKey?:string;ifMatch?:string;checkoutConfirmation?:string};
+
+export const UCP_CHECKOUT_CONFIRMATION = 'com.frontvia.shopping.checkout_confirmation';
+const MOCK_HANDLER = 'com.frontvia.payment.durable_mock';
+export type UcpPurchase = {
+  checkoutId: string;
+  intentId: string;
+  revision: number;
+  expiresAt: string;
+  paymentReference: string | null;
+  confirmation: Record<string, any> | null;
+};
 export type UcpResponse={status:number;body:any;etag?:string};
 export type CartRejection = 'CART_VERSION_CHANGED' | 'CART_QUANTITY_LIMIT' | 'OUT_OF_STOCK';
 
@@ -14,7 +25,12 @@ export class UcpCartRejection extends Error {
 class UcpResponseError extends Error {
   constructor(readonly status: number, readonly code?: string) {
     super(code ? `UCP_${code.toUpperCase()}` : 'UCP_OPERATION_FAILED');
+    this.name = 'UcpResponseError';
   }
+}
+
+export function isUcpResponseError(error: unknown): error is UcpResponseError {
+  return error instanceof Error && error.name === 'UcpResponseError';
 }
 
 function responseError(response: UcpResponse) {
@@ -31,11 +47,14 @@ const mapped:Record<string,string>={
   'commerce.products.search':'search_catalog','commerce.products.get':'get_product','commerce.variants.list':'get_product','commerce.variants.get':'get_product',
   'commerce.carts.create':'create_cart','commerce.carts.get':'get_cart','commerce.carts.lines.add':'update_cart','commerce.carts.lines.update':'update_cart','commerce.carts.lines.remove':'update_cart','commerce.carts.update':'update_cart','commerce.carts.cancel':'cancel_cart',
   'commerce.checkouts.create':'create_checkout','commerce.checkouts.get':'get_checkout','commerce.checkouts.update':'update_checkout','commerce.checkouts.cancel':'cancel_checkout','commerce.orders.get':'get_order',
+  'commerce.checkouts.prepare':'prepare_checkout','commerce.checkouts.confirm':'complete_checkout',
+  'commerce.checkouts.handoff.approve':'approve_checkout_handoff',
 };
 export const isUcpBusinessMethod=(method:string)=>Object.hasOwn(mapped,method);
 export function ucpBusinessMethods(operations:UcpOperation[]):string[]{
   const available=new Set(operations.filter(op=>op.channel==='ucp').map(op=>op.operationId));
-  return Object.entries(mapped).filter(([,id])=>available.has(id)).map(([method])=>method);
+  return Object.entries(mapped).filter(([,id])=>available.has(id)
+    && (id !== 'complete_checkout' || available.has('prepare_checkout') && available.has('approve_checkout_handoff'))).map(([method])=>method);
 }
 const object=(value:any):Record<string,any>=>{if(!value||typeof value!=='object'||Array.isArray(value))throw new Error('INVALID_UCP_RESPONSE');return value;};
 const amount=(n:any,currency:string)=>{if(!Number.isSafeInteger(n))throw new Error('INVALID_UCP_AMOUNT');return {amount_minor:String(n),currency};};
@@ -55,7 +74,22 @@ function resource(value:any,etag?:string){
   const item=object(value);
   if(typeof item.id!=='string'||!Array.isArray(item.line_items))throw new Error('INVALID_UCP_RESPONSE');
   return {...item,version:etag,lines:item.line_items.map((line:any)=>({id:line.id,variant_id:line.item.id,title:line.item.title,quantity:typeof line.quantity==='object'?line.quantity.total:line.quantity,unit_price:amount(line.item.price,item.currency)})),totals:totals(item),
-    ...(item.status?{can_start_new_attempt:item.status==='incomplete'||item.status==='canceled'}:{})};
+    ...(item.status?{can_start_new_attempt:item.status==='incomplete'||item.status==='canceled'}:{}),
+    ...(item.order?.id && item.status === 'completed' ? {order_ids:[item.order.id]} : {})};
+}
+function isUuid(value: unknown): value is string {
+  return typeof value === 'string' && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/.test(value);
+}
+function matchesConfirmation(input: unknown, checkout: any) {
+  const frame = object(input);
+  const fields = ['profile','store_id','connection_id','generation','checkout_id','quote_id',
+    'snapshot_hash','amount_minor','currency','idempotency_key'];
+  return Object.keys(frame).length === fields.length && fields.every(field => Object.hasOwn(frame, field))
+    && frame.profile === 'frontvia.pap03_purchase.v1'
+    && isUuid(frame.checkout_id) && isUuid(frame.quote_id)
+    && typeof frame.snapshot_hash === 'string' && /^[0-9a-f]{64}$/.test(frame.snapshot_hash)
+    && typeof frame.idempotency_key === 'string' && /^ucp:[0-9a-f-]{36}$/.test(frame.idempotency_key)
+    && frame.amount_minor === checkout.totals?.grand_total?.amount_minor && frame.currency === checkout.currency;
 }
 function uuid(key:unknown):string{
   if(typeof key!=='string'||!key)throw new Error('IDEMPOTENCY_KEY_REQUIRED');
@@ -68,12 +102,12 @@ function context(value:any){return value?{...value,...(value.locale?{language:va
 
 /** Only wire requests use UCP schemas; the returned objects are local presentation data for existing cards. */
 export async function requestUcp(method:string,params:Record<string,any>,operations:UcpOperation[],send:(request:UcpRequest)=>Promise<UcpResponse>):Promise<unknown>{
-  const id=mapped[method];if(!id)return undefined;
+  const id=mapped[method];if(!id || !ucpBusinessMethods(operations).includes(method))return undefined;
   const match=operations.filter(op=>op.channel==='ucp'&&op.operationId===id);
   if(!match.length)return undefined;if(match.length!==1)throw new Error('AMBIGUOUS_UCP_OPERATION');
   const op=match[0],write=!['search_catalog','get_product','get_cart','get_checkout','get_order'].includes(id);
   const key=write?uuid(params.meta?.idempotency_key??params.idempotency_key):undefined;
-  let body:any,path:Record<string,string>|undefined,ifMatch:string|undefined;
+  let body:any,path:Record<string,string>|undefined,ifMatch:string|undefined,checkoutConfirmation:string|undefined;
   if(id==='search_catalog')body={...(params.query?{query:params.query}:{}),...(params.context?{context:context(params.context)}:{}),...(params.page?{pagination:params.page}:{})};
   else if(id==='get_product')body={id:params.product_id??params.variant_id,...(params.context?{context:context(params.context)}:{})};
   else if(id==='create_cart')body={line_items:(params.lines??[]).map((line:any)=>({item:{id:line.variant_id},quantity:line.quantity})),...(params.context?{context:context(params.context)}:{})};
@@ -113,10 +147,21 @@ export async function requestUcp(method:string,params:Record<string,any>,operati
   }
   if(id==='update_checkout'){
     ifMatch=params.expected_version;
-    body={id:params.checkout_id,line_items:params.line_items,...(params.buyer?{buyer:params.buyer}:{}),...(params.fulfillment?{fulfillment:params.fulfillment}:{}),...(params.context?{context:params.context}:{})};
+    body={line_items:params.line_items,...(params.buyer?{buyer:params.buyer}:{}),...(params.fulfillment?{fulfillment:params.fulfillment}:{}),...(params.context?{context:params.context}:{})};
   }
   if(id==='cancel_cart'||id==='cancel_checkout')body={};
-  const response=await send({operationRef:op.operationRef,...(path?{path}:{}),...(body===undefined?{}:{body}),...(key?{idempotencyKey:key}:{}),...(ifMatch?{ifMatch}:{})});
+  if (['prepare_checkout','approve_checkout_handoff','complete_checkout'].includes(id)) {
+    path = {id:params.checkout_id};
+    if (id === 'prepare_checkout') body = {};
+    else if (id === 'approve_checkout_handoff') body = {challenge:params.challenge};
+    else {
+      body = {payment: {instruments: params.payment_reference === null ? [] : [{
+        id:params.payment_reference, handler_id:MOCK_HANDLER, type:'frontvia_mock', selected:true,
+      }]}};
+      checkoutConfirmation = Buffer.from(JSON.stringify(object(params.confirmation)), 'utf8').toString('base64url');
+    }
+  }
+  const response=await send({operationRef:op.operationRef,...(path?{path}:{}),...(body===undefined?{}:{body}),...(key?{idempotencyKey:key}:{}),...(ifMatch?{ifMatch}:{}),...(checkoutConfirmation?{checkoutConfirmation}:{})});
   if (response.status < 200 || response.status >= 300 || response.body?.ucp?.status === 'error') {
     const error = responseError(response);
     if (id === 'update_cart' && (error.status === 409 || error.status === 412) && error.code === 'version_conflict')
@@ -125,7 +170,12 @@ export async function requestUcp(method:string,params:Record<string,any>,operati
       throw new UcpCartRejection('OUT_OF_STOCK');
     throw error;
   }
-  const result=object(response.body),envelope=object(result.ucp);
+  if (id === 'approve_checkout_handoff') {
+    if (response.body?.status !== 'authorized') throw new Error('INVALID_UCP_RESPONSE');
+    return {result:{data:{operation:{id:key,status:'succeeded',source:'ucp_response'}}}};
+  }
+  const wrapper = id === 'prepare_checkout' ? object(response.body) : undefined;
+  const result=object(wrapper ? wrapper.checkout : response.body),envelope=object(result.ucp);
   if(envelope.version!=='2026-08-25')throw new Error('INVALID_UCP_RESPONSE');
   let data:any;
   if(id==='search_catalog'){
@@ -138,6 +188,25 @@ export async function requestUcp(method:string,params:Record<string,any>,operati
     data=resource(result,response.etag);
     if(id==='get_order')data.shipments=(result.fulfillment?.events??[]).map((event:any)=>({id:event.id,status:event.type,occurred_at:event.occurred_at,description:event.description,
       tracking:event.tracking_number||event.tracking_url?[{carrier:event.carrier,tracking_number:event.tracking_number,tracking_url:event.tracking_url}]:[]}));
+  }
+  if (path?.id && ['get_checkout','update_checkout','cancel_checkout','prepare_checkout','complete_checkout','get_order'].includes(id)
+      && data.id !== path.id) throw new Error('INVALID_UCP_RESPONSE');
+  if (wrapper) {
+    const purchase: UcpPurchase = {
+      checkoutId:data.id,
+      intentId:wrapper.intent_id,
+      revision:wrapper.revision,
+      expiresAt:wrapper.expires_at,
+      paymentReference:wrapper.payment_reference,
+      confirmation:wrapper.confirmation,
+    };
+    if (!isUuid(purchase.intentId) || !Number.isSafeInteger(purchase.revision) || purchase.revision < 1
+        || !Number.isFinite(Date.parse(purchase.expiresAt))
+        || purchase.paymentReference !== null && !isUuid(purchase.paymentReference)
+        || purchase.confirmation !== null && !matchesConfirmation(purchase.confirmation, data)) {
+      throw new Error('INVALID_UCP_CONFIRMATION');
+    }
+    return {result:{data:{operation:{id:key,status:'succeeded',source:'ucp_response'},resource:data,purchase}}};
   }
   if(write)return {result:{data:{operation:{id:key,status:'succeeded',source:'ucp_response'},resource:data}}};
   return {result:{data}};
@@ -162,4 +231,15 @@ export function ucpCheckoutContact(checkout:any,contact:any){
   }
   return {checkout_id:checkout.id,line_items:checkout.line_items.map(lineInput),buyer:{...(checkout.buyer??{}),...(contact.email?{email:contact.email}:{})},
     ...(checkout.context?{context:checkout.context}:{}),...(methods.length?{fulfillment:{methods}}:{}),...(checkout.version?{expected_version:checkout.version}:{})};
+}
+
+/** Select one option on the same versioned Checkout, retaining its address. */
+export function ucpCheckoutDelivery(checkout:any, groupId:string, optionId:string) {
+  const patch = ucpCheckoutContact(checkout, {});
+  const method = patch.fulfillment?.methods?.find((entry:any)=>entry.type==='shipping');
+  const source = checkout.fulfillment?.methods?.find((entry:any)=>entry.type==='shipping');
+  if (!method || !source?.groups?.some((group:any)=>group.id===groupId
+      && group.options?.some((option:any)=>option.id===optionId))) throw new Error('DELIVERY_OPTION_UNAVAILABLE');
+  method.groups = method.groups.map((group:any)=>group.id===groupId ? {...group,selected_option_id:optionId} : group);
+  return patch;
 }

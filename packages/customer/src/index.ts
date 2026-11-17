@@ -109,6 +109,16 @@ export async function apply(
               );
             if (operation === "review")
               value = await service.review(a.sessionId, a.flowId);
+            if (operation === "prepare-purchase")
+              value = await service.prepareUcpPurchase(a.sessionId, a.flowId, a.actionId);
+            if (operation === "approve-handoff")
+              value = await service.approveUcpHandoff(a.sessionId, a.flowId, a.challenge, a.actionId);
+            if (operation === "confirm-ucp")
+              value = await service.confirmUcpPurchase(a.sessionId, a.flowId, a.actionId);
+            if (operation === "refresh-ucp-checkout")
+              value = await service.refreshUcpCheckout(a.sessionId, a.flowId);
+            if (operation === "cancel-ucp-checkout")
+              value = await service.cancelUcpCheckout(a.sessionId, a.flowId, a.actionId);
             if (operation === "order-cancel")
               value = await service.cancelOrder(a.sessionId, a.flowId);
             if (operation === "payment-start")

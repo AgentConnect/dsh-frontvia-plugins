@@ -161,12 +161,20 @@ remain distinct. Cart edits send one complete PUT, carry the observed ETag in
 `If-Match`, and persist the original replacement and a deterministic UUID
 idempotency key in the existing encrypted command state for recovery.
 
-The nonpayment interface permits Cart editing and viewing an incomplete Checkout
-draft. It displays Business messages and does not expose paid completion or the
-legacy private confirmation flow for a UCP connection. Legacy extension
-operations remain available when separately advertised. The shared PAP Host must
-configure `ucpPlatformProfileUrl`; Customer never invents a product profile or
-handles signing keys.
+The shared PAP Host must configure `ucpPlatformProfileUrl`. When the merchant
+and configured platform profile both negotiate
+`com.frontvia.shopping.checkout_confirmation`, Customer offers purchase review
+on the same Checkout. Preparation and browser pairing use the negotiated
+Frontvia operations. The browser shows a code that the buyer approves in
+Customer before reviewing and confirming the purchase. Eligible fixture orders
+can also be confirmed directly through standard UCP Complete with the
+quote-bound confirmation header. Customer checks the original Checkout before
+replaying an uncertain Complete, and follows that same Checkout as it progresses
+to the Order. The paired merchant browser provides the order's after-sales form.
+
+Stores without the extension expose Cart editing, Checkout drafts and the
+Business status messages. Customer uses the shared PAP Host for signing,
+session handling and per-operation consent.
 
 For isolated acceptance, `scripts/pap10-core-check.mjs` connects the real
 awiki.me Identity custodian to the independent Python wire runner through
