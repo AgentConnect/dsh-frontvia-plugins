@@ -1,4 +1,4 @@
-import {requestUcp,ucpBusinessMethods,isUcpBusinessMethod,UCP_CHECKOUT_CONFIRMATION,type UcpRequest,type UcpResponse} from './ucp-business.js';
+import {requestUcp,ucpBusinessMethods,isUcpBusinessMethod,UCP_CHECKOUT_CONFIRMATION,UCP_PURCHASE_PROFILE,type UcpRequest,type UcpResponse} from './ucp-business.js';
 import type {PapOperationsClient, ProductResult} from '@awiki/dsh-pap/product-api';
 import {PapError} from './state.js';
 
@@ -13,11 +13,28 @@ function value(result:ProductResult):unknown {
 }
 type Operation={channel?:string;operationRef:string;companyRef:string;operationId?:string;method:string;queryParameters?:{name:string;required:boolean}[];pathParameters?:string[]};
 export type StoreConnection={ucp?:boolean;ucpCapabilities?:string[];domain:string;companyRef:string;companyId:string;name:string;methods:string[]};
-const legacyUcpExclusions = new Set([
-  'commerce.checkouts.confirm', 'commerce.checkouts.complete', 'commerce.quotes.create',
-  'commerce.quotes.get', 'commerce.payments.hosted.start',
-]);
-const allowedLegacyMethod = (method: string) => !isUcpBusinessMethod(method) && !legacyUcpExclusions.has(method);
+const allowedLegacyMethod = (method: string) => !method.startsWith('commerce.') ||
+  method === 'commerce.capabilities.get' || method === 'commerce.connections.list';
+
+function storeContext(body: any) {
+  const capability = 'com.frontvia.shopping.store_context';
+  const context = body?.default_context;
+  const connection = body?.connection;
+  const identifier = (value: unknown) => typeof value === 'string' && /^[A-Za-z0-9_.:-]{1,128}$/.test(value);
+  if (body?.ucp?.version !== '2026-08-25' || body.ucp.status !== 'success' ||
+      !body.ucp.capabilities?.[capability]?.some?.((entry:any)=>entry?.version === '2026-08-25') ||
+      !identifier(body.store_id) || !identifier(connection?.connection_id) ||
+      !Number.isSafeInteger(connection.generation) || connection.generation < 1 ||
+      !((context?.country === 'US' && context.currency === 'USD') ||
+        (context?.country === 'CN' && context.currency === 'CNY')) ||
+      !['en-US','zh-CN'].includes(context?.locale))
+    throw new Error('INVALID_UCP_STORE_CONTEXT');
+  return {
+    store_id:body.store_id,
+    default_context:{country:context.country,currency:context.currency,locale:context.locale},
+    ucp_connection:{connection_id:connection.connection_id,generation:connection.generation},
+  };
+}
 
 /** Business mapping only. Discovery, keys, policy and once-approval stay in PAP. */
 export class Pap03Transport {
@@ -51,16 +68,35 @@ export class Pap03Transport {
     const ucpMethods=ucpBusinessMethods(operations);
     const useUcp = store.ucp || operations.some(op=>op.channel==='ucp');
     if(useUcp && method==='commerce.capabilities.get') {
-      const legacy=operations.filter(op=>op.operationId===method);
-      let data:any={store_id:store.companyRef};
-      if(legacy.length===1){const response=await this.send({operationRef:legacy[0]!.operationRef},signal);data=(response.body as any)?.result?.data??data;}
-      const legacyMethods=Array.isArray(data.methods)?data.methods.filter((entry:any)=>entry.availability==='supported').map((entry:any)=>entry.method):[];
-      const methods=[...new Set([...legacyMethods.filter(allowedLegacyMethod),...ucpMethods,'commerce.capabilities.get'])];
+      const contexts=operations.filter(op=>op.channel==='ucp'&&op.operationId==='get_store_context');
+      if(contexts.length>1)throw new Error('AMBIGUOUS_UCP_OPERATION');
+      const legacy=operations.filter(op=>op.channel!=='ucp'&&op.operationId===method);
+      const connections=operations.filter(op=>op.channel!=='ucp'&&op.operationId==='commerce.connections.list');
+      let data:any={store_id:store.companyRef}, hasLegacyMetadata=false;
+      if(contexts.length===1) {
+        const response=await this.send({operationRef:contexts[0]!.operationRef},signal);
+        data=storeContext(response.body);
+      } else if(legacy.length===1) {
+        const response=await this.send({operationRef:legacy[0]!.operationRef},signal);
+        const metadata=(response.body as any)?.result?.data;
+        if(metadata && typeof metadata.store_id==='string'){
+          data={store_id:metadata.store_id,default_context:metadata.default_context,methods:metadata.methods};
+          hasLegacyMetadata=true;
+        }
+      }
+      const available=contexts.length||hasLegacyMetadata?ucpMethods:
+        ucpMethods.filter(method=>/^commerce\.(products|variants)\./.test(method));
+      const methods=[...available,'commerce.capabilities.get',...(!contexts.length&&connections.length===1&&
+        data.methods?.some?.((entry:any)=>entry.method==='commerce.connections.list'&&entry.availability==='supported')
+        ?['commerce.connections.list']:[])];
       const ucpFulfillment = ucpMethods.includes('commerce.checkouts.update')
         && store.ucpCapabilities?.includes('dev.ucp.shopping.fulfillment')===true;
-      const ucpCheckoutConfirmation = store.ucpCapabilities?.includes(UCP_CHECKOUT_CONFIRMATION) === true
-        && ['commerce.checkouts.prepare','commerce.checkouts.confirm','commerce.checkouts.handoff.approve'].every(method=>ucpMethods.includes(method));
-      return {result:{data:{...data,ucp:true,ucpFulfillment,ucpCheckoutConfirmation,methods:methods.map(method=>({method,availability:'supported'})),business_profiles:[{id:'frontvia.ucp_nonpayment.v1',availability:'supported'}]}}};
+      const ucpCheckoutConfirmation = !!data.ucp_connection && store.ucpCapabilities?.includes(UCP_CHECKOUT_CONFIRMATION) === true
+        && ['commerce.checkouts.create','commerce.checkouts.get','commerce.checkouts.update','commerce.checkouts.prepare',
+          'commerce.checkouts.confirm','commerce.checkouts.handoff.approve','commerce.orders.get'].every(method=>ucpMethods.includes(method));
+      return {result:{data:{...data,ucp:true,ucpSyntheticStoreId:store.companyRef,ucpFulfillment,ucpCheckoutConfirmation,
+        methods:methods.map(method=>({method,availability:'supported'})),
+        business_profiles:[{id:UCP_PURCHASE_PROFILE,availability:'supported'}]}}};
     }
     const ucp=await requestUcp(method,params,operations,request=>this.send(request,signal,true));
     if(ucp!==undefined)return ucp;

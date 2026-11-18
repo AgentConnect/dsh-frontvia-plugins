@@ -36,7 +36,7 @@ for (const [folder, name] of bundles) {
 }
 // Local packaging never publishes either package to npm.
 async function packDependency(name,selected){
-  const packed=spawn.sync('npm',['pack','--ignore-scripts','--json','--pack-destination',out],{cwd:selected.root,encoding:'utf8'});
+  const packed=spawn.sync('npm',['pack','.','--offline','--ignore-scripts','--json','--pack-destination',out],{cwd:selected.root,encoding:'utf8'});
   if(packed.error)throw packed.error;
   if(packed.status!==0)throw new Error(`Local packaging failed for ${name}`);
   const {name:actualName,version,filename}=JSON.parse(packed.stdout)[0];

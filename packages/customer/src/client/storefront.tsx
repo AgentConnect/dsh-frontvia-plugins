@@ -71,6 +71,7 @@ type Props = {
   now: number;
   startShopping?: StartShopping;
   addedQuantity?: number;
+  initialTab?: "products" | "cart" | "orders";
   onViewChange?: (scope: ViewScope, refresh?: boolean) => void;
 };
 const defaultSteps = [
@@ -305,6 +306,7 @@ function StorefrontContent({
   now,
   startShopping,
   addedQuantity,
+  initialTab,
   onViewChange,
 }: Props) {
   const [addressDraft, setAddressDraft] = useState<{
@@ -316,7 +318,7 @@ function StorefrontContent({
     if (data?.cart?.id && addressDraft && addressDraft.cartId !== data.cart.id)
       setAddressDraft(undefined);
   }, [data?.cart?.id, addressDraft?.cartId]);
-  const [tab, setTab] = useState("products");
+  const [tab, setTab] = useState<string>(initialTab ?? "products");
   const [step, setStep] = useState<number>();
   const [query, setQuery] = useState("");
   const [detail, setDetail] = useState(false);
@@ -334,6 +336,10 @@ function StorefrontContent({
   const [orderDetail, setOrderDetail] = useState(false);
   const [showOrderDetails, setShowOrderDetails] = useState(false);
   const ordersRequested = useRef(false);
+  const canListOrders = !data?.capabilities?.ucp || data.capabilities.methods?.some(
+    (method: { method: string; availability: string }) =>
+      method.method === "commerce.orders.list" && method.availability === "supported",
+  );
   const [ordersAfterFirstPage, setOrdersAfterFirstPage] = useState(false);
   const [paymentSelected, setPaymentSelected] = useState(false);
   useEffect(() => {
@@ -362,13 +368,13 @@ function StorefrontContent({
       () => {
         checkedPending.current = true;
         void action(
-          data.canDiscardCartAddition ? "discard-cart-add" : "recover",
+          data.canDiscardCartAddition ? "discard-cart-add" : data.purchaseRecovery ? "recover-status" : "recover",
         );
       },
       data.canDiscardCartAddition ? 0 : 1500,
     );
     return () => clearTimeout(timer);
-  }, [data?.pending, data?.canDiscardCartAddition, busy]);
+  }, [data?.pending, data?.canDiscardCartAddition, data?.purchaseRecovery, busy]);
   const shop = async (intent: ShoppingAction["intent"]) => {
     if (intent.action === "add" && (data?.intent?.submitted || data?.order)) {
       if (!startShopping) return false;
@@ -390,15 +396,18 @@ function StorefrontContent({
     initialized.current = true;
     if (!addedQuantity && data.variantProductId && data.variants)
       setDetail(true);
-    if (data.intent?.submitted || data.order) setTab("orders");
-    else if (data.quote || data.cart?.lines?.length) setTab("cart");
+    if (!initialTab) {
+      if (data.intent?.submitted || data.order) setTab("orders");
+      else if (data.quote || data.cart?.lines?.length) setTab("cart");
+    }
     // A restored view is display-only. Keep it visible while revalidating the
     // current catalog, even when the persisted flow already contains products.
     if (
       !data.intent?.submitted &&
       !data.order &&
       !data.quote &&
-      !data.cart?.lines?.length
+      !data.cart?.lines?.length &&
+      (!initialTab || !data.products)
     )
       void shop(
         data.variantProductId
@@ -414,6 +423,7 @@ function StorefrontContent({
     if (
       tab !== "orders" ||
       !data ||
+      !canListOrders ||
       busy ||
       data.orders ||
       ordersRequested.current
@@ -421,7 +431,7 @@ function StorefrontContent({
       return;
     ordersRequested.current = true;
     void shop({ action: "orders" });
-  }, [tab, data, busy]);
+  }, [tab, data, busy, canListOrders]);
   const locked = !!data?.intent?.submitted || !!data?.order;
   const blocked = busy || startingCart || !!data?.pending;
   useEffect(() => {
@@ -482,14 +492,14 @@ function StorefrontContent({
     }
   };
   useEffect(() => {
-    if (ucpConfirmation || tab !== "checkout" || checkoutStep !== 1) {
+    if (data?.capabilities?.ucp || tab !== "checkout" || checkoutStep !== 1) {
       deliveryRequested.current = false;
       return;
     }
     if (blocked || deliveryRequested.current || !data?.cart) return;
     deliveryRequested.current = true;
     void prepareDelivery();
-  }, [tab, checkoutStep, blocked, data?.cart, ucpConfirmation]);
+  }, [tab, checkoutStep, blocked, data?.cart, data?.capabilities?.ucp]);
   const deliveryCurrent =
     !!data?.delivery &&
     !!data?.cart &&
@@ -599,7 +609,7 @@ function StorefrontContent({
                       ? "discard-cart-add"
                       : data.canRetryCart
                         ? "retry-cart"
-                        : "recover",
+                        : data.purchaseRecovery ? "recover-status" : "recover",
                   )
                 }
               >
@@ -613,6 +623,11 @@ function StorefrontContent({
                   "刷新状态"
                 )}
               </Button>
+              {data.canRetryPurchase && !busy && (
+                <Button variant="outline" onClick={() => action("recover")}>
+                  重试原购买请求
+                </Button>
+              )}
             </Alert>
           )}
           {data.cartCreationPending && tab !== "cart" && (
@@ -665,10 +680,7 @@ function StorefrontContent({
                     <ShoppingCart />
                     购物车 {count > 0 ? `(${count})` : ""}
                   </TabsTrigger>
-                  {(!data.capabilities?.ucp || data.capabilities.methods?.some(
-                    (method: { method: string; availability: string }) =>
-                      method.method === "commerce.orders.get" && method.availability === "supported",
-                  )) && (
+                  {(canListOrders || data.order || data.viewedOrder) && (
                     <TabsTrigger value="orders">
                       <Package />
                       我的订单
@@ -1193,7 +1205,7 @@ function StorefrontContent({
                                 {ucpConfirmation && data.checkout && <UcpCheckoutActions data={data} busy={busy} action={action} now={now} />}
                               </div>
                             )}
-                            {(!data.capabilities?.ucp || ucpDraftAvailable && !ucpConfirmation) && <Button
+                            {!data.capabilities?.ucp && <Button
                               disabled={blocked || !data.purchaseReady}
                               onClick={() => {
                                 setTab("checkout");

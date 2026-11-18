@@ -157,6 +157,27 @@ test("Cart-only storefront keeps the Cart visible without Checkout or Order acti
   }
 });
 
+test("refreshing a pending UCP purchase is read-only and retry has a separate action", async () => {
+  const calls: string[] = [];
+  let tree!: ReactTestRenderer;
+  try {
+    await act(async () => {
+      tree = create(React.createElement(Storefront, {
+        draftScope: "ucp-purchase",
+        data: {...initial(), pending: true, purchaseRecovery: true, canRetryPurchase: true,
+          capabilities: {ucp: true, methods: []}},
+        initialTab: "cart", busy: false, error: "", now: Date.now(),
+        action: async operation => { calls.push(operation); return true; },
+      }));
+    });
+    await click(tree, "刷新状态");
+    await click(tree, "重试原购买请求");
+    assert.deepEqual(calls, ["recover-status", "recover"]);
+  } finally {
+    await act(async () => tree?.unmount());
+  }
+});
+
 const address = (tree: ReactTestRenderer) =>
   tree.root.findAllByType("input").find((n) => n.props.name === "line1")!;
 const click = async (tree: ReactTestRenderer, label: string) => {

@@ -111,10 +111,10 @@ owner view 支持 catalog/cart/checkout/order/order-detail 读取范围；同流
 `pap_connect({domain})`。购物与咨询由同一域名发现；没有咨询助手不影响购物。
 服务端按验证后的 PAP 稳定主体识别买方，不自动合并旧手机号账号或订单。
 
-购买使用 `frontvia.pap03_purchase.v1`。Customer 卡片展示商品、数量、报价和总价，
-用户从卡片发起购买，再由公共 PAP 批准并执行同一实际请求。Customer 不签发
-购买 JWT 或 HMAC 凭据。公共 PAP 批准前不下单，服务端继续校验报价版本、金额、
-有效期、nonce 和幂等键；未知结果继续核对原 operation，不重新下单。
+当前 Frontvia UCP 购买使用 `frontvia.ucp_purchase.v1`。Customer 卡片展示商品、数量、
+报价和总价，由买家通过卡片或已配对的商家页面确认。公共 PAP 签署 Session 请求，
+服务端校验原报价、金额、有效期、nonce 和幂等键。回执未知时先读取原 Checkout，
+随后从「我的订单」打开商家返回的同一 Order。已有旧流程保留原协议及原回执核对方式。
 
 购物卡片按当前 capabilities 控制加购入口，未开通时说明原因并禁止点击。
 只有明确配置 `mockPayment: true` 才标注 Mock 支付；否则显示结算提示。
@@ -161,9 +161,19 @@ remain distinct. Cart edits send one complete PUT, carry the observed ETag in
 `If-Match`, and persist the original replacement and a deterministic UUID
 idempotency key in the existing encrypted command state for recovery.
 
-The shared PAP Host must configure `ucpPlatformProfileUrl`. When the merchant
-and configured platform profile both negotiate
-`com.frontvia.shopping.checkout_confirmation`, Customer offers purchase review
+Set `ucpPlatformProfileUrl` in the shared `@awiki/dsh-pap` plugin configuration
+to the product's published HTTPS UCP platform Profile. Use the same Profile
+URL for discovery and requests. Publish Shopping REST `2026-08-25` and the
+desired parent capabilities. For Frontvia Store Context, Order History and
+Checkout confirmation, publish `com.frontvia.shopping.store_context` (extends
+Catalog search), `com.frontvia.shopping.order_history` (extends Order) and
+`com.frontvia.shopping.checkout_confirmation` (extends Checkout) at the same
+version. Publish Fulfillment under Checkout for physical delivery.
+Customer reads the store's market, binding and connection generation from the
+negotiated Store Context and loads the original Order by ID from paginated
+merchant history. A Catalog/Cart-only store supports browsing and cart editing.
+
+When the merchant and platform both negotiate Checkout confirmation, Customer offers purchase review
 on the same Checkout. Preparation and browser pairing use the negotiated
 Frontvia operations. The browser shows a code that the buyer approves in
 Customer before reviewing and confirming the purchase. Eligible fixture orders
@@ -172,9 +182,13 @@ quote-bound confirmation header. Customer checks the original Checkout before
 replaying an uncertain Complete, and follows that same Checkout as it progresses
 to the Order. The paired merchant browser provides the order's after-sales form.
 
-Stores without the extension expose Cart editing, Checkout drafts and the
-Business status messages. Customer uses the shared PAP Host for signing,
-session handling and per-operation consent.
+Draft Checkout remains available when the merchant publishes the standard
+Checkout operations. Customer uses the shared PAP Host for signing, session
+handling and per-operation consent. Advertise the
+`com.frontvia.payment.durable_mock` handler only in the isolated test Profile
+backed by Frontvia's persistent Mock fixture. Model tools can query pending
+purchase status. Only the buyer's card can authorize a retry of an eligible
+original Complete request.
 
 For isolated acceptance, `scripts/pap10-core-check.mjs` connects the real
 awiki.me Identity custodian to the independent Python wire runner through

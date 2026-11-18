@@ -1,9 +1,10 @@
 import {createHash} from 'node:crypto';
 
 export type UcpOperation={operationRef:string;operationId?:string;channel?:string;method:string;pathParameters?:string[]};
-export type UcpRequest={operationRef:string;path?:Record<string,string>;body?:unknown;idempotencyKey?:string;ifMatch?:string;checkoutConfirmation?:string};
+export type UcpRequest={operationRef:string;path?:Record<string,string>;query?:Record<string,string>;body?:unknown;idempotencyKey?:string;ifMatch?:string;checkoutConfirmation?:string};
 
 export const UCP_CHECKOUT_CONFIRMATION = 'com.frontvia.shopping.checkout_confirmation';
+export const UCP_PURCHASE_PROFILE = 'frontvia.ucp_purchase.v1';
 const MOCK_HANDLER = 'com.frontvia.payment.durable_mock';
 export type UcpPurchase = {
   checkoutId: string;
@@ -46,7 +47,7 @@ function responseError(response: UcpResponse) {
 const mapped:Record<string,string>={
   'commerce.products.search':'search_catalog','commerce.products.get':'get_product','commerce.variants.list':'get_product','commerce.variants.get':'get_product',
   'commerce.carts.create':'create_cart','commerce.carts.get':'get_cart','commerce.carts.lines.add':'update_cart','commerce.carts.lines.update':'update_cart','commerce.carts.lines.remove':'update_cart','commerce.carts.update':'update_cart','commerce.carts.cancel':'cancel_cart',
-  'commerce.checkouts.create':'create_checkout','commerce.checkouts.get':'get_checkout','commerce.checkouts.update':'update_checkout','commerce.checkouts.cancel':'cancel_checkout','commerce.orders.get':'get_order',
+  'commerce.checkouts.create':'create_checkout','commerce.checkouts.get':'get_checkout','commerce.checkouts.update':'update_checkout','commerce.checkouts.cancel':'cancel_checkout','commerce.orders.get':'get_order','commerce.orders.list':'list_orders',
   'commerce.checkouts.prepare':'prepare_checkout','commerce.checkouts.confirm':'complete_checkout',
   'commerce.checkouts.handoff.approve':'approve_checkout_handoff',
 };
@@ -57,38 +58,63 @@ export function ucpBusinessMethods(operations:UcpOperation[]):string[]{
     && (id !== 'complete_checkout' || available.has('prepare_checkout') && available.has('approve_checkout_handoff'))).map(([method])=>method);
 }
 const object=(value:any):Record<string,any>=>{if(!value||typeof value!=='object'||Array.isArray(value))throw new Error('INVALID_UCP_RESPONSE');return value;};
-const amount=(n:any,currency:string)=>{if(!Number.isSafeInteger(n))throw new Error('INVALID_UCP_AMOUNT');return {amount_minor:String(n),currency};};
+const amount=(n:any,currency:string)=>{if(!Number.isSafeInteger(n)||!(/^[A-Z]{3}$/.test(currency)))throw new Error('INVALID_UCP_AMOUNT');return {amount_minor:String(n),currency};};
 function totals(resource:any){
   if(!Array.isArray(resource.totals)||typeof resource.currency!=='string')throw new Error('INVALID_UCP_RESPONSE');
   const result:Record<string,unknown>={};
   for(const entry of resource.totals)result[entry.type==='total'?'grand_total':entry.type]=amount(entry.amount,resource.currency);
   return result;
 }
-function product(value:any,productId?:string){
-  const item=object(value),price=item.price;
-  return {...item,description:item.description?.plain??'',...(item.description?.markdown?{description_markdown:item.description.markdown}:{}),
-    ...(productId?{product_id:productId}:{}),images:(item.media??[]).filter((m:any)=>m.type==='image').map((m:any)=>({url:m.url,alt:m.alt})),
-    ...(price?{price:amount(price.amount,price.currency)}:{}),...(item.availability?.status?{availability:item.availability.status}:{})};
+function product(value:any,productId?:string):Record<string,any>{
+  const item=object(value);
+  const money=(price:any)=>amount(price.amount,price.currency);
+  const price=item.unit_price??item.price;
+  const range=item.price_range;
+  const availability=item.availability;
+  const status=typeof availability==='string'?availability:availability?.status;
+  const unavailable=availability?.available===false || availability?.quantity_available===0 ||
+    ['out_of_stock','unavailable'].includes(status);
+  const available=availability?.available===true || ['in_stock','available'].includes(status);
+  return {...item,description:item.description?.plain??(typeof item.description==='string'?item.description:''),
+    ...(item.description?.markdown?{description_markdown:item.description.markdown}:{}),
+    ...(productId?{product_id:productId}:{}),
+    images:(item.media??[]).filter((m:any)=>m.type==='image').map((m:any)=>({url:m.url,alt:m.alt_text??m.alt})),
+    ...(range?{price_range:{
+      ...((range.min??range.minimum)?{min:money(range.min??range.minimum)}:{}),
+      ...((range.max??range.maximum)?{max:money(range.max??range.maximum)}:{}),
+    }}:{}),
+    ...(price?{price:money(price),...(productId||item.unit_price?{unit_price:money(price)}:{})}:{}),
+    ...(unavailable||available?{buyable:!unavailable}:{}),
+    ...(availability?{availability:{...(typeof availability==='object'?availability:{}),...(status?{status}:{})}}:{}),
+    ...(productId && Array.isArray(item.options)?{selected_options:item.options.map((option:any)=>({...option,value:option.label}))}:{}),
+    ...(!productId && Array.isArray(item.variants)?{variants:item.variants.map((variant:any)=>product(variant,item.id))}:{}),
+  };
 }
 function resource(value:any,etag?:string){
   const item=object(value);
   if(typeof item.id!=='string'||!Array.isArray(item.line_items))throw new Error('INVALID_UCP_RESPONSE');
   return {...item,version:etag,lines:item.line_items.map((line:any)=>({id:line.id,variant_id:line.item.id,title:line.item.title,quantity:typeof line.quantity==='object'?line.quantity.total:line.quantity,unit_price:amount(line.item.price,item.currency)})),totals:totals(item),
+    ...(item.context?{context:internalContext(item.context)}:{}),
     ...(item.status?{can_start_new_attempt:item.status==='incomplete'||item.status==='canceled'}:{}),
     ...(item.order?.id && item.status === 'completed' ? {order_ids:[item.order.id]} : {})};
 }
 function isUuid(value: unknown): value is string {
   return typeof value === 'string' && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/.test(value);
 }
-function matchesConfirmation(input: unknown, checkout: any) {
+export function matchesUcpConfirmation(input: unknown, checkout: any, intentId: string, storeId: string, connection: any) {
+  if(!input||typeof input!=='object'||Array.isArray(input))return false;
   const frame = object(input);
   const fields = ['profile','store_id','connection_id','generation','checkout_id','quote_id',
     'snapshot_hash','amount_minor','currency','idempotency_key'];
   return Object.keys(frame).length === fields.length && fields.every(field => Object.hasOwn(frame, field))
-    && frame.profile === 'frontvia.pap03_purchase.v1'
-    && isUuid(frame.checkout_id) && isUuid(frame.quote_id)
+    && frame.profile === UCP_PURCHASE_PROFILE
+    && frame.store_id === storeId && frame.connection_id === connection?.connection_id
+    && frame.generation === connection?.generation
+    && isUuid(frame.checkout_id) && frame.checkout_id === checkout.id && isUuid(frame.quote_id)
     && typeof frame.snapshot_hash === 'string' && /^[0-9a-f]{64}$/.test(frame.snapshot_hash)
-    && typeof frame.idempotency_key === 'string' && /^ucp:[0-9a-f-]{36}$/.test(frame.idempotency_key)
+    && isUuid(intentId) && frame.idempotency_key === `ucp:${intentId}`
+    && typeof frame.amount_minor === 'string' && /^\d+$/.test(frame.amount_minor)
+    && ['USD','CNY'].includes(frame.currency)
     && frame.amount_minor === checkout.totals?.grand_total?.amount_minor && frame.currency === checkout.currency;
 }
 function uuid(key:unknown):string{
@@ -97,23 +123,37 @@ function uuid(key:unknown):string{
   return `${hex.slice(0,8)}-${hex.slice(8,12)}-5${hex.slice(13,16)}-a${hex.slice(17,20)}-${hex.slice(20,32)}`;
 }
 function lineInput(line:any){return {id:line.id,item:{id:line.item.id},quantity:line.quantity};}
-function cartInput(cart:any){return {id:cart.id,line_items:cart.line_items.map(lineInput),...(cart.buyer?{buyer:cart.buyer}:{}),...(cart.context?{context:cart.context}:{}),...(cart.fulfillment?{fulfillment:cart.fulfillment}:{}),...(cart.discounts?{discounts:cart.discounts}:{})};}
-function context(value:any){return value?{...value,...(value.locale?{language:value.locale}:{})}:undefined;}
+function cartInput(cart:any){return {id:cart.id,line_items:cart.line_items.map(lineInput),...(cart.buyer?{buyer:cart.buyer}:{}),...(cart.context?{context:context(cart.context)}:{}),...(cart.fulfillment?{fulfillment:cart.fulfillment}:{}),...(cart.discounts?{discounts:cart.discounts}:{})};}
+function context(value:any){
+  if(!value)return undefined;
+  const {country,locale,...rest}=value;
+  return {...rest,...(country?{address_country:country}:{}),...(locale?{language:locale}:{})};
+}
+function internalContext(value:unknown){
+  const {address_country,language,...rest}=object(value);
+  return {...rest,...(address_country?{country:address_country}:{}),...(language?{locale:language}:{})};
+}
 
 /** Only wire requests use UCP schemas; the returned objects are local presentation data for existing cards. */
 export async function requestUcp(method:string,params:Record<string,any>,operations:UcpOperation[],send:(request:UcpRequest)=>Promise<UcpResponse>):Promise<unknown>{
   const id=mapped[method];if(!id || !ucpBusinessMethods(operations).includes(method))return undefined;
   const match=operations.filter(op=>op.channel==='ucp'&&op.operationId===id);
   if(!match.length)return undefined;if(match.length!==1)throw new Error('AMBIGUOUS_UCP_OPERATION');
-  const op=match[0],write=!['search_catalog','get_product','get_cart','get_checkout','get_order'].includes(id);
+  const op=match[0],write=!['search_catalog','get_product','get_cart','get_checkout','get_order','list_orders'].includes(id);
   const key=write?uuid(params.meta?.idempotency_key??params.idempotency_key):undefined;
-  let body:any,path:Record<string,string>|undefined,ifMatch:string|undefined,checkoutConfirmation:string|undefined;
+  let body:any,path:Record<string,string>|undefined,query:Record<string,string>|undefined,ifMatch:string|undefined,checkoutConfirmation:string|undefined;
   if(id==='search_catalog')body={...(params.query?{query:params.query}:{}),...(params.context?{context:context(params.context)}:{}),...(params.page?{pagination:params.page}:{})};
   else if(id==='get_product')body={id:params.product_id??params.variant_id,...(params.context?{context:context(params.context)}:{})};
   else if(id==='create_cart')body={line_items:(params.lines??[]).map((line:any)=>({item:{id:line.variant_id},quantity:line.quantity})),...(params.context?{context:context(params.context)}:{})};
   else if(['get_cart','cancel_cart','update_cart'].includes(id))path={id:params.cart_id};
   else if(['get_checkout','cancel_checkout','update_checkout'].includes(id))path={id:params.checkout_id};
   else if(id==='get_order')path={id:params.order_id};
+  else if(id==='list_orders'){
+    const {limit,cursor}=params.page??{};
+    if(limit!==undefined && (!Number.isSafeInteger(limit)||limit<1||limit>100) ||
+        cursor!==undefined && (typeof cursor!=='string'||!cursor))throw new Error('INVALID_UCP_ORDER_PAGE');
+    query={...(limit!==undefined?{limit:String(limit)}:{}),...(cursor!==undefined?{cursor}:{})};
+  }
   else if(id==='create_checkout')body={cart_id:params.cart_id,line_items:[]};
   if(id==='update_cart'){
     const read=operations.filter(entry=>entry.channel==='ucp'&&entry.operationId==='get_cart');if(read.length!==1)throw new Error('METHOD_NOT_ADVERTISED');
@@ -142,12 +182,12 @@ export async function requestUcp(method:string,params:Record<string,any>,operati
     }else if(method==='commerce.carts.update'){
       const patch=object(params.patch);
       if(Object.keys(patch).some(key=>!['buyer','context','fulfillment'].includes(key)))throw new Error('UNSUPPORTED_UCP_CART_FIELD');
-      Object.assign(body,patch);
+      Object.assign(body,patch,...(patch.context?[{context:context(patch.context)}]:[]));
     }
   }
   if(id==='update_checkout'){
     ifMatch=params.expected_version;
-    body={line_items:params.line_items,...(params.buyer?{buyer:params.buyer}:{}),...(params.fulfillment?{fulfillment:params.fulfillment}:{}),...(params.context?{context:params.context}:{})};
+    body={line_items:params.line_items,...(params.buyer?{buyer:params.buyer}:{}),...(params.fulfillment?{fulfillment:params.fulfillment}:{}),...(params.context?{context:context(params.context)}:{})};
   }
   if(id==='cancel_cart'||id==='cancel_checkout')body={};
   if (['prepare_checkout','approve_checkout_handoff','complete_checkout'].includes(id)) {
@@ -161,7 +201,7 @@ export async function requestUcp(method:string,params:Record<string,any>,operati
       checkoutConfirmation = Buffer.from(JSON.stringify(object(params.confirmation)), 'utf8').toString('base64url');
     }
   }
-  const response=await send({operationRef:op.operationRef,...(path?{path}:{}),...(body===undefined?{}:{body}),...(key?{idempotencyKey:key}:{}),...(ifMatch?{ifMatch}:{}),...(checkoutConfirmation?{checkoutConfirmation}:{})});
+  const response=await send({operationRef:op.operationRef,...(path?{path}:{}),...(query?{query}:{}),...(body===undefined?{}:{body}),...(key?{idempotencyKey:key}:{}),...(ifMatch?{ifMatch}:{}),...(checkoutConfirmation?{checkoutConfirmation}:{})});
   if (response.status < 200 || response.status >= 300 || response.body?.ucp?.status === 'error') {
     const error = responseError(response);
     if (id === 'update_cart' && (error.status === 409 || error.status === 412) && error.code === 'version_conflict')
@@ -183,7 +223,17 @@ export async function requestUcp(method:string,params:Record<string,any>,operati
     data={items:result.products.map(item=>product(item)),page:{has_more:result.pagination?.has_next_page===true,next_cursor:result.pagination?.cursor??null}};
   }else if(id==='get_product'){
     const found=object(result.product);
+    if(params.product_id!==undefined&&found.id!==params.product_id)throw new Error('INVALID_UCP_RESPONSE');
     data=method==='commerce.variants.list'?{items:(found.variants??[]).map((variant:any)=>product(variant,found.id)),page:{has_more:false,next_cursor:null}}:method==='commerce.variants.get'?product((found.variants??[]).find((variant:any)=>variant.id===params.variant_id),found.id):product(found);
+  }else if(id==='list_orders'){
+    const page=object(result.page);
+    if(envelope.status!=='success'||!Array.isArray(envelope.capabilities?.['com.frontvia.shopping.order_history'])||
+        !envelope.capabilities['com.frontvia.shopping.order_history'].some((entry:any)=>entry?.version==='2026-08-25')||
+        !Array.isArray(result.items)||result.items.some((item:any)=>!isUuid(item?.order_id))||
+        typeof page.has_more!=='boolean'||
+        (page.has_more?typeof page.next_cursor!=='string'||!page.next_cursor:page.next_cursor!==null))
+      throw new Error('INVALID_UCP_RESPONSE');
+    data={items:result.items.map(({order_id}:any)=>({order_id})),page:{has_more:page.has_more,next_cursor:page.next_cursor}};
   }else {
     data=resource(result,response.etag);
     if(id==='get_order')data.shipments=(result.fulfillment?.events??[]).map((event:any)=>({id:event.id,status:event.type,occurred_at:event.occurred_at,description:event.description,
@@ -201,9 +251,10 @@ export async function requestUcp(method:string,params:Record<string,any>,operati
       confirmation:wrapper.confirmation,
     };
     if (!isUuid(purchase.intentId) || !Number.isSafeInteger(purchase.revision) || purchase.revision < 1
-        || !Number.isFinite(Date.parse(purchase.expiresAt))
+        || !Number.isFinite(Date.parse(purchase.expiresAt)) || purchase.expiresAt !== data.expires_at
         || purchase.paymentReference !== null && !isUuid(purchase.paymentReference)
-        || purchase.confirmation !== null && !matchesConfirmation(purchase.confirmation, data)) {
+        || purchase.confirmation !== null && !matchesUcpConfirmation(purchase.confirmation, data,
+          purchase.intentId, params.ucp_store_id, params.ucp_connection)) {
       throw new Error('INVALID_UCP_CONFIRMATION');
     }
     return {result:{data:{operation:{id:key,status:'succeeded',source:'ucp_response'},resource:data,purchase}}};

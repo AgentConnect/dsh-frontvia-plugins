@@ -325,7 +325,7 @@ export function apply(ctx: any) {
       ),
       [tick, setTick] = useState(Date.now());
     useEffect(() => {
-      if (resume) return;
+      if (resume || liveData?.capabilities?.ucp) return;
       const selected = tab ?? (liveData ? shoppingStep(liveData) : ui.card);
       onViewChange(
         selected === "products" || selected === "connection"
@@ -554,13 +554,15 @@ export function apply(ctx: any) {
         actionId: crypto.randomUUID(),
       });
     };
-    if (resume)
+    if (resume || data?.capabilities?.ucp)
       return (
         <div
+          className={resume ? undefined : "fv fv-inline"}
           ref={(node) => {
             container.current = node;
           }}
         >
+          {!resume && <style>{styles}</style>}
           <Storefront
             draftScope={JSON.stringify([
               accountRevision,
@@ -577,6 +579,8 @@ export function apply(ctx: any) {
             now={tick}
             startShopping={startShopping}
             addedQuantity={addedQuantity}
+            initialTab={resume ? undefined : ui.card === "order" ? "orders"
+              : ui.card === "cart" || ui.card === "quote" ? "cart" : "products"}
             onViewChange={onViewChange}
           />
         </div>
