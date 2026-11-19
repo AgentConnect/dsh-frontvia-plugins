@@ -911,9 +911,13 @@ export class CustomerService {
       if ((args.action === "quote" || args.action === "prepare") && f.capabilities?.ucp) {
         if (!f.cart) fail("CART_REQUIRED");
         if (args.action === "quote") this.change(f, args.expected_version);
-        if (f.checkout && f.checkout.status !== "canceled") {
+        if (f.pending) fail("RESOLVE_PENDING_OPERATION");
+        if (f.checkout) {
           f.checkout = await this.read(f, "checkouts.get", {checkout_id:f.checkout.id}, signal);
+          if (f.checkout.status === "canceled") delete f.ucpPurchase;
           this.save(f);
+        }
+        if (f.checkout && f.checkout.status !== "canceled") {
           data = {resource:f.checkout};
         } else {
           data = await this.write(f, "commerce.checkouts.create", {cart_id:f.cart.id}, callId, signal);
@@ -1394,6 +1398,7 @@ export class CustomerService {
       f.checkout = await this.read(f, "checkouts.get", {
         checkout_id: f.checkout.id,
       });
+      this.observeUcpPreparation(f);
       this.observeUcpCompletion(f);
       if (f.checkout.order_ids?.[0])
         f.order = await order(f.checkout.order_ids[0]);
@@ -1528,17 +1533,17 @@ export class CustomerService {
       ].includes(f.commands[f.pending]?.method)
     );
   }
-  async recoverFromOwner(sessionId: string, flowId: string, retryConfirmation = true) {
+  async recoverFromOwner(sessionId: string, flowId: string, retryPurchase = true) {
     this.views.clear();
     await this.pap.refresh?.();
     return this.serial.run(flowId, async () => {
       const f = this.flow(sessionId, flowId);
       this.policy(f);
       await this.currentCapabilities(f, true);
-      await this.recover(f, false, retryConfirmation);
+      await this.recover(f, false, retryPurchase);
     });
   }
-  private async recover(f: Flow, retryCart = false, ownerConfirmedRetry = false) {
+  private async recover(f: Flow, retryCart = false, ownerPurchaseRetry = false) {
     if (f.pending) {
       const c = f.commands[f.pending];
       if (!c) fail("RECOVERY_STATE_INVALID");
@@ -1549,11 +1554,18 @@ export class CustomerService {
           c.params.context, c.params.patch?.context, c.params.ucp_cart_snapshot?.context,
         ].some(context => context?.country !== undefined || context?.locale !== undefined))
           fail("ORIGINAL_RESULT_UNKNOWN");
+        if (c.method === "commerce.checkouts.prepare") {
+          if (f.checkout?.id !== c.params.checkout_id) fail("RECOVERY_STATE_INVALID");
+          const observed = await this.refresh(f, false, ["order"]);
+          if (!f.pending || !ownerPurchaseRetry) return observed;
+          if (!this.canRetryUcpPreparation(f, c)) fail("ORIGINAL_RESULT_UNKNOWN");
+          this.requireMethod(f, c.method);
+        }
         // A lost Complete response is first reconciled through the original Checkout.
         if (c.method === "commerce.checkouts.confirm") {
           f.checkout = await this.read(f, "checkouts.get", {checkout_id:c.params.checkout_id});
           if (this.observeUcpCompletion(f)) return this.refresh(f, false, ["checkout", "order"]);
-          if (!ownerConfirmedRetry) fail("ORIGINAL_RESULT_UNKNOWN");
+          if (!ownerPurchaseRetry) fail("ORIGINAL_RESULT_UNKNOWN");
           this.requireMethod(f, c.method);
           const prepared = f.ucpPurchase;
           if (!prepared || !this.validUcpPurchase(f, prepared) ||
@@ -1672,6 +1684,27 @@ export class CustomerService {
       delete f.intent;
     }
   }
+  private canRetryUcpPreparation(f: Flow, command: Command) {
+    const checkout = f.checkout;
+    return f.capabilities?.ucpCheckoutConfirmation === true &&
+      command.params.ucp_wire_version === 2 &&
+      checkout?.id === command.params.checkout_id &&
+      ["incomplete", "requires_escalation", "ready_for_complete"].includes(checkout?.status) &&
+      (checkout.expires_at === undefined || Date.parse(checkout.expires_at) > Date.now());
+  }
+
+  private observeUcpPreparation(f: Flow) {
+    const command = f.pending && f.commands[f.pending];
+    if (!command || command.method !== "commerce.checkouts.prepare" ||
+        command.params.ucp_protocol !== true || command.params.checkout_id !== f.checkout?.id ||
+        !["complete_in_progress", "completed", "canceled"].includes(f.checkout.status)) return;
+    command.status = "done";
+    command.result = { resource: f.checkout };
+    delete f.pending;
+    if (f.checkout.status === "canceled") delete f.ucpPurchase;
+    this.save(f);
+  }
+
   private observeUcpCompletion(f: Flow) {
     const command = f.pending && f.commands[f.pending];
     if (!command || command.method !== "commerce.checkouts.confirm" ||
@@ -1810,6 +1843,8 @@ export class CustomerService {
 
   private humanView(f: Flow) {
     const pending = f.pending ? f.commands[f.pending] : undefined;
+    const preparationRecovery = pending?.method === "commerce.checkouts.prepare" &&
+      pending.params.ucp_protocol === true;
     return {
       flowId: f.id,
       sessionId: f.sessionId,
@@ -1839,6 +1874,8 @@ export class CustomerService {
         paymentAction: this.paymentAction(f),
         paymentExpiresAt: this.paymentAction(f, true, true)?.expiresAt,
       },
+      preparationRecovery,
+      canRetryPreparation: preparationRecovery && this.canRetryUcpPreparation(f, pending),
       purchaseRecovery: pending?.method === "commerce.checkouts.confirm",
       canRetryPurchase: pending?.method === "commerce.checkouts.confirm" &&
         pending.params.ucp_wire_version === 2 && f.checkout?.status === "ready_for_complete" &&

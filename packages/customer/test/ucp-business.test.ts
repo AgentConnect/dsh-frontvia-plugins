@@ -16,6 +16,7 @@ function fixture(cartOnly=false, fullFlow=false){
   const calls:any[]=[],store={companyRef:'shop',companyId:fullFlow?'https://issuer.example':'https://shop.example',domain:'shop.example',name:'Shop',ucpCapabilities:['dev.ucp.shopping.fulfillment']};
   if (fullFlow) store.ucpCapabilities.push(UCP_CHECKOUT_CONFIRMATION);
   const checkoutId = fullFlow ? '6c7cedd6-7df5-4df1-b13c-ff81a06b0e44' : 'draft-1';
+  const replacementCheckoutId = '320315b8-ac31-4305-a68c-0ee926ba4235';
   const nativeCheckoutId = 'abbd7aac-8f9d-443e-87d2-b10f25165a95';
   const intentId = '593e39b7-4130-49ff-884c-98e10eeb8cd1';
   const paymentReference = 'd8468997-828c-46d4-879a-743f448d62f0';
@@ -23,6 +24,7 @@ function fixture(cartOnly=false, fullFlow=false){
   let storeId = 'physical-shop', generation = 1, country = 'US', advertisedContext = fullFlow, storeStatus = 200;
   let authorized = true, catalogAvailable = true, confirmationPatch: Record<string,unknown> = {};
   let preparedCheckoutPatch: Record<string,unknown> = {};
+  let prepareConsentPending = false;
   const currentProduct = () => ({...product,variants:product.variants.map(variant=>({...variant,availability:{available:catalogAvailable}}))});
   const expiresAt = new Date(Date.now()+120_000).toISOString();
   let checkout: any, checkoutRevision = 1;
@@ -52,8 +54,10 @@ function fixture(cartOnly=false, fullFlow=false){
     else if(input.operationRef==='search_catalog')body={ucp,products:[currentProduct()],pagination:{has_next_page:false}};
     else if(input.operationRef==='get_product')body={ucp,product:currentProduct()};
     else if(fullFlow && input.operationRef==='create_checkout') {
-      checkout??={...cart,id:checkoutId,status:'incomplete',buyer:{email:'buyer@example.test'},
+      if (!checkout || checkout.status === 'canceled') {
+        checkout={...cart,id:checkout?replacementCheckoutId:checkoutId,status:'incomplete',buyer:{email:'buyer@example.test'},
         context:{address_country:country,currency:country==='CN'?'CNY':'USD',address_region:'CA'}};
+      }
       body=checkout;
     }
     else if(fullFlow && input.operationRef==='get_checkout')body=checkout;
@@ -67,6 +71,10 @@ function fixture(cartOnly=false, fullFlow=false){
     }
     else if(input.operationRef==='prepare_checkout'){
       assert.equal(input.path.id,checkoutId);
+      if (prepareConsentPending) return {ok:false,error:{
+        code:'identity_authorization_required',phase:'approval',businessRequest:'not_sent',
+        approval:{requestId:'fixture-pending',presentation:'dialog',status:'pending'},
+      }};
       checkout={...checkout,status:'ready_for_complete',expires_at:expiresAt,
         continue_url:`https://shop.example/ucp/v1/checkout-sessions/${checkoutId}/handoff`};
       body={checkout:{...checkout,...preparedCheckoutPatch},intent_id:intentId,revision:2,expires_at:expiresAt,payment_reference:paymentReference,
@@ -97,10 +105,12 @@ function fixture(cartOnly=false, fullFlow=false){
     if(input.idempotencyKey){effects++;receipts.set(input.idempotencyKey,structuredClone(response));if(loseNext){loseNext=false;return {ok:false,error:{code:'request_uncertain',businessRequest:'unknown'}};}}
     return response;
   }};
-  return {sdk,calls,paymentReference,checkoutId,nativeCheckoutId,intentId,orderId,transport:new Pap03Transport(sdk),lose(){loseNext=true;},effects:()=>effects,
+  return {sdk,calls,paymentReference,checkoutId,replacementCheckoutId,nativeCheckoutId,intentId,orderId,transport:new Pap03Transport(sdk),lose(){loseNext=true;},effects:()=>effects,
     useContext(){advertisedContext=true;}, useCountry(value:string){country=value;}, changeGeneration(){generation++;},
     denyStore(){storeStatus=403;}, changeIdentity(){authorized=false;}, patchConfirmation(fields:Record<string,unknown>){confirmationPatch=fields;},
     patchPreparedCheckout(fields:Record<string,unknown>){preparedCheckoutPatch=fields;},
+    prepareConsent(pending: boolean){prepareConsentPending=pending;},
+    expirePreparation(status='canceled'){checkout={...checkout,status,expires_at:new Date(0).toISOString()};},
     noStock(){catalogAvailable=false;},
     dropComplete(){dropCompleteBeforeAdmission=true;},
     finishPurchase(){checkout={...checkout,status:'completed',order:{id:orderId}};},
@@ -406,6 +416,79 @@ test('checkout preparation rejects altered store, quote and intent bindings',asy
   assert(!f.calls.some(call=>call.operationRef==='complete_checkout'));
  }
 });
+test('an approval timeout leaves Prepare recoverable by the owner with the exact request after restart',async()=>{
+ const f=fixture(false,true), c=await cartFlow(f);
+ await c.service.tool('chat','frontvia_checkout',{action:'prepare',flowId:c.flowId},'draft');
+ const effectsBefore=f.effects();
+ f.prepareConsent(true);
+ await assert.rejects(c.service.prepareUcpPurchase('chat',c.flowId,'prepare'),/PAP_IDENTITY_AUTHORIZATION_REQUIRED/);
+ const original=f.calls.find(call=>call.operationRef==='prepare_checkout');
+ assert(original);
+ assert.equal(f.effects(),effectsBefore);
+ assert(c.flow().pending);
+
+ const restarted=new CustomerService({dataDir:'unused',sites:[]},new Pap03Business(f.sdk),c.vault);
+ await restarted.connect('chat','shop.example');
+ const from=f.calls.length;
+ await restarted.tool('chat','frontvia_orders',{action:'recover',flowId:c.flowId},'observe');
+ await restarted.recoverFromOwner('chat',c.flowId,false);
+ const view=await restarted.view('chat',c.flowId,['checkout']);
+ assert.equal(view.preparationRecovery,true);
+ assert.equal(view.canRetryPreparation,true);
+ const observations=f.calls.slice(from);
+ assert(observations.some(call=>call.operationRef==='get_checkout'&&call.path.id===f.checkoutId));
+ assert(!observations.some(call=>call.operationRef==='prepare_checkout'));
+
+ // Restart may require distinct local consent. It never changes the wire key.
+ await assert.rejects(restarted.recoverFromOwner('chat',c.flowId),/PAP_IDENTITY_AUTHORIZATION_REQUIRED/);
+ assert.equal(f.effects(),effectsBefore);
+ f.prepareConsent(false);
+ await restarted.recoverFromOwner('chat',c.flowId);
+ const attempts=f.calls.filter(call=>call.operationRef==='prepare_checkout');
+ assert.deepEqual(attempts,[original,original,original]);
+ assert.equal(f.effects(),effectsBefore+1);
+ assert.equal(restarted.flow('chat',c.flowId).checkout.status,'ready_for_complete');
+ assert.equal(restarted.flow('chat',c.flowId).pending,undefined);
+ assert(!f.calls.some(call=>call.operationRef==='complete_checkout'));
+});
+
+test('an expired original Prepare settles by read and reopens one draft on the same cart',async()=>{
+ const f=fixture(false,true),c=await cartFlow(f);
+ await c.service.tool('chat','frontvia_checkout',{action:'prepare',flowId:c.flowId},'draft');
+ const originalCart=c.flow().cart.id;
+ f.lose();
+ await assert.rejects(c.service.prepareUcpPurchase('chat',c.flowId,'prepare'),/PAP_REQUEST_UNCERTAIN/);
+ const pending=c.flow().pending!;
+ assert(pending);
+ f.expirePreparation('ready_for_complete');
+ await assert.rejects(c.service.recoverFromOwner('chat',c.flowId),{code:'ORIGINAL_RESULT_UNKNOWN'});
+ assert.equal(c.flow().pending,pending);
+ assert.equal(f.calls.filter(call=>call.operationRef==='prepare_checkout').length,1);
+ f.expirePreparation();
+ await c.service.recoverFromOwner('chat',c.flowId,false);
+ assert.equal(c.flow().pending,undefined);
+ assert.equal(c.flow().commands[pending].status,'done');
+ assert.equal(c.flow().checkout.id,f.checkoutId);
+ assert.equal(c.flow().checkout.status,'canceled');
+ assert.equal(c.flow().ucpPurchase,undefined);
+ assert.equal(f.calls.filter(call=>call.operationRef==='prepare_checkout').length,1);
+
+ const beforeOpen=f.calls.length;
+ const fresh=await c.service.tool('chat','frontvia_checkout',{action:'prepare',flowId:c.flowId},'fresh-draft');
+ assert.equal((fresh as any).data.resource.id,f.replacementCheckoutId);
+ const opens=f.calls.slice(beforeOpen).filter(call=>['get_checkout','create_checkout'].includes(call.operationRef));
+ assert.equal(opens.length,2);
+ assert.deepEqual(opens[0],{operationRef:'get_checkout',path:{id:f.checkoutId}});
+ assert.deepEqual(opens[1].body,{cart_id:originalCart,line_items:[]});
+ assert.notEqual(opens[1].idempotencyKey,f.calls.find(call=>call.operationRef==='create_checkout').idempotencyKey);
+ await c.service.tool('chat','frontvia_checkout',{action:'prepare',flowId:c.flowId},'reload-draft');
+ assert.equal(c.flow().cart.id,originalCart);
+ assert.equal(c.flow().checkout.id,f.replacementCheckoutId);
+ assert.equal(f.calls.filter(call=>call.operationRef==='create_cart').length,1);
+ assert.equal(f.calls.filter(call=>call.operationRef==='create_checkout').length,2);
+ assert(!f.calls.some(call=>call.operationRef==='complete_checkout'));
+});
+
 test('only owner recovery may retry the exact Complete after reading the original Checkout',async()=>{
  const f=fixture(false,true),c=await cartFlow(f);
  await c.service.tool('chat','frontvia_checkout',{action:'prepare',flowId:c.flowId},'draft');

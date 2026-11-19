@@ -178,6 +178,53 @@ test("refreshing a pending UCP purchase is read-only and retry has a separate ac
   }
 });
 
+test("checkout preparation offers a separate resume and restores checkout on the same cart after cancellation", async () => {
+  const requests: { operation: string; payload?: any }[] = [];
+  let tree!: ReactTestRenderer;
+  let data = {
+    ...initial(),
+    preparationRecovery: true,
+    canRetryPreparation: true,
+    pending: true,
+    checkout: { id: "original-draft", status: "incomplete" },
+    capabilities: {
+      ucp: true,
+      ucpCheckoutConfirmation: true,
+      methods: ["commerce.checkouts.get", "commerce.checkouts.create"].map(
+        (method) => ({ method, availability: "supported" }),
+      ),
+    },
+  };
+  const render = () =>
+    React.createElement(Storefront, {
+      draftScope: "ucp-preparation",
+      data,
+      initialTab: "cart", busy: false, error: "", now: Date.now(),
+      action: async (operation, payload) => { requests.push({ operation, payload }); return true; },
+    });
+  try {
+    await act(async () => { tree = create(render()); });
+    await click(tree, "刷新状态");
+    await click(tree, "继续原结算准备");
+    assert.deepEqual(requests.map(({ operation }) => operation), ["recover-status", "recover"]);
+    data = {
+      ...data,
+      preparationRecovery: false,
+      canRetryPreparation: false,
+      pending: false,
+      checkout: { ...data.checkout, status: "canceled" },
+    };
+    await act(async () => { tree.update(render()); });
+    assert.equal(button(tree, "继续原结算准备"), undefined);
+    await click(tree, "重新创建结算草稿");
+    assert.equal(requests.at(-1)?.operation, "shopping");
+    assert.deepEqual(requests.at(-1)?.payload.intent, { action: "prepare" });
+    assert.equal(requests.at(-1)?.payload.expected_version, "v1");
+  } finally {
+    await act(async () => tree?.unmount());
+  }
+});
+
 const address = (tree: ReactTestRenderer) =>
   tree.root.findAllByType("input").find((n) => n.props.name === "line1")!;
 const click = async (tree: ReactTestRenderer, label: string) => {

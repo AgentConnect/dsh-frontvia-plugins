@@ -356,6 +356,7 @@ function StorefrontContent({
       !(showOrderDetails && orderDetail),
     );
   }, [tab, orderDetail, showOrderDetails, onViewChange]);
+  const checkoutRecovery = data?.purchaseRecovery || data?.preparationRecovery;
   const initialized = useRef(false);
   const checkedPending = useRef(false);
   useEffect(() => {
@@ -368,13 +369,13 @@ function StorefrontContent({
       () => {
         checkedPending.current = true;
         void action(
-          data.canDiscardCartAddition ? "discard-cart-add" : data.purchaseRecovery ? "recover-status" : "recover",
+          data.canDiscardCartAddition ? "discard-cart-add" : checkoutRecovery ? "recover-status" : "recover",
         );
       },
       data.canDiscardCartAddition ? 0 : 1500,
     );
     return () => clearTimeout(timer);
-  }, [data?.pending, data?.canDiscardCartAddition, data?.purchaseRecovery, busy]);
+  }, [data?.pending, data?.canDiscardCartAddition, checkoutRecovery, busy]);
   const shop = async (intent: ShoppingAction["intent"]) => {
     if (intent.action === "add" && (data?.intent?.submitted || data?.order)) {
       if (!startShopping) return false;
@@ -473,7 +474,8 @@ function StorefrontContent({
           manualDelivery ? 1 : 0,
           step ?? (data?.intent ? 3 : data?.quote ? 2 : 1),
         );
-  const ucpDraftMethod = data?.checkout && data.checkout.status !== "canceled"
+  const canceledDraft = data?.capabilities?.ucp && data.checkout?.status === "canceled";
+  const ucpDraftMethod = data?.checkout && !canceledDraft
     ? "commerce.checkouts.get"
     : "commerce.checkouts.create";
   const ucpDraftAvailable = data?.capabilities?.ucp && data.capabilities.methods?.some(
@@ -609,7 +611,7 @@ function StorefrontContent({
                       ? "discard-cart-add"
                       : data.canRetryCart
                         ? "retry-cart"
-                        : data.purchaseRecovery ? "recover-status" : "recover",
+                        : checkoutRecovery ? "recover-status" : "recover",
                   )
                 }
               >
@@ -626,6 +628,11 @@ function StorefrontContent({
               {data.canRetryPurchase && !busy && (
                 <Button variant="outline" onClick={() => action("recover")}>
                   重试原购买请求
+                </Button>
+              )}
+              {data.canRetryPreparation && !busy && (
+                <Button variant="outline" onClick={() => action("recover")}>
+                  继续原结算准备
                 </Button>
               )}
             </Alert>
@@ -1158,7 +1165,7 @@ function StorefrontContent({
                           </Button>
                         ) : (
                           <div className="fv-stack">
-                            {data.checkout && (!ucpConfirmation || data.checkout.status === "incomplete") && (
+                            {data.checkout && !canceledDraft && (!ucpConfirmation || data.checkout.status === "incomplete") && (
                               <Button
                                 variant="outline"
                                 disabled={blocked}
@@ -1169,8 +1176,8 @@ function StorefrontContent({
                             )}
                             {ucpDraftAvailable && (
                               <div className="fv-stack">
-                                {(!ucpConfirmation || !data.checkout) && <Button disabled={blocked} onClick={() => shop({action:"prepare"})}>
-                                  {data.checkout ? "查看结算草稿" : "创建结算草稿"}
+                                {(!ucpConfirmation || !data.checkout || canceledDraft) && <Button disabled={blocked} onClick={() => shop({action:"prepare"})}>
+                                  {canceledDraft ? "重新创建结算草稿" : data.checkout ? "查看结算草稿" : "创建结算草稿"}
                                 </Button>}
                                 {data.checkout?.messages?.map((message:any,index:number) => (
                                   <p className="fv-muted" key={index}>{message.content}</p>
@@ -1181,7 +1188,7 @@ function StorefrontContent({
                                     expected_version:data.cart.version, patch:{email}, actionId:crypto.randomUUID(),
                                   })} />
                                 )}
-                                {data.checkout && (!ucpConfirmation || data.checkout.status === "incomplete" && !manualDelivery)
+                                {data.checkout && !canceledDraft && (!ucpConfirmation || data.checkout.status === "incomplete" && !manualDelivery)
                                     && data.capabilities.ucpFulfillment && ["US","CN"].includes(data.pricing.country) && (
                                   <AddressForm data={data} busy={blocked} action={action} saveLabel="保存到结算草稿"
                                     form={addressDraft&&addressDraft.cartId===data.cart.id?addressDraft.values:confirmedAddress}
