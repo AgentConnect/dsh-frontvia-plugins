@@ -191,17 +191,23 @@ function UcpCheckoutActions({data, busy, action, now}: {
   const checkout = data.checkout;
   const [challenge, setChallenge] = useState("");
   const [paired, setPaired] = useState(false);
+  const [hostedWatch, setHostedWatch] = useState<{ id: string; until: number }>();
   const field = useId();
   const processing = checkout.status === "complete_in_progress";
+  const hosted = checkout.hostedHandoff === true;
+  const watchingHosted = hosted && !!hostedWatch && hostedWatch.id === checkout.id && hostedWatch.until > now;
   useEffect(() => {
     setChallenge("");
     setPaired(false);
   }, [checkout.id]);
   useEffect(() => {
-    if (!processing || busy) return;
-    const timer = setTimeout(() => void action("refresh-ucp-checkout"), 4000);
+    if ((!processing && !watchingHosted) || busy) return;
+    const timer = setTimeout(() => {
+      if (processing || (hostedWatch && Date.now() < hostedWatch.until))
+        void action("refresh-ucp-checkout");
+    }, 4000);
     return () => clearTimeout(timer);
-  }, [checkout.id, processing, busy]);
+  }, [checkout.id, processing, watchingHosted, hostedWatch, busy]);
   const amount = checkout.totals?.grand_total;
   const expired = checkout.expires_at && Date.parse(checkout.expires_at) <= now;
   const editable = checkout.status === "incomplete";
@@ -209,10 +215,11 @@ function UcpCheckoutActions({data, busy, action, now}: {
   const submitBlocked = busy || data.pending;
   return <div className="fv-stack">
     {processing && <p role="status">购买处理中，正在核对原结算。</p>}
+    {watchingHosted && <p role="status">正在核对原结算。付款后可回到这里查看订单。</p>}
     {checkout.status === "canceled" && <p role="status">本次结算已取消。</p>}
     {checkout.status === "completed" && <p role="status">购买完成。</p>}
     {!editable && amount && <p>结算合计 {money(amount)}</p>}
-    {mayPrepare && !checkout.handoff && <Button disabled={submitBlocked || !checkout.buyer?.email || !amount}
+    {mayPrepare && checkout.canPrepare && !checkout.handoff && <Button disabled={submitBlocked || !checkout.buyer?.email || !amount}
       onClick={() => action("prepare-purchase", {actionId:crypto.randomUUID()})}>
       核对并继续
     </Button>}
@@ -221,10 +228,13 @@ function UcpCheckoutActions({data, busy, action, now}: {
       确认购买 {money(amount)}
     </Button>}
     {checkout.handoff && <div className="fv-stack">
-      <a href={checkout.handoff} target="_blank" rel="noopener noreferrer">
+      <a href={checkout.handoff} target="_blank" rel="noopener noreferrer"
+        onClick={() => {
+          if (hosted) setHostedWatch({ id: checkout.id, until: Date.now() + 5 * 60_000 });
+        }}>
         {checkout.status === "completed" ? "在浏览器查看订单与售后" : "在浏览器继续"}
       </a>
-      <form className="fv-stack" onSubmit={async event => {
+      {!hosted && <form className="fv-stack" onSubmit={async event => {
         event.preventDefault();
         if (await action("approve-handoff", {challenge:challenge.trim(),actionId:crypto.randomUUID()})) {
           setChallenge("");
@@ -239,10 +249,10 @@ function UcpCheckoutActions({data, busy, action, now}: {
         <Button type="submit" variant="outline" disabled={busy || !/^[A-Za-z0-9_-]{43}$/.test(challenge.trim())}>
           授权浏览器
         </Button>
-      </form>
-      {paired && <p role="status">已授权，请回到原浏览器页面。</p>}
+      </form>}
+      {!hosted && paired && <p role="status">已授权，请回到原浏览器页面。</p>}
     </div>}
-    {checkout.handoff && mayPrepare && !editable && <Button variant="outline" disabled={submitBlocked}
+    {!hosted && checkout.handoff && mayPrepare && !editable && <Button variant="outline" disabled={submitBlocked}
       onClick={() => action("cancel-ucp-checkout", {actionId:crypto.randomUUID()})}>
       取消本次结算
     </Button>}
@@ -345,6 +355,7 @@ function StorefrontContent({
   );
   const [ordersAfterFirstPage, setOrdersAfterFirstPage] = useState(false);
   const [paymentSelected, setPaymentSelected] = useState(false);
+  const hostedCheckout = data?.checkout?.hostedHandoff === true;
   useEffect(() => {
     onViewChange?.(
       tab === "products"
@@ -354,11 +365,11 @@ function StorefrontContent({
             ? "order-detail"
             : "order"
           : tab === "cart"
-            ? "cart"
+            ? hostedCheckout ? "checkout" : "cart"
             : "checkout",
       !(showOrderDetails && orderDetail),
     );
-  }, [tab, orderDetail, showOrderDetails, onViewChange]);
+  }, [tab, orderDetail, showOrderDetails, hostedCheckout, onViewChange]);
   const checkoutRecovery = data?.purchaseRecovery || data?.preparationRecovery;
   const initialized = useRef(false);
   const checkedPending = useRef(false);
@@ -1209,20 +1220,19 @@ function StorefrontContent({
                                 {data.checkout?.messages?.map((message:any,index:number) => (
                                   <p className="fv-muted" key={index}>{message.content}</p>
                                 ))}
-                                {!ucpConfirmation && <p className="fv-muted">可以查看结算信息；商家尚未开放付款提交。</p>}
-                                {ucpConfirmation && data.checkout?.status === "incomplete" && manualDelivery && (
+                                {data.checkout?.status === "incomplete" && (data.checkout.emailOnly || manualDelivery) && (
                                   <ManualContact email={data.checkout.buyer?.email} disabled={blocked} save={email => action("contact", {
                                     expected_version:data.cart.version, patch:{email}, actionId:crypto.randomUUID(),
                                   })} />
                                 )}
-                                {data.checkout && !canceledDraft && (!ucpConfirmation || data.checkout.status === "incomplete" && !manualDelivery)
+                                {data.checkout?.status === "incomplete" && !data.checkout.emailOnly && !manualDelivery
                                     && data.capabilities.ucpFulfillment && ["US","CN"].includes(data.pricing.country) && (
                                   <AddressForm data={data} busy={blocked} action={action} saveLabel="保存到结算草稿"
                                     form={addressDraft&&addressDraft.cartId===data.cart.id?addressDraft.values:confirmedAddress}
                                     setForm={values=>setAddressDraft({cartId:data.cart.id,values})}
                                     next={async()=>{setAddressDraft(undefined);}} />
                                 )}
-                                {ucpConfirmation && data.checkout?.status === "incomplete" && shippingDraft?.groups?.map((group:any) => (
+                                {data.checkout?.status === "incomplete" && shippingDraft?.groups?.map((group:any) => (
                                   <FieldSet key={group.id}>
                                     <FieldLegend>配送方式</FieldLegend>
                                     {group.options?.map((option:any) => (
@@ -1236,7 +1246,7 @@ function StorefrontContent({
                                     ))}
                                   </FieldSet>
                                 ))}
-                                {ucpConfirmation && data.checkout && <UcpCheckoutActions data={data} busy={busy} action={action} now={now} />}
+                                {data.checkout && <UcpCheckoutActions data={data} busy={busy} action={action} now={now} />}
                               </div>
                             )}
                             {!data.capabilities?.ucp && <Button

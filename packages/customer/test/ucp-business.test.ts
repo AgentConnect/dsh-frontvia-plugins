@@ -4,7 +4,7 @@ import {randomUUID} from 'node:crypto';
 import {Pap03Transport} from '../src/pap03-transport.js';
 import {Pap03Business} from '../src/pap03-business.js';
 import {CustomerService} from '../src/core.js';
-import {UCP_CHECKOUT_CONFIRMATION,UCP_PURCHASE_PROFILE} from '../src/ucp-business.js';
+import {MOCK_HANDLER,UCP_CHECKOUT_CONFIRMATION,UCP_PURCHASE_PROFILE} from '../src/ucp-business.js';
 import type {PapOperationsClient} from '@awiki/dsh-pap/product-api';
 const version='2026-08-25';
 const ucp={version};
@@ -12,10 +12,10 @@ const storeContext='com.frontvia.shopping.store_context';
 const orderHistory='com.frontvia.shopping.order_history';
 const metadata=(capability:string)=>({version,status:'success',capabilities:{[capability]:[{version}]}});
 const product={id:'product-1',title:'Mug',description:{plain:'Ceramic'},price_range:{min:{amount:1250,currency:'USD'},max:{amount:1250,currency:'USD'}},variants:[{id:'variant-1',title:'Blue',description:{plain:'Blue ceramic'},price:{amount:1250,currency:'USD'},sku:'MUG-BLUE',availability:{available:false},media:[{type:'image',url:'https://shop.example/mug.jpg',alt_text:'Blue mug'}],options:[{name:'Color',id:'blue',label:'Blue'}]}]};
-function fixture(cartOnly=false, fullFlow=false){
+function fixture(cartOnly=false, fullFlow=false, hosted=false){
   let loseNext=false, dropCompleteBeforeAdmission=false, rejection: {status:number;code:string;version:string}|undefined;const receipts=new Map<string,any>();let effects=0;
   const calls:any[]=[],store={companyRef:'shop',companyId:fullFlow?'https://issuer.example':'https://shop.example',domain:'shop.example',name:'Shop',ucpCapabilities:['dev.ucp.shopping.fulfillment']};
-  if (fullFlow) store.ucpCapabilities.push(UCP_CHECKOUT_CONFIRMATION);
+  if (fullFlow && !hosted) store.ucpCapabilities.push(UCP_CHECKOUT_CONFIRMATION);
   const checkoutId = fullFlow ? '6c7cedd6-7df5-4df1-b13c-ff81a06b0e44' : 'draft-1';
   const replacementCheckoutId = '320315b8-ac31-4305-a68c-0ee926ba4235';
   const nativeCheckoutId = 'abbd7aac-8f9d-443e-87d2-b10f25165a95';
@@ -60,7 +60,9 @@ function fixture(cartOnly=false, fullFlow=false){
       if (!checkout || checkout.status === 'canceled' ||
           (!keepExpiredDraft && checkout.status === 'incomplete' && Date.parse(checkout.expires_at) <= Date.now())) {
         if (checkout) retiredCheckouts.set(checkout.id, {...checkout,status:'canceled'});
-        checkout={...cart,id:checkout?replacementCheckoutId:checkoutId,status:'incomplete',buyer:{email:'buyer@example.test'},
+        checkout={...cart,id:checkout?replacementCheckoutId:checkoutId,status:'incomplete',
+        ucp:{version,payment_handlers:hosted?{}:{[MOCK_HANDLER]:[{id:MOCK_HANDLER,version}]}},
+        ...(hosted?{}:{buyer:{email:'buyer@example.test'}}),
         context:{address_country:country,currency:country==='CN'?'CNY':'USD',address_region:'CA'}};
       }
       body=checkout;
@@ -71,6 +73,8 @@ function fixture(cartOnly=false, fullFlow=false){
         return {ok:true,value:{status:412,body:{ucp:{version,status:'error'},
           messages:[{type:'error',code:'etag_mismatch'}]}}};
       checkout={...checkout,buyer:input.body.buyer,fulfillment:input.body.fulfillment};
+      if(hosted)checkout={...checkout,status:'requires_escalation',expires_at:expiresAt,
+        continue_url:`https://shop.example/ucp/v1/checkout-sessions/${checkoutId}/handoff#${'a'.repeat(43)}`};
       checkoutRevision++;
       body=checkout;
     }
@@ -121,6 +125,7 @@ function fixture(cartOnly=false, fullFlow=false){
     noStock(){catalogAvailable=false;},
     dropComplete(){dropCompleteBeforeAdmission=true;},
     finishPurchase(){checkout={...checkout,status:'completed',order:{id:orderId}};},
+    changeHandoff(url:string){checkout={...checkout,continue_url:url};},
     reject(code:string,status=409,responseVersion=version){rejection={code,status,version:responseVersion};},
     externalEdit(){etag='"external"';cart.line_items[0].quantity=2;},
   };
@@ -625,6 +630,37 @@ test('only owner recovery may retry the exact Complete after reading the origina
  assert.deepEqual(operations[retry],original);
  assert.equal(c.flow().pending,undefined);
 });
+test('a hosted digital checkout saves email, exposes only the merchant handoff, and reads back the original order',async()=>{
+ const f=fixture(false,true,true),c=await cartFlow(f);
+ await c.service.tool('chat','frontvia_checkout',{action:'prepare',flowId:c.flowId},'draft');
+ const draft=await c.service.view('chat',c.flowId,['checkout']);
+ assert.equal(draft.checkout.emailOnly,true);
+ assert.equal(draft.checkout.canPrepare,false);
+ const offer=await c.service.contact('chat',c.flowId,draft.cart.version,{email:'buyer@example.test'},randomUUID());
+ assert.deepEqual(f.calls.findLast(call=>call.operationRef==='update_checkout').body.buyer,{email:'buyer@example.test'});
+ assert.equal(f.calls.findLast(call=>call.operationRef==='update_checkout').body.fulfillment,undefined);
+ const url=new URL(offer.checkout.handoff);
+ assert.equal(url.hash,'#'+'a'.repeat(43));
+ assert.equal(offer.checkout.hostedHandoff,true);
+ assert.equal(offer.checkout.canConfirm,false);
+ const status=await c.service.tool('chat','frontvia_checkout',{action:'status',flowId:c.flowId},'status');
+ assert(!JSON.stringify(status).includes(url.hash));
+ for(const invalid of [url.href.replace('shop.example','other.example'),url.href+'x',
+   url.href.replace('/handoff','/other'),url.href.replace('#','?x=1#')]){
+  f.changeHandoff(invalid);
+  assert.equal((await c.service.refreshUcpCheckout('chat',c.flowId)).checkout.handoff,undefined);
+ }
+ f.changeHandoff(url.href);
+ await assert.rejects(c.service.prepareUcpPurchase('chat',c.flowId,randomUUID()),{code:'PURCHASE_CONFIRMATION_UNAVAILABLE'});
+ await assert.rejects(c.service.approveUcpHandoff('chat',c.flowId,'a'.repeat(43),randomUUID()),{code:'HANDOFF_UNAVAILABLE'});
+ f.finishPurchase();
+ const paid=await c.service.refreshUcpCheckout('chat',c.flowId);
+ assert.equal(paid.checkout.id,f.checkoutId);
+ assert.equal(paid.order.id,f.orderId);
+ assert.equal(paid.checkout.handoff,undefined);
+ assert(!f.calls.some(call=>['prepare_checkout','complete_checkout','approve_checkout_handoff'].includes(call.operationRef)));
+});
+
 test('a persisted legacy Complete is observed without rewriting or replaying its proof',async()=>{
  const f=fixture(false,true),c=await cartFlow(f);
  await c.service.tool('chat','frontvia_checkout',{action:'prepare',flowId:c.flowId},'draft');

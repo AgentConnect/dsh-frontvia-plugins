@@ -5,7 +5,7 @@ export type UcpRequest={operationRef:string;path?:Record<string,string>;query?:R
 
 export const UCP_CHECKOUT_CONFIRMATION = 'com.frontvia.shopping.checkout_confirmation';
 export const UCP_PURCHASE_PROFILE = 'frontvia.ucp_purchase.v1';
-const MOCK_HANDLER = 'com.frontvia.payment.durable_mock';
+export const MOCK_HANDLER = 'com.frontvia.payment.durable_mock';
 export type UcpPurchase = {
   checkoutId: string;
   intentId: string;

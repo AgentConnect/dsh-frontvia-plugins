@@ -172,6 +172,13 @@ Customer reads the store's market, binding and connection generation from the
 negotiated Store Context and loads the original Order by ID from paginated
 merchant history. A Catalog/Cart-only store supports browsing and cart editing.
 
+For a hosted Checkout, collect the buyer email and any fulfillment the
+Checkout requests. The card opens the merchant's `continue_url` when the
+Checkout requires escalation. The buyer confirms and pays in the browser.
+On return, Customer reads the original Checkout and displays its Order when
+available. This path uses standard Checkout operations and works with an
+empty UCP payment-handler map.
+
 When the merchant and platform both negotiate Checkout confirmation, Customer offers purchase review
 on the same Checkout. Preparation and browser pairing use the negotiated
 Frontvia operations. The browser shows a code that the buyer approves in

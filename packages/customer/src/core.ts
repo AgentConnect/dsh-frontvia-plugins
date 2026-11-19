@@ -1,4 +1,4 @@
-import { ucpCheckoutContact, ucpCheckoutDelivery, isUcpBusinessMethod, UcpCartRejection, isUcpResponseError, matchesUcpConfirmation, UCP_PURCHASE_PROFILE, type CartRejection, type UcpPurchase } from "./ucp-business.js";
+import { ucpCheckoutContact, ucpCheckoutDelivery, isUcpBusinessMethod, UcpCartRejection, isUcpResponseError, matchesUcpConfirmation, MOCK_HANDLER, UCP_PURCHASE_PROFILE, type CartRejection, type UcpPurchase } from "./ucp-business.js";
 import { viewScopes, type ViewScope } from "./view-scope.js";
 import { createHash, randomUUID } from "node:crypto";
 import {
@@ -1801,7 +1801,7 @@ export class CustomerService {
 
   private checkoutHandoff(f: Flow) {
     const checkout = f.checkout;
-    if (!checkout || !f.capabilities?.ucpCheckoutConfirmation || !z.uuid().safeParse(checkout.id).success)
+    if (!checkout || !f.capabilities?.ucp || !z.uuid().safeParse(checkout.id).success)
       return undefined;
     const path = `/ucp/v1/checkout-sessions/${checkout.id}/handoff`;
     try {
@@ -1812,11 +1812,27 @@ export class CustomerService {
         ? origin + path : undefined);
       if (!link) return undefined;
       const url = new URL(link);
-      if (url.protocol === "https:" && url.origin === origin && url.pathname === path &&
-          !url.username && !url.password && !url.search && !url.hash) return url.href;
+      if (url.protocol !== "https:" || url.origin !== origin || url.pathname !== path ||
+          url.username || url.password || url.search) return undefined;
+      if (url.hash) {
+        if (checkout.status === "requires_escalation" && /^#[A-Za-z0-9_-]{43}$/.test(url.hash))
+          return { url: url.href, hosted: true };
+      } else if (f.capabilities.ucpCheckoutConfirmation) {
+        return { url: url.href, hosted: false };
+      }
     } catch {
       return undefined;
     }
+  }
+
+  private canPrepareUcpPurchase(f: Flow) {
+    const handlers = f.checkout?.ucp?.payment_handlers?.[MOCK_HANDLER];
+    return f.capabilities?.ucpCheckoutConfirmation === true && Array.isArray(handlers) && handlers.length > 0;
+  }
+
+  private ucpEmailOnly(f: Flow) {
+    return f.capabilities?.ucp === true && !!f.checkout &&
+      !f.checkout.fulfillment?.methods?.some((method: { type: string }) => method.type === "shipping");
   }
 
   async prepareUcpPurchase(sessionId: string, flowId: string, actionId: string) {
@@ -1832,6 +1848,7 @@ export class CustomerService {
       await this.refresh(f, false, ["order"]);
       if (!["incomplete", "requires_escalation", "ready_for_complete"].includes(f.checkout.status))
         return this.humanView(f);
+      if (!this.canPrepareUcpPurchase(f)) fail("PURCHASE_CONFIRMATION_UNAVAILABLE");
       await this.write(f, "commerce.checkouts.prepare", {checkout_id:f.checkout.id}, actionId);
       return this.humanView(f);
     });
@@ -1841,7 +1858,7 @@ export class CustomerService {
     return this.serial.run(flowId, async () => {
       const f = this.flow(sessionId, flowId);
       await this.currentCapabilities(f, true);
-      if (!this.checkoutHandoff(f)) fail("HANDOFF_UNAVAILABLE");
+      if (this.checkoutHandoff(f)?.hosted !== false) fail("HANDOFF_UNAVAILABLE");
       this.requireMethod(f, "commerce.checkouts.handoff.approve");
       try {
         const response = await this.pap.request(f.connectionRef, "commerce.checkouts.handoff.approve", {
@@ -1963,6 +1980,7 @@ export class CustomerService {
   private humanView(f: Flow) {
     const pending = f.pending ? f.commands[f.pending] : undefined;
     const preparation = this.pendingUcpPreparation(f);
+    const handoff = this.checkoutHandoff(f);
     return {
       flowId: f.id,
       sessionId: f.sessionId,
@@ -1979,7 +1997,10 @@ export class CustomerService {
         status: f.checkout.status,
         version: f.checkout.version,
         expires_at: f.checkout.expires_at,
-        handoff: this.checkoutHandoff(f),
+        handoff: handoff?.url,
+        hostedHandoff: handoff?.hosted === true,
+        emailOnly: this.ucpEmailOnly(f),
+        canPrepare: this.canPrepareUcpPurchase(f),
         canConfirm: f.capabilities?.ucpCheckoutConfirmation === true && !!f.ucpPurchase &&
           this.validUcpPurchase(f, f.ucpPurchase) && f.checkout.status === "ready_for_complete" &&
           Date.parse(f.ucpPurchase.expiresAt) > Date.now(),
@@ -2058,7 +2079,8 @@ export class CustomerService {
     this.views.clear();
     return this.serial.run(flowId, async () => {
       const f = this.flow(sessionId, flowId);
-      const contact = manualCart(f.cart)
+      await this.currentCapabilities(f, true);
+      const contact = manualCart(f.cart) || this.ucpEmailOnly(f)
         ? manualContactSchema.or(contactSchema).parse(patch)
         : contactSchema.parse(patch);
       if ("shipping_address" in contact) {
@@ -2068,7 +2090,6 @@ export class CustomerService {
         if (contact.shipping_address.country !== pricing(f).country)
           fail("ADDRESS_COUNTRY_MISMATCH");
       }
-      await this.currentCapabilities(f, true);
       if (f.capabilities?.ucp) {
         this.change(f, expected);
         if ((!f.capabilities.ucpFulfillment && "shipping_address" in contact) || !f.checkout)

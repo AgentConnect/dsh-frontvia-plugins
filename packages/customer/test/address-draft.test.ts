@@ -269,6 +269,40 @@ test("refreshing a pending UCP purchase is read-only and retry has a separate ac
   }
 });
 
+test("hosted checkout opens the exact browser link and keeps the original checkout in the refresh scope", async () => {
+  const calls: string[] = [];
+  const scopes: string[] = [];
+  let tree!: ReactTestRenderer;
+  const now = Date.now();
+  const url = `https://shop.example/ucp/v1/checkout-sessions/draft/handoff#${"a".repeat(43)}`;
+  const data = {
+    ...initial(),
+    checkout: { id: "draft", status: "requires_escalation", hostedHandoff: true, handoff: url },
+    capabilities: { ucp: true, methods: [{ method: "commerce.checkouts.get", availability: "supported" }] },
+  };
+  const render = (at: number) => React.createElement(Storefront, {
+    draftScope: "hosted-checkout", data, initialTab: "cart", busy: false, error: "", now: at,
+    action: async (operation) => { calls.push(operation); return true; },
+    onViewChange: scope => { scopes.push(scope); },
+  });
+  try {
+    await act(async () => { tree = create(render(now)); });
+    assert.equal(scopes.at(-1), "checkout");
+    const handoff = tree.root.findByProps({ href: url });
+    assert.equal(handoff.props.rel, "noopener noreferrer");
+    assert.equal(button(tree, "授权浏览器"), undefined);
+    assert.equal(button(tree, "核对并继续"), undefined);
+    await act(async () => { handoff.props.onClick(); });
+    assert(tree.root.findAll(node => node.children.includes("正在核对原结算。付款后可回到这里查看订单。")).length);
+    await act(async () => { tree.update(render(now + 301_000)); });
+    assert(!tree.root.findAll(node => node.children.includes("正在核对原结算。付款后可回到这里查看订单。")).length);
+    await click(tree, "刷新结算状态");
+    assert.deepEqual(calls, ["refresh-ucp-checkout"]);
+  } finally {
+    await act(async () => tree?.unmount());
+  }
+});
+
 test("checkout preparation offers a separate resume and restores checkout on the same cart after cancellation", async () => {
   const requests: { operation: string; payload?: any }[] = [];
   let tree!: ReactTestRenderer;
