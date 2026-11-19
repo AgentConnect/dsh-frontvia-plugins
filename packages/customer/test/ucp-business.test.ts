@@ -16,11 +16,13 @@ function fixture(cartOnly=false, fullFlow=false){
   const calls:any[]=[],store={companyRef:'shop',companyId:fullFlow?'https://issuer.example':'https://shop.example',domain:'shop.example',name:'Shop',ucpCapabilities:['dev.ucp.shopping.fulfillment']};
   if (fullFlow) store.ucpCapabilities.push(UCP_CHECKOUT_CONFIRMATION);
   const checkoutId = fullFlow ? '6c7cedd6-7df5-4df1-b13c-ff81a06b0e44' : 'draft-1';
+  const nativeCheckoutId = 'abbd7aac-8f9d-443e-87d2-b10f25165a95';
   const intentId = '593e39b7-4130-49ff-884c-98e10eeb8cd1';
   const paymentReference = 'd8468997-828c-46d4-879a-743f448d62f0';
   const orderId = 'fa47864c-f990-4637-a298-37e2fae36f54';
   let storeId = 'physical-shop', generation = 1, country = 'US', advertisedContext = fullFlow, storeStatus = 200;
   let authorized = true, catalogAvailable = true, confirmationPatch: Record<string,unknown> = {};
+  let preparedCheckoutPatch: Record<string,unknown> = {};
   const currentProduct = () => ({...product,variants:product.variants.map(variant=>({...variant,availability:{available:catalogAvailable}}))});
   const expiresAt = new Date(Date.now()+120_000).toISOString();
   let checkout: any, checkoutRevision = 1;
@@ -67,9 +69,9 @@ function fixture(cartOnly=false, fullFlow=false){
       assert.equal(input.path.id,checkoutId);
       checkout={...checkout,status:'ready_for_complete',expires_at:expiresAt,
         continue_url:`https://shop.example/ucp/v1/checkout-sessions/${checkoutId}/handoff`};
-      body={checkout,intent_id:intentId,revision:2,expires_at:expiresAt,payment_reference:paymentReference,
+      body={checkout:{...checkout,...preparedCheckoutPatch},intent_id:intentId,revision:2,expires_at:expiresAt,payment_reference:paymentReference,
         confirmation:{profile:UCP_PURCHASE_PROFILE,store_id:storeId,connection_id:'native',generation,
-          checkout_id:checkoutId,quote_id:'a65ec167-4752-47bb-919f-5680ca846b03',
+          checkout_id:nativeCheckoutId,quote_id:'a65ec167-4752-47bb-919f-5680ca846b03',
           snapshot_hash:'a'.repeat(64),amount_minor:'2250',currency:'USD',idempotency_key:'ucp:'+intentId,...confirmationPatch}};
     }
     else if(input.operationRef==='approve_checkout_handoff')body={status:'authorized'};
@@ -95,9 +97,10 @@ function fixture(cartOnly=false, fullFlow=false){
     if(input.idempotencyKey){effects++;receipts.set(input.idempotencyKey,structuredClone(response));if(loseNext){loseNext=false;return {ok:false,error:{code:'request_uncertain',businessRequest:'unknown'}};}}
     return response;
   }};
-  return {sdk,calls,paymentReference,checkoutId,orderId,transport:new Pap03Transport(sdk),lose(){loseNext=true;},effects:()=>effects,
+  return {sdk,calls,paymentReference,checkoutId,nativeCheckoutId,intentId,orderId,transport:new Pap03Transport(sdk),lose(){loseNext=true;},effects:()=>effects,
     useContext(){advertisedContext=true;}, useCountry(value:string){country=value;}, changeGeneration(){generation++;},
     denyStore(){storeStatus=403;}, changeIdentity(){authorized=false;}, patchConfirmation(fields:Record<string,unknown>){confirmationPatch=fields;},
+    patchPreparedCheckout(fields:Record<string,unknown>){preparedCheckoutPatch=fields;},
     noStock(){catalogAvailable=false;},
     dropComplete(){dropCompleteBeforeAdmission=true;},
     finishPurchase(){checkout={...checkout,status:'completed',order:{id:orderId}};},
@@ -334,10 +337,15 @@ test('full UCP review and browser approval retain one Checkout and recover a los
  const preparation=f.calls.slice(beforePrepare).map(call=>call.operationRef);
  assert(preparation.includes('get_checkout'));
  assert(!preparation.includes('get_cart'));
+ assert.deepEqual(f.calls.find(call=>call.operationRef==='prepare_checkout').path,{id:f.checkoutId});
+ assert.equal(prepared.checkout.id,f.checkoutId);
  assert.equal(prepared.checkout.status,'ready_for_complete');
  assert.equal(prepared.checkout.handoff,`https://shop.example/ucp/v1/checkout-sessions/${f.checkoutId}/handoff`);
  assert.equal(prepared.checkout.canConfirm,true);
  assert(!JSON.stringify(prepared).includes(f.paymentReference));
+ const originalFrame=structuredClone(c.flow().ucpPurchase!.confirmation);
+ assert.equal(originalFrame?.checkout_id,f.nativeCheckoutId);
+ assert.notEqual(originalFrame?.checkout_id,prepared.checkout.id);
  const challenge='u'.repeat(43);
  await c.service.approveUcpHandoff('chat',c.flowId,challenge,'pair');
  const approval=f.calls.find(call=>call.operationRef==='approve_checkout_handoff');
@@ -353,8 +361,17 @@ test('full UCP review and browser approval retain one Checkout and recover a los
    id:f.paymentReference,handler_id:'com.frontvia.payment.durable_mock',type:'frontvia_mock',selected:true,
  }]}});
  const frame=JSON.parse(Buffer.from(complete.checkoutConfirmation,'base64url').toString('utf8'));
+ const {nonce,iat,exp,...terms}=frame;
+ assert.deepEqual(terms,originalFrame);
+ assert.equal(frame.checkout_id,f.nativeCheckoutId);
+ assert.equal(frame.store_id,'physical-shop');
+ assert.equal(frame.connection_id,'native');
+ assert.equal(frame.generation,1);
+ assert.equal(frame.idempotency_key,'ucp:'+f.intentId);
  assert.equal(frame.amount_minor,'2250');
- assert(frame.exp>frame.iat);
+ assert.equal(frame.currency,'USD');
+ assert.equal(typeof nonce,'string');
+ assert(exp>iat);
  await c.service.tool('chat','frontvia_orders',{action:'recover',flowId:c.flowId},'recover');
  assert.equal(c.flow().checkout.status,'complete_in_progress');
  assert.equal(c.flow().pending,undefined);
@@ -364,6 +381,15 @@ test('full UCP review and browser approval retain one Checkout and recover a los
  assert.equal(c.flow().order.id,f.orderId);
  await c.service.tool('chat','frontvia_orders',{action:'list',flowId:c.flowId},'history');
  assert.equal(c.flow().orders.items[0].id,f.orderId);
+});
+test('checkout preparation rejects an outer resource that differs from the requested UCP draft',async()=>{
+ const f=fixture(false,true),c=await cartFlow(f);
+ f.patchPreparedCheckout({id:f.nativeCheckoutId});
+ await c.service.tool('chat','frontvia_checkout',{action:'prepare',flowId:c.flowId},'draft');
+ await assert.rejects(c.service.prepareUcpPurchase('chat',c.flowId,'prepare'),/INVALID_UCP_RESPONSE/);
+ assert.equal(c.flow().checkout.id,f.checkoutId);
+ assert(!c.flow().ucpPurchase);
+ assert(!f.calls.some(call=>call.operationRef==='complete_checkout'));
 });
 test('checkout preparation rejects altered store, quote and intent bindings',async()=>{
  const invalid=[

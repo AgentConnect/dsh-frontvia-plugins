@@ -106,11 +106,12 @@ export function matchesUcpConfirmation(input: unknown, checkout: any, intentId: 
   const frame = object(input);
   const fields = ['profile','store_id','connection_id','generation','checkout_id','quote_id',
     'snapshot_hash','amount_minor','currency','idempotency_key'];
+  // The outer UCP resource uses the draft ID. The frame binds its Native attempt.
   return Object.keys(frame).length === fields.length && fields.every(field => Object.hasOwn(frame, field))
     && frame.profile === UCP_PURCHASE_PROFILE
     && frame.store_id === storeId && frame.connection_id === connection?.connection_id
     && frame.generation === connection?.generation
-    && isUuid(frame.checkout_id) && frame.checkout_id === checkout.id && isUuid(frame.quote_id)
+    && isUuid(checkout.id) && isUuid(frame.checkout_id) && isUuid(frame.quote_id)
     && typeof frame.snapshot_hash === 'string' && /^[0-9a-f]{64}$/.test(frame.snapshot_hash)
     && isUuid(intentId) && frame.idempotency_key === `ucp:${intentId}`
     && typeof frame.amount_minor === 'string' && /^\d+$/.test(frame.amount_minor)

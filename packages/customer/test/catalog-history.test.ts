@@ -112,6 +112,26 @@ test("new snapshots restore without preceding history, preserve empty specificat
 });
 
 
+test("UCP chat detail retains selected variants after a catalog browse snapshot", () => {
+  const browse = start(
+    event(1, { items: [lamp] }, "flow", {
+      catalogSnapshot: { version: 1, products: { items: [lamp] } },
+    }),
+  ).cards[0].catalog;
+  const selected = {
+    capabilities: { ucp: true },
+    products: { items: [{ ...lamp, description: "Current merchant detail" }] },
+    variants: { items: [variant("lamp")] },
+    variantProductId: "lamp",
+  };
+
+  assert.equal(browse.variants, undefined);
+  const view = withHistoricalCatalog(selected, browse);
+  assert.deepEqual(view.variants, selected.variants);
+  assert.equal(view.variantProductId, lamp.id);
+  assert.deepEqual(view.products, selected.products);
+});
+
 test("native and nested tool history survives model text spill without carrying transaction state", () => {
   const value = { ui: ui(), data: { items: [lamp], description: "x".repeat(60000) },
     catalogSnapshot: { version: 1, products: { items: [lamp] } },
