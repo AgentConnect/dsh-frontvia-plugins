@@ -193,6 +193,35 @@ test("a stopped first Cart exposes explicit original recovery", async () => {
   }
 });
 
+test("an expired pending Prepare exposes a separate owner action to reopen the draft", async () => {
+  const calls: { operation: string; actionId?: string }[] = [];
+  let tree!: ReactTestRenderer;
+  try {
+    await act(async () => {
+      tree = create(React.createElement(Storefront, {
+        data: {
+          ...initial(),
+          pending: true,
+          preparationRecovery: true,
+          canReopenDraft: true,
+          capabilities: { ucp: true, methods: [] },
+        },
+        draftScope: "expired-prepare", initialTab: "cart", busy: false, now: Date.now(), error: "",
+        action: async (operation, payload) => {
+          calls.push({ operation, actionId: payload?.actionId });
+          return true;
+        },
+      }));
+    });
+    await click(tree, "刷新状态");
+    await click(tree, "在原购物车重开结算");
+    assert.deepEqual(calls.map(call => call.operation), ["recover-status", "reopen-ucp-draft"]);
+    assert.match(calls[1].actionId ?? "", /^[0-9a-f-]{36}$/);
+  } finally {
+    await act(async () => tree?.unmount());
+  }
+});
+
 test("Cart-only storefront keeps the Cart visible without Checkout or Order actions", async () => {
   let tree!: ReactTestRenderer;
   try {

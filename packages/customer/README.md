@@ -187,7 +187,12 @@ handling and per-operation consent. Advertise the
 `com.frontvia.payment.durable_mock` handler only in the isolated test Profile
 backed by Frontvia's persistent Mock fixture. Model tools can query pending
 purchase status. Only the buyer's card can authorize a retry of an eligible
-original Complete request.
+original Complete request. If a draft expires while the result of Prepare is
+unknown, the buyer can ask the merchant to reopen checkout on the original Cart.
+Customer keeps the original Prepare pending until it verifies the merchant
+canceled the old draft and returned the replacement. During a Store Context
+upgrade, an older flow with a pending request can still read its original Cart,
+Checkout and Order through the same PAP identity.
 
 For isolated acceptance, `scripts/pap10-core-check.mjs` connects the real
 awiki.me Identity custodian to the independent Python wire runner through

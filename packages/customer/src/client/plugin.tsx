@@ -127,6 +127,7 @@ const errorText: Record<string, string> = {
   NETWORK_UNCERTAIN: "暂未收到商店回复，请先核对原操作结果。",
   QUOTE_CHANGED: "报价或购物车已变化，请重新报价并核对。",
   CONFIRMATION_EXPIRED: "确认已过期，请重新核对当前报价。",
+  CHECKOUT_REOPEN_NOT_READY: "商家仍保留原结算草稿，请核对当前状态。",
   PAP_IDENTITY_AUTHORIZATION_REQUIRED: "请处理 PAP 授权提示，再继续原操作。",
   CONTACT_NOT_SAVED: "收货信息未保存，请重试。",
   CONTACT_REQUIRED: "请先填写并保存完整的收货信息。",
@@ -473,6 +474,7 @@ export function apply(ctx: any) {
         if (
           op === "contact" ||
           op === "prepare-purchase" ||
+          op === "reopen-ucp-draft" ||
           op === "order-cancel" ||
           op === "shopping" ||
           op === "retry-cart"

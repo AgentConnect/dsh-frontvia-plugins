@@ -652,6 +652,11 @@ function StorefrontContent({
                   继续原结算准备
                 </Button>
               )}
+              {data.canReopenDraft && !busy && (
+                <Button variant="outline" onClick={() => action("reopen-ucp-draft", { actionId: crypto.randomUUID() })}>
+                  在原购物车重开结算
+                </Button>
+              )}
             </Alert>
           )}
           {data.cartCreationPending && tab !== "cart" && (
