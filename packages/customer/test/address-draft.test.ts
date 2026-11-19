@@ -131,6 +131,68 @@ const button = (tree: ReactTestRenderer, label: string): ReactTestInstance =>
     .findAllByType("button")
     .find((n) => text(n.props.children) === label)!;
 
+test("historical order cards open the exact Order without list permission", async () => {
+  const orderId = "historical-order";
+  const otherOrder = { id: "different-order", lines: [] };
+  const data = {
+    ...initial(),
+    cart: undefined,
+    viewedOrder: otherOrder,
+    capabilities: { ucp: true, methods: [{ method: "commerce.orders.get", availability: "supported" }] },
+  };
+  const calls: unknown[] = [];
+  let tree!: ReactTestRenderer;
+  try {
+    await act(async () => {
+      tree = create(React.createElement(Storefront, {
+        data, draftScope: "historical-order", busy: false, now: Date.now(), error: "",
+        initialTab: "orders", initialOrderId: orderId,
+        action: async (operation, payload, onResult) => {
+          calls.push([operation, payload?.intent]);
+          onResult?.({ viewedOrder: { id: orderId, lines: [{ id: "line", title: "Historical Mug", quantity: 1 }] } });
+          return true;
+        },
+      }));
+    });
+    assert.deepEqual(calls, [["shopping", { action: "order-detail", orderId }]]);
+    assert(tree.root.findAll(node => node.children.includes("订单详情")).length);
+    assert(tree.root.findAll(node => node.children.includes("Historical Mug")).length);
+    assert(!JSON.stringify(tree.toJSON()).includes(otherOrder.id));
+    await click(tree, "刷新详情");
+    assert.deepEqual(calls, Array(2).fill(["shopping", { action: "order-detail", orderId }]));
+  } finally {
+    await act(async () => tree?.unmount());
+  }
+});
+
+test("a stopped first Cart exposes explicit original recovery", async () => {
+  const calls: string[] = [];
+  let tree!: ReactTestRenderer;
+  try {
+    await act(async () => {
+      tree = create(React.createElement(Storefront, {
+        data: {
+          ...initial(),
+          cart: undefined,
+          products: {items: []},
+          pending: true,
+          cartCreationPending: true,
+          canRetryCart: true,
+          capabilities: {ucp: true, methods: []},
+        },
+        draftScope: "cart-recovery", initialTab: "cart", busy: false, now: Date.now(), error: "",
+        action: async op => { calls.push(op); return true; },
+      }));
+    });
+    assert.deepEqual(calls, []);
+    await click(tree, "刷新购物车");
+    await click(tree, "恢复原购物车");
+    assert.deepEqual(calls, ["view", "retry-cart"]);
+  } finally {
+    await act(async () => tree?.unmount());
+  }
+});
+
 test("Cart-only storefront keeps the Cart visible without Checkout or Order actions", async () => {
   let tree!: ReactTestRenderer;
   try {

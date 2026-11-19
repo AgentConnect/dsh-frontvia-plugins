@@ -240,7 +240,7 @@ export async function requestUcp(method:string,params:Record<string,any>,operati
     if(id==='get_order')data.shipments=(result.fulfillment?.events??[]).map((event:any)=>({id:event.id,status:event.type,occurred_at:event.occurred_at,description:event.description,
       tracking:event.tracking_number||event.tracking_url?[{carrier:event.carrier,tracking_number:event.tracking_number,tracking_url:event.tracking_url}]:[]}));
   }
-  if (path?.id && ['get_checkout','update_checkout','cancel_checkout','prepare_checkout','complete_checkout','get_order'].includes(id)
+  if (path?.id && ['get_cart','get_checkout','update_checkout','cancel_checkout','prepare_checkout','complete_checkout','get_order'].includes(id)
       && data.id !== path.id) throw new Error('INVALID_UCP_RESPONSE');
   if (wrapper) {
     const purchase: UcpPurchase = {

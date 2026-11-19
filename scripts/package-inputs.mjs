@@ -1,5 +1,13 @@
 import { readFile, stat } from 'node:fs/promises';
 import { join } from 'node:path';
+export function assertPapPackage(manifest, lockedVersion) {
+  if (manifest?.name !== '@awiki/dsh-pap' || manifest.version !== lockedVersion ||
+      !Array.isArray(manifest.dshPapUcpOperations) ||
+      !['get_store_context', 'list_orders'].every(operation => manifest.dshPapUcpOperations.includes(operation))) {
+    throw new Error(`Frontvia UCP requires @awiki/dsh-pap@${lockedVersion} with Store Context and Order History. Select a built candidate using FRONTVIA_PAP_TEST_PACKAGE_ROOT.`);
+  }
+}
+
 export async function assertBundleInputs(folder, name) {
   try {
     const manifest = JSON.parse(await readFile(join(folder, 'package.json'), 'utf8'));

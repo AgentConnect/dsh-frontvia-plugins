@@ -49,12 +49,18 @@ type Command = {
   params: any;
   status: "pending" | "done" | "discarded";
   waitEnded?: boolean;
+  prepareDispatch?: "not_sent" | "unknown";
   cartRejection?: CartRejection;
   checkoutRejection?: "UCP_ETAG_MISMATCH";
   lastError?: SavedRpcError;
   lastLookupError?: SavedRpcError;
   result?: any;
 };
+function hasReplayableUcpContext(command: Command) {
+  return command.params.ucp_wire_version === 2 || ![
+    command.params.context, command.params.patch?.context, command.params.ucp_cart_snapshot?.context,
+  ].some(context => context?.country !== undefined || context?.locale !== undefined);
+}
 // A terminal cart edit can leave a changed cart. Read its authoritative state
 // before allowing a new edit; never treat checkout/payment uncertainty this way.
 function settledCartFailure(command: Command, operation: any) {
@@ -331,22 +337,36 @@ export class CustomerService {
       this.pap.sites().find(site => site.id === f.siteId)?.service?.store_id;
     const upgradeSyntheticStore = cap.ucp_connection && f.storeId === cap.ucpSyntheticStoreId &&
       f.capabilities?.ucp === true && !f.capabilities.ucp_connection && !f.connection &&
-      (!configured || configured === cap.store_id) && !f.cart && !f.checkout && !f.quote && !f.order &&
-      !f.pending && !f.intent?.token &&
+      !f.quote && !f.order && !f.pending && !f.intent &&
       !Object.values(f.commands).some(command => command.status === "pending");
     if (configured && configured !== cap.store_id) fail("STORE_BINDING_MISMATCH");
-    if (
-      (bindStore || upgradeSyntheticStore) &&
-      typeof cap.store_id === "string" &&
-      /^[A-Za-z0-9_.:-]{1,128}$/.test(cap.store_id)
-    )
-      f.storeId = cap.store_id;
-    if (!f.storeId || cap.store_id !== f.storeId || !Array.isArray(cap.methods))
+    if (!Array.isArray(cap.methods) || typeof cap.store_id !== "string" ||
+        !/^[A-Za-z0-9_.:-]{1,128}$/.test(cap.store_id)) fail("STORE_BINDING_MISMATCH");
+    if (upgradeSyntheticStore && (f.cart || f.checkout)) {
+      if (!f.cart?.ucp || !f.cart.id || (f.checkout && !f.checkout.ucp))
+        fail("STORE_BINDING_MISMATCH");
+      // Renew the binding only after the current PAP session can read each
+      // original UCP resource under the newly negotiated store capabilities.
+      const scoped = { ...f, capabilities: cap };
+      const cart = await this.read(scoped, "carts.get", { cart_id: f.cart.id });
+      if (cart?.id !== f.cart.id || !cart.ucp) fail("STORE_BINDING_MISMATCH");
+      const checkout = f.checkout
+        ? await this.read(scoped, "checkouts.get", { checkout_id: f.checkout.id })
+        : undefined;
+      if (checkout && (checkout.id !== f.checkout.id || !checkout.ucp ||
+          (checkout.cart_id !== undefined && checkout.cart_id !== cart.id)))
+        fail("STORE_BINDING_MISMATCH");
+      if (f.checkout && !checkout) fail("STORE_BINDING_MISMATCH");
+      f.cart = cart;
+      f.checkout = checkout;
+    }
+    if (bindStore || upgradeSyntheticStore) f.storeId = cap.store_id;
+    if (cap.store_id !== f.storeId)
       fail("STORE_BINDING_MISMATCH");
     if (cap.ucp_connection) {
       if (f.connection && canonical(f.connection) !== canonical(cap.ucp_connection))
         fail("CONNECTION_GENERATION_CHANGED");
-      if (!f.connection && (f.cart || f.checkout || f.pending || f.intent?.token))
+      if (!f.connection && !upgradeSyntheticStore && (f.cart || f.checkout || f.pending || f.intent?.token))
         fail("STORE_BINDING_MISMATCH");
       f.connection = cap.ucp_connection;
     } else if (f.capabilities?.ucp_connection) {
@@ -485,7 +505,7 @@ export class CustomerService {
       });
     });
   }
-  private result(f: Flow, card: string, data: any) {
+  private result(f: Flow, card: string, data: any, orderId?: string) {
     return {
       ...modelData({
         ...data,
@@ -501,6 +521,7 @@ export class CustomerService {
         card,
         flowId: f.id,
         sessionId: f.sessionId,
+        ...(orderId ? { orderId } : {}),
       },
       flowId: f.id,
     };
@@ -582,12 +603,20 @@ export class CustomerService {
       params: { ...params, meta: { idempotency_key: key } },
       status: "pending",
     };
+    if (method === "commerce.checkouts.prepare" && params.ucp_protocol === true)
+      command.prepareDispatch = "not_sent";
     f.commands[key] = command;
     f.pending = key;
     this.save(f);
     return this.dispatchWrite(f, command, signal);
   }
   private async dispatchWrite(f: Flow, command: Command, signal?: AbortSignal) {
+    const preparing = command.params.ucp_protocol === true && command.method === "commerce.checkouts.prepare";
+    const priorPrepareDispatch = command.prepareDispatch;
+    if (preparing) {
+      command.prepareDispatch = "unknown";
+      this.save(f);
+    }
     let response;
     try {
       response = await this.pap.request(f.connectionRef, command.method, command.params, signal);
@@ -606,11 +635,16 @@ export class CustomerService {
       }
       const rejection = isUcpResponseError(error) ? error.code : undefined;
       const trace = error instanceof PapRequestError ? error.detail : undefined;
+      if (preparing && priorPrepareDispatch === "not_sent" && trace?.businessRequest === "not_sent") {
+        command.prepareDispatch = "not_sent";
+        this.save(f);
+      }
       const notSent = trace?.businessRequest === "not_sent" && !trace.approval;
       const beforeAcceptance = ["buyer_email_required", "checkout_conflict",
         "payment_method_unavailable", "invalid_request", "resource_state_conflict",
       ].includes(rejection ?? "");
       if (command.params.ucp_protocol === true && (notSent || beforeAcceptance) &&
+          (!preparing || priorPrepareDispatch === "not_sent") &&
           ["commerce.checkouts.prepare", "commerce.checkouts.confirm", "commerce.checkouts.cancel"].includes(command.method)) {
         command.status = "done";
         delete f.pending;
@@ -1039,7 +1073,9 @@ export class CustomerService {
       cartVersion: f.cart?.version,
       contactReady: cartContactReady(f.cart, pricing(f).country),
       pending: !!f.pending,
-    });
+    }, name === "frontvia_orders" && args.action === "get" && f.capabilities?.ucp
+      ? data.id
+      : undefined);
   }
   /** Owner UI uses the same commerce rules and durable commands as chat tools.
    * The action never confirms a purchase or initiates a payment. */
@@ -1400,7 +1436,7 @@ export class CustomerService {
       });
       this.observeUcpPreparation(f);
       this.observeUcpCompletion(f);
-      if (f.checkout.order_ids?.[0])
+      if (f.checkout?.order_ids?.[0])
         f.order = await order(f.checkout.order_ids[0]);
     }
     if (checkout && f.order && !fetchedOrders.has(f.order.id))
@@ -1442,8 +1478,8 @@ export class CustomerService {
         if (!this.discardableAddition(f)) fail("CART_DISCARD_UNAVAILABLE");
         const command = f.commands[f.pending];
         if (command.method === "commerce.carts.create" && !f.cart) {
-          // End the UI wait, not the durable operation: only its receipt can
-          // reveal the cart ID. Never replace or resend this creation.
+          // End the automatic wait. Only the original receipt can reveal the
+          // Cart ID, and an exact replay requires an explicit owner action.
           command.waitEnded = true;
           this.save(f);
           await this.recoverCartCreation(f);
@@ -1497,7 +1533,7 @@ export class CustomerService {
         await this.refresh(f);
         return this.humanView(f);
       }
-      if (this.cartCreationPending(f)) {
+      if (this.cartCreationPending(f) && !this.retryableCart(f)) {
         await this.recoverCartCreation(f);
         return this.humanView(f);
       }
@@ -1517,9 +1553,11 @@ export class CustomerService {
     });
   }
   private retryableCart(f: Flow) {
+    const command = f.pending && f.commands[f.pending];
     return (
-      !!f.pending &&
-      !this.cartCreationPending(f) &&
+      !!command &&
+      (!this.cartCreationPending(f) ||
+        (command.params.ucp_protocol === true && hasReplayableUcpContext(command))) &&
       !f.order &&
       !f.intent?.token &&
       !f.checkout &&
@@ -1530,7 +1568,7 @@ export class CustomerService {
         "commerce.carts.lines.remove",
         "commerce.carts.update",
         "commerce.carts.delivery_option.select",
-      ].includes(f.commands[f.pending]?.method)
+      ].includes(command.method)
     );
   }
   async recoverFromOwner(sessionId: string, flowId: string, retryPurchase = true) {
@@ -1548,11 +1586,9 @@ export class CustomerService {
       const c = f.commands[f.pending];
       if (!c) fail("RECOVERY_STATE_INVALID");
       if (c.params.ucp_protocol === true) {
-        if (c.waitEnded && c.method === "commerce.carts.create" && !f.cart)
+        if (!retryCart && this.cartCreationPending(f))
           fail("ORIGINAL_RESULT_UNKNOWN");
-        if (c.params.ucp_wire_version !== 2 && [
-          c.params.context, c.params.patch?.context, c.params.ucp_cart_snapshot?.context,
-        ].some(context => context?.country !== undefined || context?.locale !== undefined))
+        if (!hasReplayableUcpContext(c))
           fail("ORIGINAL_RESULT_UNKNOWN");
         if (c.method === "commerce.checkouts.prepare") {
           if (f.checkout?.id !== c.params.checkout_id) fail("RECOVERY_STATE_INVALID");
@@ -1696,12 +1732,15 @@ export class CustomerService {
   private observeUcpPreparation(f: Flow) {
     const command = f.pending && f.commands[f.pending];
     if (!command || command.method !== "commerce.checkouts.prepare" ||
-        command.params.ucp_protocol !== true || command.params.checkout_id !== f.checkout?.id ||
-        !["complete_in_progress", "completed", "canceled"].includes(f.checkout.status)) return;
+        command.params.ucp_protocol !== true || command.params.checkout_id !== f.checkout?.id) return;
+    const expiredUnsent = command.prepareDispatch === "not_sent" && f.checkout.status === "incomplete" &&
+      Date.parse(f.checkout.expires_at) <= Date.now();
+    if (!expiredUnsent && !["complete_in_progress", "completed", "canceled"].includes(f.checkout.status)) return;
     command.status = "done";
     command.result = { resource: f.checkout };
     delete f.pending;
-    if (f.checkout.status === "canceled") delete f.ucpPurchase;
+    if (expiredUnsent || f.checkout.status === "canceled") delete f.ucpPurchase;
+    if (expiredUnsent) delete f.checkout;
     this.save(f);
   }
 

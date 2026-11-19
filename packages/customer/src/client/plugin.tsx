@@ -92,7 +92,7 @@ export const inject = [
   "sessions",
   "conversation",
 ];
-type UI = { flowId: string; sessionId: string; card: string };
+type UI = { flowId: string; sessionId: string; card: string; orderId?: string };
 const errorText: Record<string, string> = {
   HANDOFF_UNAVAILABLE: "当前结算无法进行浏览器授权。",
   HANDOFF_APPROVAL_FAILED: "未能授权浏览器，请核对原页面显示的配对代码。",
@@ -410,7 +410,7 @@ export function apply(ctx: any) {
       const t = setInterval(() => setTick(Date.now()), 1000);
       return () => clearInterval(t);
     }, []);
-    const action = async (op: string, payload: any = {}) => {
+    const action = async (op: string, payload: any = {}, onResult?: (value: any) => void) => {
       if (acting.current) return false;
       acting.current = true;
       const release = views.hold(ui);
@@ -433,8 +433,9 @@ export function apply(ctx: any) {
         const value =
           op === "view"
             ? await views.refresh(ui)
-            : await call(op, { ...ui, ...payload });
+            : await call(op, { flowId: ui.flowId, sessionId: ui.sessionId, card: ui.card, ...payload });
         if (op !== "view") views.publish(ui, value);
+        onResult?.(value);
         if (op === "contact") {
           if (value.pending || value.operation?.status !== "succeeded") {
             setError("CONTACT_NOT_SAVED");
@@ -569,6 +570,7 @@ export function apply(ctx: any) {
         >
           {!resume && <style>{styles}</style>}
           <Storefront
+            key={accountRevision}
             draftScope={JSON.stringify([
               accountRevision,
               ui.sessionId,
@@ -586,6 +588,7 @@ export function apply(ctx: any) {
             addedQuantity={addedQuantity}
             initialTab={resume ? undefined : ui.card === "order" ? "orders"
               : ui.card === "cart" || ui.card === "quote" ? "cart" : "products"}
+            initialOrderId={resume ? undefined : ui.orderId}
             onViewChange={onViewChange}
           />
         </div>

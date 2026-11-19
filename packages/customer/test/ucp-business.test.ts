@@ -54,7 +54,8 @@ function fixture(cartOnly=false, fullFlow=false){
     else if(input.operationRef==='search_catalog')body={ucp,products:[currentProduct()],pagination:{has_next_page:false}};
     else if(input.operationRef==='get_product')body={ucp,product:currentProduct()};
     else if(fullFlow && input.operationRef==='create_checkout') {
-      if (!checkout || checkout.status === 'canceled') {
+      if (!checkout || checkout.status === 'canceled' ||
+          (checkout.status === 'incomplete' && Date.parse(checkout.expires_at) <= Date.now())) {
         checkout={...cart,id:checkout?replacementCheckoutId:checkoutId,status:'incomplete',buyer:{email:'buyer@example.test'},
         context:{address_country:country,currency:country==='CN'?'CNY':'USD',address_region:'CA'}};
       }
@@ -107,6 +108,7 @@ function fixture(cartOnly=false, fullFlow=false){
   }};
   return {sdk,calls,paymentReference,checkoutId,replacementCheckoutId,nativeCheckoutId,intentId,orderId,transport:new Pap03Transport(sdk),lose(){loseNext=true;},effects:()=>effects,
     useContext(){advertisedContext=true;}, useCountry(value:string){country=value;}, changeGeneration(){generation++;},
+    replaceCartId(){cart={...cart,id:'unrelated-cart'};},
     denyStore(){storeStatus=403;}, changeIdentity(){authorized=false;}, patchConfirmation(fields:Record<string,unknown>){confirmationPatch=fields;},
     patchPreparedCheckout(fields:Record<string,unknown>){preparedCheckoutPatch=fields;},
     prepareConsent(pending: boolean){prepareConsentPending=pending;},
@@ -235,21 +237,57 @@ test('store binding, generations and identity changes fail closed',async()=>{
  await assert.rejects(connectFlow(denied),{code:'PAP_BUSINESS_HTTP_ERROR'});
  assert(!denied.calls.some(call=>call.operationRef==='commerce.capabilities.get'));
 });
-test('only resource-free, unconfigured synthetic store flows adopt the official store binding',async()=>{
- for(const withCart of [false,true]){
-  const f=fixture(),c=await (withCart?cartFlow(f):connectFlow(f));
+test('legacy UCP flows adopt Store Context after verifying the original Cart and Checkout',async()=>{
+ for(const stage of ['empty','cart','checkout']){
+  const f=fixture(),c=await (stage==='empty'?connectFlow(f):cartFlow(f));
+  if(stage==='checkout')
+   await c.service.tool('chat','frontvia_checkout',{action:'prepare',flowId:c.flowId},'draft');
   assert.equal(c.flow().storeId,'shop');
   f.useContext();
-  if(withCart) {
-   await assert.rejects(c.service.refreshUcpCheckout('chat',c.flowId),{code:'STORE_BINDING_MISMATCH'});
-   assert.equal(c.flow().cart.id,'cart-1');
-   assert.equal(c.flow().storeId,'shop');
-  } else {
-   await c.service.refreshUcpCheckout('chat',c.flowId);
-   assert.equal(c.flow().storeId,'physical-shop');
-  }
-  assert.equal(f.calls.filter(call=>call.operationRef==='create_cart').length,Number(withCart));
+  const before=f.calls.length;
+  const effects=f.effects();
+  const restarted=new CustomerService({dataDir:'unused',sites:[]},new Pap03Business(f.sdk),c.vault);
+  assert.equal((await restarted.connect('chat','shop.example')).flowId,c.flowId);
+  assert.equal(c.flow().storeId,'physical-shop');
+  assert.deepEqual(c.flow().connection,{connection_id:'native',generation:1});
+  assert.equal(c.flow().cart?.id,stage==='empty'?undefined:'cart-1');
+  assert.equal(c.flow().checkout?.id,stage==='checkout'?'draft-1':undefined);
+  assert.deepEqual(f.calls.slice(before).map(call=>call.operationRef),
+    stage==='empty'?['get_store_context']:stage==='cart'?['get_store_context','get_cart']
+      :['get_store_context','get_cart','get_checkout']);
+  assert.equal(f.effects(),effects);
  }
+});
+test('Store Context cannot rebind a legacy cart when the merchant returns a different resource',async()=>{
+ const f=fixture(),c=await cartFlow(f);
+ const saved=c.flow(), effects=f.effects();
+ f.useContext();
+ f.replaceCartId();
+ await assert.rejects(c.service.refreshUcpCheckout('chat',c.flowId),/INVALID_UCP_RESPONSE/);
+ assert.deepEqual(c.flow(),saved);
+ assert.equal(f.effects(),effects);
+});
+
+test('owner restores the first Cart with the exact request after stopping the wait and restarting',async()=>{
+ const f=fixture(false,true),c=await connectFlow(f);
+ f.lose();
+ await assert.rejects(c.call({action:'add',variant_id:'variant-1',quantity:1},'first'),/PAP_REQUEST_UNCERTAIN/);
+ const original=f.calls.find(call=>call.operationRef==='create_cart');
+ assert.equal(f.effects(),1);
+ const stopped=await c.service.discardCartAddition('chat',c.flowId);
+ assert.equal(stopped.cartCreationPending,true);
+ assert.equal(stopped.canRetryCart,true);
+ const restarted=new CustomerService({dataDir:'unused',sites:[]},new Pap03Business(f.sdk),c.vault);
+ await restarted.connect('chat','shop.example');
+ await restarted.view('chat',c.flowId,['cart']);
+ await assert.rejects(restarted.tool('chat','frontvia_orders',{action:'recover',flowId:c.flowId},'observe'),
+   {code:'ORIGINAL_RESULT_UNKNOWN'});
+ assert.deepEqual(f.calls.filter(call=>call.operationRef==='create_cart'),[original]);
+ const restored=await restarted.retryCart('chat',c.flowId);
+ assert.equal(restored.cart.id,'cart-1');
+ assert.equal(restored.pending,false);
+ assert.deepEqual(f.calls.filter(call=>call.operationRef==='create_cart'),[original,original]);
+ assert.equal(f.effects(),1);
 });
 test('a pending legacy Cart create retains its wire context and key without a new request',async()=>{
  const f=fixture(false,true),c=await connectFlow(f);
@@ -260,7 +298,8 @@ test('a pending legacy Cart create retains its wire context and key without a ne
  c.vault.set(`flow:${c.flowId}`,saved);
  await assert.rejects(c.service.recoverFromOwner('chat',c.flowId), {code:'ORIGINAL_RESULT_UNKNOWN'});
  assert.deepEqual(c.flow().commands[pending].params,saved.commands[pending].params);
- await c.service.discardCartAddition('chat',c.flowId);
+ const stopped=await c.service.discardCartAddition('chat',c.flowId);
+ assert.equal(stopped.canRetryCart,false);
  await c.service.view('chat',c.flowId,['cart']);
  assert.equal(c.flow().pending,pending);
  assert.equal(f.calls.filter(call=>call.operationRef==='create_cart').length,1);
@@ -276,6 +315,7 @@ test('order history forwards only the paging cursor and reads the same original 
  assert.deepEqual(f.calls.at(-1),{operationRef:'list_orders',query:{limit:'10',cursor:'opaque-next'}});
  const result:any=await c.service.tool('chat','frontvia_orders',{action:'get',flowId:c.flowId,order_id:f.orderId},'original');
  assert.equal(result.data.id,f.orderId);
+ assert.deepEqual(result.ui,{kind:'frontvia-customer',card:'order',sessionId:'chat',flowId:c.flowId,orderId:f.orderId});
  assert.deepEqual(f.calls.at(-1),{operationRef:'get_order',path:{id:f.orderId}});
 });
 
@@ -487,6 +527,48 @@ test('an expired original Prepare settles by read and reopens one draft on the s
  assert.equal(f.calls.filter(call=>call.operationRef==='create_cart').length,1);
  assert.equal(f.calls.filter(call=>call.operationRef==='create_checkout').length,2);
  assert(!f.calls.some(call=>call.operationRef==='complete_checkout'));
+});
+
+test('an expired incomplete draft reopens on the same Cart after Prepare timed out before send',async()=>{
+ const f=fixture(false,true),c=await cartFlow(f);
+ await c.service.tool('chat','frontvia_checkout',{action:'prepare',flowId:c.flowId},'draft');
+ const effects=f.effects();
+ f.prepareConsent(true);
+ await assert.rejects(c.service.prepareUcpPurchase('chat',c.flowId,'prepare'),/PAP_IDENTITY_AUTHORIZATION_REQUIRED/);
+ const pending=c.flow().pending!;
+ f.expirePreparation('incomplete');
+ const restarted=new CustomerService({dataDir:'unused',sites:[]},new Pap03Business(f.sdk),c.vault);
+ await restarted.connect('chat','shop.example');
+ await restarted.view('chat',c.flowId,['checkout']);
+ assert.equal(f.effects(),effects);
+ assert.equal(c.flow().pending,undefined);
+ assert.equal(c.flow().commands[pending].result.resource.id,f.checkoutId);
+ const result=await restarted.tool('chat','frontvia_checkout',{action:'prepare',flowId:c.flowId},'fresh');
+ assert.equal((result as any).data.resource.id,f.replacementCheckoutId);
+ assert.deepEqual(f.calls.at(-1).body,{cart_id:c.flow().cart.id,line_items:[]});
+ assert.equal(f.calls.filter(call=>call.operationRef==='prepare_checkout').length,1);
+ assert.equal(f.calls.filter(call=>call.operationRef==='create_cart').length,1);
+});
+
+test('a later unsent PAP retry cannot retire a possibly sent Prepare when the draft expires',async()=>{
+ const f=fixture(false,true),c=await cartFlow(f);
+ await c.service.tool('chat','frontvia_checkout',{action:'prepare',flowId:c.flowId},'draft');
+ const request=f.sdk.request;
+ f.sdk.request=async(input,signal)=>(input as {operationRef?:string})?.operationRef==='prepare_checkout'
+   ? {ok:false,error:{code:'request_uncertain',businessRequest:'unknown'}}
+   : request(input,signal);
+ await assert.rejects(c.service.prepareUcpPurchase('chat',c.flowId,'prepare'),/PAP_REQUEST_UNCERTAIN/);
+ const pending=c.flow().pending;
+ f.sdk.request=request;
+ f.prepareConsent(true);
+ await assert.rejects(c.service.recoverFromOwner('chat',c.flowId),/PAP_IDENTITY_AUTHORIZATION_REQUIRED/);
+ f.expirePreparation('incomplete');
+ const unresolved=await c.service.view('chat',c.flowId,['checkout']);
+ assert.equal(unresolved.preparationRecovery,true);
+ assert.equal(unresolved.canRetryPreparation,false);
+ assert.equal(c.flow().pending,pending);
+ await assert.rejects(c.service.tool('chat','frontvia_checkout',{action:'prepare',flowId:c.flowId},'fresh'),
+   {code:'RESOLVE_PENDING_OPERATION'});
 });
 
 test('only owner recovery may retry the exact Complete after reading the original Checkout',async()=>{

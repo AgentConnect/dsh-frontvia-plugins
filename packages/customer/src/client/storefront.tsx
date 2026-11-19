@@ -60,7 +60,7 @@ import {
   manualCart,
 } from "../contact-fields.js";
 import type { ShoppingAction } from "../shopping-action.js";
-type Action = (operation: string, payload?: any) => Promise<boolean>;
+type Action = (operation: string, payload?: any, onResult?: (value: any) => void) => Promise<boolean>;
 type Props = {
   draftScope: string;
   data: any;
@@ -72,6 +72,7 @@ type Props = {
   startShopping?: StartShopping;
   addedQuantity?: number;
   initialTab?: "products" | "cart" | "orders";
+  initialOrderId?: string;
   onViewChange?: (scope: ViewScope, refresh?: boolean) => void;
 };
 const defaultSteps = [
@@ -307,6 +308,7 @@ function StorefrontContent({
   startShopping,
   addedQuantity,
   initialTab,
+  initialOrderId,
   onViewChange,
 }: Props) {
   const [addressDraft, setAddressDraft] = useState<{
@@ -333,8 +335,9 @@ function StorefrontContent({
     const timer = setTimeout(() => setNotice(""), 5000);
     return () => clearTimeout(timer);
   }, [notice, !!data]);
-  const [orderDetail, setOrderDetail] = useState(false);
-  const [showOrderDetails, setShowOrderDetails] = useState(false);
+  const [orderDetail, setOrderDetail] = useState(initialOrderId);
+  const [showOrderDetails, setShowOrderDetails] = useState(!!initialOrderId);
+  const [openedOrder, setOpenedOrder] = useState<any>();
   const ordersRequested = useRef(false);
   const canListOrders = !data?.capabilities?.ucp || data.capabilities.methods?.some(
     (method: { method: string; availability: string }) =>
@@ -360,7 +363,7 @@ function StorefrontContent({
   const initialized = useRef(false);
   const checkedPending = useRef(false);
   useEffect(() => {
-    if (!data?.pending) {
+    if (!data?.pending || data.cartCreationPending) {
       checkedPending.current = false;
       return;
     }
@@ -375,8 +378,8 @@ function StorefrontContent({
       data.canDiscardCartAddition ? 0 : 1500,
     );
     return () => clearTimeout(timer);
-  }, [data?.pending, data?.canDiscardCartAddition, checkoutRecovery, busy]);
-  const shop = async (intent: ShoppingAction["intent"]) => {
+  }, [data?.pending, data?.cartCreationPending, data?.canDiscardCartAddition, checkoutRecovery, busy]);
+  const shop = async (intent: ShoppingAction["intent"], onResult?: (value: any) => void) => {
     if (intent.action === "add" && (data?.intent?.submitted || data?.order)) {
       if (!startShopping) return false;
       setStartingCart(true);
@@ -390,8 +393,11 @@ function StorefrontContent({
       intent,
       expected_version: data?.cart?.version,
       actionId: crypto.randomUUID(),
-    });
+    }, onResult);
   };
+  const readOrderDetail = (orderId: string) => shop({ action: "order-detail", orderId }, value => {
+    if (value.viewedOrder?.id === orderId) setOpenedOrder(value.viewedOrder);
+  });
   useEffect(() => {
     if (!data || initialized.current) return;
     initialized.current = true;
@@ -404,6 +410,7 @@ function StorefrontContent({
     // A restored view is display-only. Keep it visible while revalidating the
     // current catalog, even when the persisted flow already contains products.
     if (
+      !initialOrderId &&
       !data.intent?.submitted &&
       !data.order &&
       !data.quote &&
@@ -420,11 +427,19 @@ function StorefrontContent({
           : { action: "browse", refresh: true },
       );
   }, [data]);
+  const initialOrderRequested = useRef(false);
+  useEffect(() => {
+    if (!initialOrderId || !data || busy || initialOrderRequested.current) return;
+    initialOrderRequested.current = true;
+    if (data.viewedOrder?.id === initialOrderId) setOpenedOrder(data.viewedOrder);
+    else void readOrderDetail(initialOrderId);
+  }, [initialOrderId, data, busy]);
   useEffect(() => {
     if (
       tab !== "orders" ||
       !data ||
       !canListOrders ||
+      showOrderDetails ||
       busy ||
       data.orders ||
       ordersRequested.current
@@ -432,7 +447,7 @@ function StorefrontContent({
       return;
     ordersRequested.current = true;
     void shop({ action: "orders" });
-  }, [tab, data, busy, canListOrders]);
+  }, [tab, data, busy, canListOrders, showOrderDetails]);
   const locked = !!data?.intent?.submitted || !!data?.order;
   const blocked = busy || startingCart || !!data?.pending;
   useEffect(() => {
@@ -446,7 +461,7 @@ function StorefrontContent({
         "partially_refunded",
       ].includes(paymentState(data, now))
     ) {
-      setOrderDetail(false);
+      setOrderDetail(undefined);
       setShowOrderDetails(true);
       setTab("orders");
     }
@@ -566,7 +581,9 @@ function StorefrontContent({
     ].includes(errorCode ?? "")
       ? error
       : undefined;
-  const selectedOrder = orderDetail ? data?.viewedOrder : data?.order;
+  const selectedOrder = orderDetail
+    ? [data?.viewedOrder, openedOrder].find(order => order?.id === orderDetail)
+    : data?.order;
   return (
     <section
       className="fv-storefront fv-stack"
@@ -640,6 +657,11 @@ function StorefrontContent({
           {data.cartCreationPending && tab !== "cart" && (
             <div className="fv-row" role="status">
               <span className="fv-muted">购物车暂未加载。</span>
+              {data.canRetryCart && (
+                <Button disabled={busy} onClick={() => action("retry-cart")}>
+                  恢复原购物车
+                </Button>
+              )}
               <Button
                 variant="ghost"
                 disabled={busy}
@@ -671,7 +693,7 @@ function StorefrontContent({
               setTab(value);
               if (value === "products" && !data.products) void browse();
               if (value === "orders") {
-                setOrderDetail(false);
+                setOrderDetail(undefined);
                 setShowOrderDetails(false);
               }
             }}
@@ -687,7 +709,7 @@ function StorefrontContent({
                     <ShoppingCart />
                     购物车 {count > 0 ? `(${count})` : ""}
                   </TabsTrigger>
-                  {(canListOrders || data.order || data.viewedOrder) && (
+                  {(canListOrders || data.order || data.viewedOrder || orderDetail) && (
                     <TabsTrigger value="orders">
                       <Package />
                       我的订单
@@ -1257,6 +1279,11 @@ function StorefrontContent({
                           ? "已提交的商品保留在订单中，不再占用购物车。"
                           : "去逛逛，选一件喜欢的商品。"}
                     </EmptyDescription>
+                    {data.cartCreationPending && data.canRetryCart && (
+                      <Button disabled={busy} onClick={() => action("retry-cart")}>
+                        恢复原购物车
+                      </Button>
+                    )}
                     <Button
                       disabled={busy}
                       onClick={() =>
@@ -1289,7 +1316,7 @@ function StorefrontContent({
                       onClick={() => {
                         setTab(locked ? "orders" : "cart");
                         if (locked) {
-                          setOrderDetail(false);
+                          setOrderDetail(undefined);
                           setShowOrderDetails(true);
                         }
                       }}
@@ -1620,7 +1647,7 @@ function StorefrontContent({
                               variant="outline"
                               onClick={() => {
                                 setTab("orders");
-                                setOrderDetail(false);
+                                setOrderDetail(undefined);
                                 setShowOrderDetails(true);
                               }}
                             >
@@ -1670,7 +1697,9 @@ function StorefrontContent({
                     variant="outline"
                     disabled={busy}
                     onClick={() => {
-                      if (showOrderDetails) void action("view");
+                      if (showOrderDetails && orderDetail)
+                        void readOrderDetail(orderDetail);
+                      else if (showOrderDetails) void action("view");
                       else {
                         ordersRequested.current = true;
                         void shop({ action: "orders" }).then((ok) => {
@@ -1696,13 +1725,16 @@ function StorefrontContent({
                         disabled={busy}
                         onClick={() => {
                           setShowOrderDetails(false);
-                          setOrderDetail(false);
+                          setOrderDetail(undefined);
                         }}
                       >
                         <ArrowLeft data-icon="inline-start" />
                         返回订单列表
                       </Button>
                     </div>
+                    {!selectedOrder && orderDetail && !error && (
+                      <p className="fv-muted" role="status">正在读取订单详情。</p>
+                    )}
                     {selectedOrder && (
                       <div className="fv-order-detail-layout">
                         <Card>
@@ -1743,12 +1775,12 @@ function StorefrontContent({
                       busy={busy}
                       open={async (orderId) => {
                         if (orderId === data.order?.id) {
-                          setOrderDetail(false);
+                          setOrderDetail(undefined);
                           setShowOrderDetails(true);
                         } else if (
-                          await shop({ action: "order-detail", orderId })
+                          await readOrderDetail(orderId)
                         ) {
-                          setOrderDetail(true);
+                          setOrderDetail(orderId);
                           setShowOrderDetails(true);
                         }
                       }}

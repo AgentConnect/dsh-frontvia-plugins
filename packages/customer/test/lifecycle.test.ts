@@ -38,8 +38,10 @@ test('Customer without a public consumer grant fails before opening state or reg
   assert.equal(f.credentials,0);assert.equal(f.routes.size,0);assert.equal(f.tools.size,0);assert.equal(existsSync(join(f.dir,'state')),false);
  }finally{f.close();}
 });
-test('Customer retains the supported DSH Host version with no compatibility exemption',()=>{
+test('Customer supports the verified DSH Host versions without a compatibility exemption',()=>{
  const manifest=require('../package.json');
  assert.equal(evaluatePluginCompatibility(manifest,{},'0.2.2-rc.1'),undefined);
+ assert.equal(evaluatePluginCompatibility(manifest,{},'0.2.2-rc.3'),undefined);
+ assert.ok(evaluatePluginCompatibility(manifest,{},'0.2.2-rc.2'));
  assert.ok(evaluatePluginCompatibility(manifest,{},'0.1.5'));
 });

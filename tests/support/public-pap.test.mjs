@@ -4,13 +4,25 @@ import {tmpdir} from 'node:os';
 import {join} from 'node:path';
 import test from 'node:test';
 import {publicIdentityPackage,publicPapPackage} from './public-pap.mjs';
+import {assertPapPackage} from '../../scripts/package-inputs.mjs';
 
 test('PAP tests select the installed registry package without a sibling checkout',()=>{
   const selected=publicPapPackage({});
   assert.equal(selected.source,'registry');
-  assert.equal(selected.version,'0.2.0');
+  assert.equal(selected.version,'0.2.1');
   assert(selected.root.includes('node_modules/'));
   assert(selected.transportModule.startsWith(selected.root+'/lib/'));
+});
+
+test('UCP packaging and installation require both PAP operations at the locked version', () => {
+  const selected = publicPapPackage({});
+  assert.throws(() => assertPapPackage({name:'@awiki/dsh-pap', version:selected.version}, selected.version),
+    /Store Context and Order History/);
+  const candidate = {name:'@awiki/dsh-pap', version:selected.version, dshPapUcpOperations:['get_store_context']};
+  assert.throws(() => assertPapPackage(candidate, selected.version), /Store Context and Order History/);
+  candidate.dshPapUcpOperations.push('list_orders');
+  assert.throws(() => assertPapPackage(candidate, '0.2.0'), /Store Context and Order History/);
+  assert.doesNotThrow(() => assertPapPackage(candidate, selected.version));
 });
 
 test('an explicit missing, relative or wrong PAP candidate never falls back to registry',()=>{

@@ -15,6 +15,7 @@ import { withFileLock, writeFileAtomic } from "@deepseek-ai/dsh-atomic-write";
 import spawn from "cross-spawn";
 import { orderFrontviaBundles } from "./desktop-bundles.mjs";
 import { pluginPackages, legacyFrontviaPackages } from "./plugin-packages.mjs";
+import { assertPapPackage } from "./package-inputs.mjs";
 
 const profile = resolveProfileDir("desktop");
 const manifestPath = join(profile, "package.json");
@@ -27,6 +28,10 @@ const cli =
 const artifacts = JSON.parse(
   await readFile(resolve(".local/packages/manifest.json"), "utf8"),
 );
+const papName = "@awiki/dsh-pap";
+const buildManifest = JSON.parse(await readFile(resolve("package.json"), "utf8"));
+const papVersion = buildManifest.devDependencies[papName];
+assertPapPackage(artifacts.artifacts.find(item => item.name === papName), papVersion);
 // Explicit source builds install the verified Identity artifact as well.
 if (artifacts.identitySource === 'explicit-local') {
   if (!artifacts.identityArtifact || artifacts.identityArtifact.name !== '@agent-network-protocol/dsh-anp-identity')
@@ -219,6 +224,8 @@ await withFileLock(
           await writeFileAtomic(manifestPath, JSON.stringify(current, null, 2) + "\n", { mode: 0o600 });
         }
       }, locks);
+      const installedPap = JSON.parse(await readFile(join(profile, "node_modules", papName, "package.json"), "utf8"));
+      assertPapPackage(installedPap, papVersion);
       const installedIdentity=JSON.parse(await readFile(join(profile,"node_modules",identityName,"package.json"),"utf8"));
       if(installedIdentity.version!==identityVersion)throw new Error("Installed identity does not match the candidate");
       if (artifacts.identitySource === 'explicit-local') {
