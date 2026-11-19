@@ -37,7 +37,8 @@ export function catalogSnapshot(
 }
 
 export function withHistoricalCatalog(live: any, catalog?: CatalogSnapshot) {
-  if (!live || !catalog) return live;
+  // The interactive UCP Storefront updates the catalog on its live flow.
+  if (!live || !catalog || live.capabilities?.ucp === true) return live;
   return {
     ...live,
     products: catalog.products,

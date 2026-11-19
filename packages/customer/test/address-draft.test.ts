@@ -131,6 +131,97 @@ const button = (tree: ReactTestRenderer, label: string): ReactTestInstance =>
     .findAllByType("button")
     .find((n) => text(n.props.children) === label)!;
 
+test("historical order cards open the exact Order without list permission", async () => {
+  const orderId = "historical-order";
+  const otherOrder = { id: "different-order", lines: [] };
+  const data = {
+    ...initial(),
+    cart: undefined,
+    viewedOrder: otherOrder,
+    capabilities: { ucp: true, methods: [{ method: "commerce.orders.get", availability: "supported" }] },
+  };
+  const calls: unknown[] = [];
+  let tree!: ReactTestRenderer;
+  try {
+    await act(async () => {
+      tree = create(React.createElement(Storefront, {
+        data, draftScope: "historical-order", busy: false, now: Date.now(), error: "",
+        initialTab: "orders", initialOrderId: orderId,
+        action: async (operation, payload, onResult) => {
+          calls.push([operation, payload?.intent]);
+          onResult?.({ viewedOrder: { id: orderId, lines: [{ id: "line", title: "Historical Mug", quantity: 1 }] } });
+          return true;
+        },
+      }));
+    });
+    assert.deepEqual(calls, [["shopping", { action: "order-detail", orderId }]]);
+    assert(tree.root.findAll(node => node.children.includes("订单详情")).length);
+    assert(tree.root.findAll(node => node.children.includes("Historical Mug")).length);
+    assert(!JSON.stringify(tree.toJSON()).includes(otherOrder.id));
+    await click(tree, "刷新详情");
+    assert.deepEqual(calls, Array(2).fill(["shopping", { action: "order-detail", orderId }]));
+  } finally {
+    await act(async () => tree?.unmount());
+  }
+});
+
+test("a stopped first Cart exposes explicit original recovery", async () => {
+  const calls: string[] = [];
+  let tree!: ReactTestRenderer;
+  try {
+    await act(async () => {
+      tree = create(React.createElement(Storefront, {
+        data: {
+          ...initial(),
+          cart: undefined,
+          products: {items: []},
+          pending: true,
+          cartCreationPending: true,
+          canRetryCart: true,
+          capabilities: {ucp: true, methods: []},
+        },
+        draftScope: "cart-recovery", initialTab: "cart", busy: false, now: Date.now(), error: "",
+        action: async op => { calls.push(op); return true; },
+      }));
+    });
+    assert.deepEqual(calls, []);
+    await click(tree, "刷新购物车");
+    await click(tree, "恢复原购物车");
+    assert.deepEqual(calls, ["view", "retry-cart"]);
+  } finally {
+    await act(async () => tree?.unmount());
+  }
+});
+
+test("an expired pending Prepare exposes a separate owner action to reopen the draft", async () => {
+  const calls: { operation: string; actionId?: string }[] = [];
+  let tree!: ReactTestRenderer;
+  try {
+    await act(async () => {
+      tree = create(React.createElement(Storefront, {
+        data: {
+          ...initial(),
+          pending: true,
+          preparationRecovery: true,
+          canReopenDraft: true,
+          capabilities: { ucp: true, methods: [] },
+        },
+        draftScope: "expired-prepare", initialTab: "cart", busy: false, now: Date.now(), error: "",
+        action: async (operation, payload) => {
+          calls.push({ operation, actionId: payload?.actionId });
+          return true;
+        },
+      }));
+    });
+    await click(tree, "刷新状态");
+    await click(tree, "在原购物车重开结算");
+    assert.deepEqual(calls.map(call => call.operation), ["recover-status", "reopen-ucp-draft"]);
+    assert.match(calls[1].actionId ?? "", /^[0-9a-f-]{36}$/);
+  } finally {
+    await act(async () => tree?.unmount());
+  }
+});
+
 test("Cart-only storefront keeps the Cart visible without Checkout or Order actions", async () => {
   let tree!: ReactTestRenderer;
   try {
@@ -152,6 +243,74 @@ test("Cart-only storefront keeps the Cart visible without Checkout or Order acti
     assert(tree.root.findAll((node) => node.children.includes("商家购买服务尚未就绪。")).length);
     for (const label of ["创建结算草稿", "查看结算草稿", "去结账", "继续结账", "我的订单"])
       assert.equal(button(tree, label), undefined);
+  } finally {
+    await act(async () => tree?.unmount());
+  }
+});
+
+test("refreshing a pending UCP purchase is read-only and retry has a separate action", async () => {
+  const calls: string[] = [];
+  let tree!: ReactTestRenderer;
+  try {
+    await act(async () => {
+      tree = create(React.createElement(Storefront, {
+        draftScope: "ucp-purchase",
+        data: {...initial(), pending: true, purchaseRecovery: true, canRetryPurchase: true,
+          capabilities: {ucp: true, methods: []}},
+        initialTab: "cart", busy: false, error: "", now: Date.now(),
+        action: async operation => { calls.push(operation); return true; },
+      }));
+    });
+    await click(tree, "刷新状态");
+    await click(tree, "重试原购买请求");
+    assert.deepEqual(calls, ["recover-status", "recover"]);
+  } finally {
+    await act(async () => tree?.unmount());
+  }
+});
+
+test("checkout preparation offers a separate resume and restores checkout on the same cart after cancellation", async () => {
+  const requests: { operation: string; payload?: any }[] = [];
+  let tree!: ReactTestRenderer;
+  let data = {
+    ...initial(),
+    preparationRecovery: true,
+    canRetryPreparation: true,
+    pending: true,
+    checkout: { id: "original-draft", status: "incomplete" },
+    capabilities: {
+      ucp: true,
+      ucpCheckoutConfirmation: true,
+      methods: ["commerce.checkouts.get", "commerce.checkouts.create"].map(
+        (method) => ({ method, availability: "supported" }),
+      ),
+    },
+  };
+  const render = () =>
+    React.createElement(Storefront, {
+      draftScope: "ucp-preparation",
+      data,
+      initialTab: "cart", busy: false, error: "", now: Date.now(),
+      action: async (operation, payload) => { requests.push({ operation, payload }); return true; },
+    });
+  try {
+    await act(async () => { tree = create(render()); });
+    await click(tree, "刷新状态");
+    await click(tree, "继续原结算准备");
+    assert.deepEqual(requests.map(({ operation }) => operation), ["recover-status", "recover"]);
+    data = {
+      ...data,
+      preparationRecovery: false,
+      canRetryPreparation: false,
+      pending: false,
+      checkout: { ...data.checkout, status: "canceled" },
+    };
+    await act(async () => { tree.update(render()); });
+    assert.equal(button(tree, "继续原结算准备"), undefined);
+    await click(tree, "重新创建结算草稿");
+    assert.equal(requests.at(-1)?.operation, "shopping");
+    assert.deepEqual(requests.at(-1)?.payload.intent, { action: "prepare" });
+    assert.equal(requests.at(-1)?.payload.expected_version, "v1");
   } finally {
     await act(async () => tree?.unmount());
   }

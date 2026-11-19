@@ -92,7 +92,7 @@ export const inject = [
   "sessions",
   "conversation",
 ];
-type UI = { flowId: string; sessionId: string; card: string };
+type UI = { flowId: string; sessionId: string; card: string; orderId?: string };
 const errorText: Record<string, string> = {
   HANDOFF_UNAVAILABLE: "当前结算无法进行浏览器授权。",
   HANDOFF_APPROVAL_FAILED: "未能授权浏览器，请核对原页面显示的配对代码。",
@@ -127,6 +127,8 @@ const errorText: Record<string, string> = {
   NETWORK_UNCERTAIN: "暂未收到商店回复，请先核对原操作结果。",
   QUOTE_CHANGED: "报价或购物车已变化，请重新报价并核对。",
   CONFIRMATION_EXPIRED: "确认已过期，请重新核对当前报价。",
+  CHECKOUT_REOPEN_NOT_READY: "商家仍保留原结算草稿，请核对当前状态。",
+  PAP_IDENTITY_AUTHORIZATION_REQUIRED: "请处理 PAP 授权提示，再继续原操作。",
   CONTACT_NOT_SAVED: "收货信息未保存，请重试。",
   CONTACT_REQUIRED: "请先填写并保存完整的收货信息。",
   CART_QUANTITY_LIMIT: "同一规格最多可加购 100 件，请减少数量后重试。",
@@ -325,7 +327,7 @@ export function apply(ctx: any) {
       ),
       [tick, setTick] = useState(Date.now());
     useEffect(() => {
-      if (resume) return;
+      if (resume || liveData?.capabilities?.ucp) return;
       const selected = tab ?? (liveData ? shoppingStep(liveData) : ui.card);
       onViewChange(
         selected === "products" || selected === "connection"
@@ -342,6 +344,9 @@ export function apply(ctx: any) {
       liveRevision === accountRevision ? liveData : undefined,
       catalog,
     );
+    const lookupRecovery = data?.preparationRecovery || data?.purchaseRecovery
+      ? "recover-status"
+      : "recover";
     const [form, setForm] = useState<Contact>(blankContact),
       [fieldErrors, setFieldErrors] = useState<Partial<Contact>>({});
     const formId = useId();
@@ -406,7 +411,7 @@ export function apply(ctx: any) {
       const t = setInterval(() => setTick(Date.now()), 1000);
       return () => clearInterval(t);
     }, []);
-    const action = async (op: string, payload: any = {}) => {
+    const action = async (op: string, payload: any = {}, onResult?: (value: any) => void) => {
       if (acting.current) return false;
       acting.current = true;
       const release = views.hold(ui);
@@ -429,8 +434,9 @@ export function apply(ctx: any) {
         const value =
           op === "view"
             ? await views.refresh(ui)
-            : await call(op, { ...ui, ...payload });
+            : await call(op, { flowId: ui.flowId, sessionId: ui.sessionId, card: ui.card, ...payload });
         if (op !== "view") views.publish(ui, value);
+        onResult?.(value);
         if (op === "contact") {
           if (value.pending || value.operation?.status !== "succeeded") {
             setError("CONTACT_NOT_SAVED");
@@ -467,6 +473,8 @@ export function apply(ctx: any) {
         if (op === "discard-cart-add") views.invalidate(ui, ["cart"]);
         if (
           op === "contact" ||
+          op === "prepare-purchase" ||
+          op === "reopen-ucp-draft" ||
           op === "order-cancel" ||
           op === "shopping" ||
           op === "retry-cart"
@@ -554,14 +562,17 @@ export function apply(ctx: any) {
         actionId: crypto.randomUUID(),
       });
     };
-    if (resume)
+    if (resume || data?.capabilities?.ucp)
       return (
         <div
+          className={resume ? undefined : "fv fv-inline"}
           ref={(node) => {
             container.current = node;
           }}
         >
+          {!resume && <style>{styles}</style>}
           <Storefront
+            key={accountRevision}
             draftScope={JSON.stringify([
               accountRevision,
               ui.sessionId,
@@ -577,6 +588,9 @@ export function apply(ctx: any) {
             now={tick}
             startShopping={startShopping}
             addedQuantity={addedQuantity}
+            initialTab={resume ? undefined : ui.card === "order" ? "orders"
+              : ui.card === "cart" || ui.card === "quote" ? "cart" : "products"}
+            initialOrderId={resume ? undefined : ui.orderId}
             onViewChange={onViewChange}
           />
         </div>
@@ -691,7 +705,7 @@ export function apply(ctx: any) {
                             variant="outline"
                             size="sm"
                             disabled={!!busy}
-                            onClick={() => action("recover")}
+                            onClick={() => action(lookupRecovery)}
                           >
                             核对原结果
                             <ArrowRight data-icon="inline-end" />
@@ -1284,9 +1298,9 @@ export function apply(ctx: any) {
                           variant="outline"
                           size="sm"
                           disabled={!!busy}
-                          onClick={() => action("recover")}
+                          onClick={() => action(lookupRecovery)}
                         >
-                          {busy === "recover" ? (
+                          {busy === lookupRecovery ? (
                             <Spinner />
                           ) : (
                             <RefreshCw data-icon="inline-start" />

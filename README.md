@@ -1,6 +1,6 @@
 # DSH Frontvia Customer
 
-Frontvia 业务插件：商品、购物车、地址、报价、订单和咨询卡片。PAP 只使用 0.3；身份和协议由公共基础插件负责。
+Frontvia 业务插件支持商品、购物车、地址、报价、订单和咨询卡片。身份和协议由公共基础插件负责，UCP 购物通过 PAP 1.0 发现和调用。
 
 | 组件 | 来源与职责 |
 | --- | --- |
@@ -8,11 +8,11 @@ Frontvia 业务插件：商品、购物车、地址、报价、订单和咨询�
 | 公共 PAP | `@awiki/dsh-pap`；发现、Session、请求签名和一次操作批准 |
 | Customer | 本仓库 `packages/customer`；业务工具、卡片、报价核对及原 operation 恢复 |
 
-原 Frontvia 专属 Client/PAP 已退出当前构建。Customer `0.2.0` 的运行依赖为公共 Identity `>=0.1.18`、公共 PAP `^0.2.0`。开发与发布验证固定使用 Identity `0.1.18`、PAP `0.2.0`；版本范围不等于已验证尚未发布的未来版本。
+当前代码的开发锁文件固定 Identity `0.1.18` 和 PAP `0.2.1`。UCP 安装另外要求 PAP 包实际提供 Store Context 和 Order History。当前 npm 的 PAP `0.2.1` 缺少两项操作，UCP 请使用下述本地候选。
 
 ## npm 安装与更新
 
-要求 Node.js >= 24.9.0、DSH runtime 0.2.2-rc.1。完全退出 DSH 后执行：
+以下已发布组合用于旧版 PAP，配套 DSH `0.2.2-rc.1`，要求 Node.js >= 24.9.0。完全退出 DSH 后执行：
 
 ```sh
 dsh plugin --profile web add @agent-network-protocol/dsh-anp-identity@0.1.18 @awiki/dsh-pap@0.2.0 dsh-frontvia-customer@0.2.0
@@ -37,12 +37,13 @@ dsh plugin --profile web add @agent-network-protocol/dsh-anp-identity@0.1.18 @aw
 pnpm install --frozen-lockfile --ignore-scripts
 pnpm typecheck
 pnpm build
-pnpm pack:local
 ```
 
-`pack:local` 仅产生本机安装候选：Customer 与已安装正式公共 PAP 的内容寻址包。Identity 版本从已安装正式包读取。未执行安装或 npm 发布。
+`pack:local` 生成本机安装候选，并记录所选 PAP 版本和包的 SHA-256。打包与桌面安装器复用同一项 PAP 版本和能力校验。当前先从 [PAP #4](https://github.com/AgentConnect/dsh-pap/pull/4) 对应源码构建候选，再通过 `FRONTVIA_PAP_TEST_PACKAGE_ROOT` 选择它。
 
-安装候选必须与 DSH `0.2.2-rc.1` 匹配。显式运行 `scripts/install-desktop.mjs` 才会更新 desktop Profile；旧 Frontvia 包的替换使用 `--replace-legacy-frontvia`，只处理安装器原先放入 `.local-packages/frontvia` 的旧包，不删除身份、凭据或业务状态。安装器会把公共 Identity/PAP 的 bundle 放在 Customer 之前，修复旧版升级时保留错误顺序造成的后台启动失败；其他插件的选择和相对顺序保持不变。用户 Profile 自己的覆盖配置保持优先；公共 PAP 的自定义配置需保留 `businessConsumers: ['dsh-frontvia-customer']`。
+源码候选支持 DSH `0.2.2-rc.1` 和 `0.2.2-rc.3`。打包默认针对 `rc.1`。为 `rc.3` 打包时，设置 `FRONTVIA_DSH_RUNTIME=0.2.2-rc.3`，并通过 `FRONTVIA_PAP_TEST_PACKAGE_ROOT` 和 `FRONTVIA_IDENTITY_TEST_PACKAGE_ROOT` 选用已构建且声明兼容 `rc.3` 的公共插件候选。打包会检查三个包的目标版本，安装器会核对候选清单与桌面 CLI 版本。
+
+显式运行 `scripts/install-desktop.mjs` 才会更新 desktop Profile；旧 Frontvia 包的替换使用 `--replace-legacy-frontvia`，只处理安装器原先放入 `.local-packages/frontvia` 的旧包。安装器会把公共 Identity/PAP 的 bundle 放在 Customer 之前，修复旧版升级时保留错误顺序造成的后台启动失败；其他插件的选择和相对顺序保持不变。用户 Profile 自己的覆盖配置保持优先；公共 PAP 的自定义配置需保留 `businessConsumers: ['dsh-frontvia-customer']`。
 
 隔离 Host 可以通过原有 `scripts/harness.mjs` 加载候选；验收不得使用用户默认 Profile。普通验证不产生额外日志归档。
 
@@ -64,7 +65,7 @@ pnpm pack:local
 
 公共 PAP 的 `keyring` 后端只支持 Linux Secret Service。Mac 显式选择上面的 `local-file`，使用与状态目录分离、仅当前用户可读的受保护目录保存 PAP 状态加密密钥；公共身份私钥仍由 Identity Provider 保管。Linux 已配置 Secret Service 时可显式改为 `keyring`。不做静默存储降级；`PAP_CREDENTIAL_UNAVAILABLE` 也可能来自不支持的存储后端，不代表需要重新注册身份。
 
-完整退出并重开 DSH 后，在「设置 → 协议管理」核对读取策略及“写入：每次确认”。首次提供店铺域名才建立具体连接；完整重启后可在原对话再次连接同一域名，公共 PAP 0.2.0 会先恢复本地状态，Customer 再核对聊天所属身份，不额外发现或连接商家。同一身份保留原流程，真正更换身份仍须新建聊天；公开身份已发布不等于远端店铺已连接。主动断开的连接须由用户在「设置 → PAP 连接」重新连接，Customer 不自动恢复。设置中的 `Host 尚未开启全局域名接入` 说明缺少本段配置，反复创建身份不能解决。
+完整退出并重开 DSH 后，在「设置 → 协议管理」核对读取策略及“写入：每次确认”。首次提供店铺域名才建立具体连接；完整重启后可在原对话再次连接同一域名，公共 PAP 会先恢复本地状态，Customer 再核对聊天所属身份。同一身份保留原流程；更换身份须新建聊天。主动断开的连接须由用户在「设置 → PAP 连接」重新连接。设置中的 `Host 尚未开启全局域名接入` 说明缺少本段配置。
 
 ## 迁移状态
 
@@ -82,20 +83,19 @@ MCP 测试投影仅描述工具的根对象参数；实际 Customer 仍执行完
 - 协议和对外接口系统测试：Core `platform/tests/system/pap03/run.py`；说明见该目录 README。
 - 实际 DSH Web / Chromium E2E：本仓库 `pnpm test:e2e:dsh`，说明见 [DSH E2E](tests/e2e/dsh/README.md)。覆盖域名浏览、卡片恢复、规格加购、邮箱、公共批准、原订单和实际咨询；工作台配置本轮不纳入。
 
-两类测试使用隔离资源；公共 PAP 的组件检查与真实 HTTP 系统用例分开计数。测试使用正式公共 Identity、正式 PAP 0.2.0 和 Native Mock；身份统一连接既有 awiki.me User Service，没有新部署 User Service 或对外 DSH 站点。
+两类测试使用隔离资源。公共 PAP 的组件检查与真实 HTTP 系统用例分开计数。测试使用 Native Mock 和现有 awiki.me User Service。
 
 ## 系统测试的公共包来源
 
-Frontvia 的系统／DSH E2E 测试默认使用本仓库锁定安装的正式 npm Identity 0.1.18、PAP 0.2.0；不读取相邻 `dsh-pap` 源码或构建产物，也不启动旧独立身份服务。身份始终使用 `https://awiki.me`。
+正式包测试使用锁定的 npm Identity 0.1.18 和 PAP 0.2.1。身份使用 `https://awiki.me`。
 
 ```sh
 node tests/support/public-pap.mjs
 pnpm check
-pnpm pack:local
 pnpm test:e2e:dsh
 ```
 
-PAP 1.0 / UCP 2026-08-25 联调使用已构建的 Identity 和 PAP 源码候选。候选保留 manifest 版本 Identity 0.1.18、PAP 0.2.0 和 Customer 0.2.0，Native Identity 仍使用锁定的 registry 0.2.6。源码验收与正式 npm 包验收分别记录。`--preflight` 导入选定的模块并打印绝对路径和版本，配置缺失或候选无法加载时以非零退出。
+PAP 1.0 / UCP 2026-08-25 联调使用已构建的 Identity 和 PAP 源码候选。候选 manifest 使用 Identity 0.1.18、PAP 0.2.1 和 Customer 0.2.0，Native Identity 使用锁定的 registry 0.2.6。`--preflight` 导入选定的模块并打印绝对路径和版本，配置缺失或候选无法加载时以非零退出。
 
 ```sh
 # 在各候选 SDK 包目录安装其锁文件依赖并运行 npm run build

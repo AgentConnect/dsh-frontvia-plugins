@@ -60,7 +60,7 @@ import {
   manualCart,
 } from "../contact-fields.js";
 import type { ShoppingAction } from "../shopping-action.js";
-type Action = (operation: string, payload?: any) => Promise<boolean>;
+type Action = (operation: string, payload?: any, onResult?: (value: any) => void) => Promise<boolean>;
 type Props = {
   draftScope: string;
   data: any;
@@ -71,6 +71,8 @@ type Props = {
   now: number;
   startShopping?: StartShopping;
   addedQuantity?: number;
+  initialTab?: "products" | "cart" | "orders";
+  initialOrderId?: string;
   onViewChange?: (scope: ViewScope, refresh?: boolean) => void;
 };
 const defaultSteps = [
@@ -305,6 +307,8 @@ function StorefrontContent({
   now,
   startShopping,
   addedQuantity,
+  initialTab,
+  initialOrderId,
   onViewChange,
 }: Props) {
   const [addressDraft, setAddressDraft] = useState<{
@@ -316,7 +320,7 @@ function StorefrontContent({
     if (data?.cart?.id && addressDraft && addressDraft.cartId !== data.cart.id)
       setAddressDraft(undefined);
   }, [data?.cart?.id, addressDraft?.cartId]);
-  const [tab, setTab] = useState("products");
+  const [tab, setTab] = useState<string>(initialTab ?? "products");
   const [step, setStep] = useState<number>();
   const [query, setQuery] = useState("");
   const [detail, setDetail] = useState(false);
@@ -331,9 +335,14 @@ function StorefrontContent({
     const timer = setTimeout(() => setNotice(""), 5000);
     return () => clearTimeout(timer);
   }, [notice, !!data]);
-  const [orderDetail, setOrderDetail] = useState(false);
-  const [showOrderDetails, setShowOrderDetails] = useState(false);
+  const [orderDetail, setOrderDetail] = useState(initialOrderId);
+  const [showOrderDetails, setShowOrderDetails] = useState(!!initialOrderId);
+  const [openedOrder, setOpenedOrder] = useState<any>();
   const ordersRequested = useRef(false);
+  const canListOrders = !data?.capabilities?.ucp || data.capabilities.methods?.some(
+    (method: { method: string; availability: string }) =>
+      method.method === "commerce.orders.list" && method.availability === "supported",
+  );
   const [ordersAfterFirstPage, setOrdersAfterFirstPage] = useState(false);
   const [paymentSelected, setPaymentSelected] = useState(false);
   useEffect(() => {
@@ -350,10 +359,11 @@ function StorefrontContent({
       !(showOrderDetails && orderDetail),
     );
   }, [tab, orderDetail, showOrderDetails, onViewChange]);
+  const checkoutRecovery = data?.purchaseRecovery || data?.preparationRecovery;
   const initialized = useRef(false);
   const checkedPending = useRef(false);
   useEffect(() => {
-    if (!data?.pending) {
+    if (!data?.pending || data.cartCreationPending) {
       checkedPending.current = false;
       return;
     }
@@ -362,14 +372,14 @@ function StorefrontContent({
       () => {
         checkedPending.current = true;
         void action(
-          data.canDiscardCartAddition ? "discard-cart-add" : "recover",
+          data.canDiscardCartAddition ? "discard-cart-add" : checkoutRecovery ? "recover-status" : "recover",
         );
       },
       data.canDiscardCartAddition ? 0 : 1500,
     );
     return () => clearTimeout(timer);
-  }, [data?.pending, data?.canDiscardCartAddition, busy]);
-  const shop = async (intent: ShoppingAction["intent"]) => {
+  }, [data?.pending, data?.cartCreationPending, data?.canDiscardCartAddition, checkoutRecovery, busy]);
+  const shop = async (intent: ShoppingAction["intent"], onResult?: (value: any) => void) => {
     if (intent.action === "add" && (data?.intent?.submitted || data?.order)) {
       if (!startShopping) return false;
       setStartingCart(true);
@@ -383,22 +393,29 @@ function StorefrontContent({
       intent,
       expected_version: data?.cart?.version,
       actionId: crypto.randomUUID(),
-    });
+    }, onResult);
   };
+  const readOrderDetail = (orderId: string) => shop({ action: "order-detail", orderId }, value => {
+    if (value.viewedOrder?.id === orderId) setOpenedOrder(value.viewedOrder);
+  });
   useEffect(() => {
     if (!data || initialized.current) return;
     initialized.current = true;
     if (!addedQuantity && data.variantProductId && data.variants)
       setDetail(true);
-    if (data.intent?.submitted || data.order) setTab("orders");
-    else if (data.quote || data.cart?.lines?.length) setTab("cart");
+    if (!initialTab) {
+      if (data.intent?.submitted || data.order) setTab("orders");
+      else if (data.quote || data.cart?.lines?.length) setTab("cart");
+    }
     // A restored view is display-only. Keep it visible while revalidating the
     // current catalog, even when the persisted flow already contains products.
     if (
+      !initialOrderId &&
       !data.intent?.submitted &&
       !data.order &&
       !data.quote &&
-      !data.cart?.lines?.length
+      !data.cart?.lines?.length &&
+      (!initialTab || !data.products)
     )
       void shop(
         data.variantProductId
@@ -410,10 +427,19 @@ function StorefrontContent({
           : { action: "browse", refresh: true },
       );
   }, [data]);
+  const initialOrderRequested = useRef(false);
+  useEffect(() => {
+    if (!initialOrderId || !data || busy || initialOrderRequested.current) return;
+    initialOrderRequested.current = true;
+    if (data.viewedOrder?.id === initialOrderId) setOpenedOrder(data.viewedOrder);
+    else void readOrderDetail(initialOrderId);
+  }, [initialOrderId, data, busy]);
   useEffect(() => {
     if (
       tab !== "orders" ||
       !data ||
+      !canListOrders ||
+      showOrderDetails ||
       busy ||
       data.orders ||
       ordersRequested.current
@@ -421,7 +447,7 @@ function StorefrontContent({
       return;
     ordersRequested.current = true;
     void shop({ action: "orders" });
-  }, [tab, data, busy]);
+  }, [tab, data, busy, canListOrders, showOrderDetails]);
   const locked = !!data?.intent?.submitted || !!data?.order;
   const blocked = busy || startingCart || !!data?.pending;
   useEffect(() => {
@@ -435,7 +461,7 @@ function StorefrontContent({
         "partially_refunded",
       ].includes(paymentState(data, now))
     ) {
-      setOrderDetail(false);
+      setOrderDetail(undefined);
       setShowOrderDetails(true);
       setTab("orders");
     }
@@ -463,7 +489,8 @@ function StorefrontContent({
           manualDelivery ? 1 : 0,
           step ?? (data?.intent ? 3 : data?.quote ? 2 : 1),
         );
-  const ucpDraftMethod = data?.checkout && data.checkout.status !== "canceled"
+  const canceledDraft = data?.capabilities?.ucp && data.checkout?.status === "canceled";
+  const ucpDraftMethod = data?.checkout && !canceledDraft
     ? "commerce.checkouts.get"
     : "commerce.checkouts.create";
   const ucpDraftAvailable = data?.capabilities?.ucp && data.capabilities.methods?.some(
@@ -482,14 +509,14 @@ function StorefrontContent({
     }
   };
   useEffect(() => {
-    if (ucpConfirmation || tab !== "checkout" || checkoutStep !== 1) {
+    if (data?.capabilities?.ucp || tab !== "checkout" || checkoutStep !== 1) {
       deliveryRequested.current = false;
       return;
     }
     if (blocked || deliveryRequested.current || !data?.cart) return;
     deliveryRequested.current = true;
     void prepareDelivery();
-  }, [tab, checkoutStep, blocked, data?.cart, ucpConfirmation]);
+  }, [tab, checkoutStep, blocked, data?.cart, data?.capabilities?.ucp]);
   const deliveryCurrent =
     !!data?.delivery &&
     !!data?.cart &&
@@ -554,7 +581,9 @@ function StorefrontContent({
     ].includes(errorCode ?? "")
       ? error
       : undefined;
-  const selectedOrder = orderDetail ? data?.viewedOrder : data?.order;
+  const selectedOrder = orderDetail
+    ? [data?.viewedOrder, openedOrder].find(order => order?.id === orderDetail)
+    : data?.order;
   return (
     <section
       className="fv-storefront fv-stack"
@@ -599,7 +628,7 @@ function StorefrontContent({
                       ? "discard-cart-add"
                       : data.canRetryCart
                         ? "retry-cart"
-                        : "recover",
+                        : checkoutRecovery ? "recover-status" : "recover",
                   )
                 }
               >
@@ -613,11 +642,31 @@ function StorefrontContent({
                   "刷新状态"
                 )}
               </Button>
+              {data.canRetryPurchase && !busy && (
+                <Button variant="outline" onClick={() => action("recover")}>
+                  重试原购买请求
+                </Button>
+              )}
+              {data.canRetryPreparation && !busy && (
+                <Button variant="outline" onClick={() => action("recover")}>
+                  继续原结算准备
+                </Button>
+              )}
+              {data.canReopenDraft && !busy && (
+                <Button variant="outline" onClick={() => action("reopen-ucp-draft", { actionId: crypto.randomUUID() })}>
+                  在原购物车重开结算
+                </Button>
+              )}
             </Alert>
           )}
           {data.cartCreationPending && tab !== "cart" && (
             <div className="fv-row" role="status">
               <span className="fv-muted">购物车暂未加载。</span>
+              {data.canRetryCart && (
+                <Button disabled={busy} onClick={() => action("retry-cart")}>
+                  恢复原购物车
+                </Button>
+              )}
               <Button
                 variant="ghost"
                 disabled={busy}
@@ -649,7 +698,7 @@ function StorefrontContent({
               setTab(value);
               if (value === "products" && !data.products) void browse();
               if (value === "orders") {
-                setOrderDetail(false);
+                setOrderDetail(undefined);
                 setShowOrderDetails(false);
               }
             }}
@@ -665,10 +714,7 @@ function StorefrontContent({
                     <ShoppingCart />
                     购物车 {count > 0 ? `(${count})` : ""}
                   </TabsTrigger>
-                  {(!data.capabilities?.ucp || data.capabilities.methods?.some(
-                    (method: { method: string; availability: string }) =>
-                      method.method === "commerce.orders.get" && method.availability === "supported",
-                  )) && (
+                  {(canListOrders || data.order || data.viewedOrder || orderDetail) && (
                     <TabsTrigger value="orders">
                       <Package />
                       我的订单
@@ -1146,7 +1192,7 @@ function StorefrontContent({
                           </Button>
                         ) : (
                           <div className="fv-stack">
-                            {data.checkout && (!ucpConfirmation || data.checkout.status === "incomplete") && (
+                            {data.checkout && !canceledDraft && (!ucpConfirmation || data.checkout.status === "incomplete") && (
                               <Button
                                 variant="outline"
                                 disabled={blocked}
@@ -1157,8 +1203,8 @@ function StorefrontContent({
                             )}
                             {ucpDraftAvailable && (
                               <div className="fv-stack">
-                                {(!ucpConfirmation || !data.checkout) && <Button disabled={blocked} onClick={() => shop({action:"prepare"})}>
-                                  {data.checkout ? "查看结算草稿" : "创建结算草稿"}
+                                {(!ucpConfirmation || !data.checkout || canceledDraft) && <Button disabled={blocked} onClick={() => shop({action:"prepare"})}>
+                                  {canceledDraft ? "重新创建结算草稿" : data.checkout ? "查看结算草稿" : "创建结算草稿"}
                                 </Button>}
                                 {data.checkout?.messages?.map((message:any,index:number) => (
                                   <p className="fv-muted" key={index}>{message.content}</p>
@@ -1169,7 +1215,7 @@ function StorefrontContent({
                                     expected_version:data.cart.version, patch:{email}, actionId:crypto.randomUUID(),
                                   })} />
                                 )}
-                                {data.checkout && (!ucpConfirmation || data.checkout.status === "incomplete" && !manualDelivery)
+                                {data.checkout && !canceledDraft && (!ucpConfirmation || data.checkout.status === "incomplete" && !manualDelivery)
                                     && data.capabilities.ucpFulfillment && ["US","CN"].includes(data.pricing.country) && (
                                   <AddressForm data={data} busy={blocked} action={action} saveLabel="保存到结算草稿"
                                     form={addressDraft&&addressDraft.cartId===data.cart.id?addressDraft.values:confirmedAddress}
@@ -1193,7 +1239,7 @@ function StorefrontContent({
                                 {ucpConfirmation && data.checkout && <UcpCheckoutActions data={data} busy={busy} action={action} now={now} />}
                               </div>
                             )}
-                            {(!data.capabilities?.ucp || ucpDraftAvailable && !ucpConfirmation) && <Button
+                            {!data.capabilities?.ucp && <Button
                               disabled={blocked || !data.purchaseReady}
                               onClick={() => {
                                 setTab("checkout");
@@ -1238,6 +1284,11 @@ function StorefrontContent({
                           ? "已提交的商品保留在订单中，不再占用购物车。"
                           : "去逛逛，选一件喜欢的商品。"}
                     </EmptyDescription>
+                    {data.cartCreationPending && data.canRetryCart && (
+                      <Button disabled={busy} onClick={() => action("retry-cart")}>
+                        恢复原购物车
+                      </Button>
+                    )}
                     <Button
                       disabled={busy}
                       onClick={() =>
@@ -1270,7 +1321,7 @@ function StorefrontContent({
                       onClick={() => {
                         setTab(locked ? "orders" : "cart");
                         if (locked) {
-                          setOrderDetail(false);
+                          setOrderDetail(undefined);
                           setShowOrderDetails(true);
                         }
                       }}
@@ -1601,7 +1652,7 @@ function StorefrontContent({
                               variant="outline"
                               onClick={() => {
                                 setTab("orders");
-                                setOrderDetail(false);
+                                setOrderDetail(undefined);
                                 setShowOrderDetails(true);
                               }}
                             >
@@ -1651,7 +1702,9 @@ function StorefrontContent({
                     variant="outline"
                     disabled={busy}
                     onClick={() => {
-                      if (showOrderDetails) void action("view");
+                      if (showOrderDetails && orderDetail)
+                        void readOrderDetail(orderDetail);
+                      else if (showOrderDetails) void action("view");
                       else {
                         ordersRequested.current = true;
                         void shop({ action: "orders" }).then((ok) => {
@@ -1677,13 +1730,16 @@ function StorefrontContent({
                         disabled={busy}
                         onClick={() => {
                           setShowOrderDetails(false);
-                          setOrderDetail(false);
+                          setOrderDetail(undefined);
                         }}
                       >
                         <ArrowLeft data-icon="inline-start" />
                         返回订单列表
                       </Button>
                     </div>
+                    {!selectedOrder && orderDetail && !error && (
+                      <p className="fv-muted" role="status">正在读取订单详情。</p>
+                    )}
                     {selectedOrder && (
                       <div className="fv-order-detail-layout">
                         <Card>
@@ -1724,12 +1780,12 @@ function StorefrontContent({
                       busy={busy}
                       open={async (orderId) => {
                         if (orderId === data.order?.id) {
-                          setOrderDetail(false);
+                          setOrderDetail(undefined);
                           setShowOrderDetails(true);
                         } else if (
-                          await shop({ action: "order-detail", orderId })
+                          await readOrderDetail(orderId)
                         ) {
-                          setOrderDetail(true);
+                          setOrderDetail(orderId);
                           setShowOrderDetails(true);
                         }
                       }}

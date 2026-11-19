@@ -111,6 +111,8 @@ export async function apply(
               value = await service.review(a.sessionId, a.flowId);
             if (operation === "prepare-purchase")
               value = await service.prepareUcpPurchase(a.sessionId, a.flowId, a.actionId);
+            if (operation === "reopen-ucp-draft")
+              value = await service.reopenUcpDraft(a.sessionId, a.flowId, a.actionId, request.signal);
             if (operation === "approve-handoff")
               value = await service.approveUcpHandoff(a.sessionId, a.flowId, a.challenge, a.actionId);
             if (operation === "confirm-ucp")
@@ -133,19 +135,15 @@ export async function apply(
               value = await service.discardCartAddition(a.sessionId, a.flowId);
             if (operation === "retry-cart")
               value = await service.retryCart(a.sessionId, a.flowId);
-            if (operation === "recover") {
-              await service.tool(
-                a.sessionId,
-                service.consultation.owns(a.flowId)
-                  ? "frontvia_consultation"
-                  : "frontvia_orders",
-                { flowId: a.flowId, action: "recover" },
-                "ui-recovery",
-                request.signal,
-              );
-              value = service.consultation.owns(a.flowId)
-                ? await service.consultation.view(a.sessionId, a.flowId)
-                : await service.view(a.sessionId, a.flowId, a.scopes);
+            if (operation === "recover" || operation === "recover-status") {
+              if (service.consultation.owns(a.flowId)) {
+                await service.tool(a.sessionId, "frontvia_consultation",
+                  { flowId: a.flowId, action: "recover" }, "ui-recovery", request.signal);
+                value = await service.consultation.view(a.sessionId, a.flowId);
+              } else {
+                await service.recoverFromOwner(a.sessionId, a.flowId, operation === "recover");
+                value = await service.view(a.sessionId, a.flowId, a.scopes);
+              }
             }
             result = { ok: true, value: value&&typeof value==="object"&&!Array.isArray(value)?{...value,identityRevision:pap.revision()}:value };
           } catch (e) {
