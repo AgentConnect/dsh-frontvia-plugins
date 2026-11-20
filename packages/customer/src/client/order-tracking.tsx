@@ -25,12 +25,12 @@ export function OrderTracking({ order }: { order: any }) {
       return line ? `${line.item.title} × ${item.quantity}` : undefined;
     }).filter(Boolean).join("、");
   }
-  return <section className="fv-stack" aria-label="物流与配送">
+  return <section className="fv-stack fv-order-logistics" aria-label="物流与配送">
     <h4>物流与配送</h4>
     {shipments.map((shipment: any) => {
       const latest = currentTrackingEvent(shipment.events);
       const tracking = shipment.tracking[0];
-      return <section key={shipment.id} className="fv-stack">
+      return <section key={shipment.id} className="fv-stack fv-order-package">
         <strong>{tracking ? [tracking.carrier, tracking.tracking_number].filter(Boolean).join(" · ") : "订单物流时间线"}</strong>
         <p>{states[latest.type] ?? latest.type} · <Time value={latest.occurred_at} /></p>
         {items(latest) && <p>{items(latest)}</p>}

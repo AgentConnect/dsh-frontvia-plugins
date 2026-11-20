@@ -183,24 +183,26 @@ function AddressForm({
     </form>
   );
 }
-function UcpCheckoutActions({data, busy, action, now}: {
+function UcpCheckoutActions({data, busy, action, now, orderView = false}: {
   data: any;
   busy: boolean;
   action: Action;
   now: number;
+  orderView?: boolean;
 }) {
   const checkout = data.checkout;
   const [challenge, setChallenge] = useState("");
   const [paired, setPaired] = useState(false);
   const [hostedWatch, setHostedWatch] = useState<{ id: string; until: number }>();
   const field = useId();
+  const pairing = useRef<HTMLDetailsElement>(null);
   const processing = checkout.status === "complete_in_progress";
   const hosted = checkout.hostedHandoff === true;
   const watchingHosted = hosted && !!hostedWatch && hostedWatch.id === checkout.id && hostedWatch.until > now;
   useEffect(() => {
     setChallenge("");
     setPaired(false);
-  }, [checkout.id]);
+  }, [checkout.id, checkout.handoff]);
   useEffect(() => {
     if ((!processing && !watchingHosted) || busy) return;
     const timer = setTimeout(() => {
@@ -214,12 +216,14 @@ function UcpCheckoutActions({data, busy, action, now}: {
   const editable = checkout.status === "incomplete";
   const mayPrepare = ["incomplete", "ready_for_complete", "requires_escalation"].includes(checkout.status);
   const submitBlocked = busy || data.pending;
+  const pairingCode = challenge.trim();
+  const canPair = !submitBlocked && /^[A-Za-z0-9_-]{43}$/.test(pairingCode);
   return <div className="fv-stack">
     {processing && <p role="status">购买处理中，正在核对原结算。</p>}
     {watchingHosted && <p role="status">正在核对原结算。付款后可回到这里查看订单。</p>}
     {checkout.status === "canceled" && <p role="status">本次结算已取消。</p>}
-    {checkout.status === "completed" && <p role="status">购买完成。</p>}
-    {!editable && amount && <p>结算合计 {money(amount)}</p>}
+    {!orderView && checkout.status === "completed" && <p role="status">购买完成。</p>}
+    {!orderView && !editable && amount && <p>结算合计 {money(amount)}</p>}
     {mayPrepare && checkout.canPrepare && !checkout.handoff && <Button disabled={submitBlocked || !checkout.buyer?.email || !amount}
       onClick={() => action("prepare-purchase", {actionId:crypto.randomUUID()})}>
       核对并继续
@@ -228,36 +232,44 @@ function UcpCheckoutActions({data, busy, action, now}: {
       onClick={() => action("confirm-ucp", {actionId:crypto.randomUUID()})}>
       确认购买 {money(amount)}
     </Button>}
-    {checkout.handoff && <div className="fv-stack">
-      <a href={checkout.handoff} target="_blank" rel="noopener noreferrer"
+    {checkout.handoff && <section className="fv-browser-handoff" aria-label="浏览器操作">
+      <a className="fv-button" href={checkout.handoff} target="_blank" rel="noopener noreferrer"
         onClick={() => {
           if (hosted) setHostedWatch({ id: checkout.id, until: Date.now() + 5 * 60_000 });
+          else if (pairing.current) {
+            setPaired(false);
+            pairing.current.open = true;
+          }
         }}>
         {checkout.status === "completed" ? "在浏览器查看订单与售后" : "在浏览器继续"}
       </a>
-      {!hosted && <form className="fv-stack" onSubmit={async event => {
-        event.preventDefault();
-        if (await action("approve-handoff", {challenge:challenge.trim(),actionId:crypto.randomUUID()})) {
-          setChallenge("");
-          setPaired(true);
-        }
-      }}>
-        <Field>
-          <FieldLabel htmlFor={field}>浏览器配对代码</FieldLabel>
-          <Input id={field} value={challenge} maxLength={43} autoComplete="off"
-            onChange={event => {setChallenge(event.target.value);setPaired(false);}} />
-        </Field>
-        <Button type="submit" variant="outline" disabled={busy || !/^[A-Za-z0-9_-]{43}$/.test(challenge.trim())}>
-          授权浏览器
-        </Button>
-      </form>}
-      {!hosted && paired && <p role="status">已授权，请回到原浏览器页面。</p>}
-    </div>}
+      {!hosted && <details ref={pairing} className="fv-browser-pairing">
+        <summary>浏览器要求配对时，输入代码</summary>
+        {paired ? <p className="fv-browser-paired" role="status">已授权，请回到浏览器查看。</p>
+        : <form className="fv-stack" onSubmit={async event => {
+          event.preventDefault();
+          if (canPair && await action("approve-handoff", {challenge:pairingCode,actionId:crypto.randomUUID()})) {
+            setChallenge("");
+            setPaired(true);
+          }
+        }}>
+          <Field>
+            <FieldLabel htmlFor={field}>浏览器配对代码</FieldLabel>
+            <Input id={field} value={challenge} maxLength={43} autoComplete="off" spellCheck={false}
+              aria-describedby={field+"-help"} onChange={event => setChallenge(event.target.value)} />
+            <p id={field+"-help"} className="fv-muted">复制浏览器页面上的配对代码，再粘贴到这里。</p>
+          </Field>
+          <Button type="submit" variant="outline" disabled={!canPair}>
+            授权浏览器
+          </Button>
+        </form>}
+      </details>}
+    </section>}
     {!hosted && checkout.handoff && mayPrepare && !editable && <Button variant="outline" disabled={submitBlocked}
       onClick={() => action("cancel-ucp-checkout", {actionId:crypto.randomUUID()})}>
       取消本次结算
     </Button>}
-    <Button variant="outline" disabled={busy} onClick={() => action("refresh-ucp-checkout")}>刷新结算状态</Button>
+    {!orderView && <Button variant="outline" disabled={busy} onClick={() => action("refresh-ucp-checkout")}>刷新结算状态</Button>}
   </div>;
 }
 function Logistics({ order }: { order: any }) {
@@ -1766,7 +1778,7 @@ function StorefrontContent({
                         </Card>
                         <div className="fv-stack">
                           {ucpConfirmation && data.checkout?.id === selectedOrder.checkout_id && (
-                            <UcpCheckoutActions data={data} busy={busy} action={action} now={now} />
+                            <UcpCheckoutActions data={data} busy={busy} action={action} now={now} orderView />
                           )}
                           {!orderDetail && !ucpConfirmation && (
                             <PaymentCard

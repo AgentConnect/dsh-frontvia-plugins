@@ -11,7 +11,7 @@ import {
   Truck,
 } from "lucide-react";
 import { orderStatus } from "./order-summary.js";
-import { Badge, Separator } from "./ui.js";
+import { Badge, Button, Separator } from "./ui.js";
 export const items = (v: any) =>
   Array.isArray(v)
     ? v
@@ -204,7 +204,8 @@ export function Order({ order, download }: { order: any; download?: (orderId: st
         </div>
       </dl>
       <Lines lines={order.lines} />
-      {order.messages?.some((m: any) => m.code === "digital_delivery_available") && download && <button type="button" disabled={downloadState === "busy"} onClick={() => void savePdf()}>下载已购 PDF</button>}
+      {order.messages?.some((m: any) => m.code === "digital_delivery_available") && download &&
+        <Button className="fv-order-download" disabled={downloadState === "busy"} onClick={() => void savePdf()}>下载已购 PDF</Button>}
       {downloadState === "failed" && <p role="alert">当前无法下载，请刷新原订单核对交付状态。</p>}
       {order.messages?.some((m: any) => m.code === "digital_delivery_revoked") && <p>下载权限已撤销</p>}
       {order.manual_deliveries?.items?.map((record: any) => (
