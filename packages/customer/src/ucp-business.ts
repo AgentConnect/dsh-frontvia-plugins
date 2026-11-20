@@ -98,6 +98,22 @@ function resource(value:any,etag?:string){
     ...(item.status?{can_start_new_attempt:item.status==='incomplete'||item.status==='canceled'}:{}),
     ...(item.order?.id && item.status === 'completed' ? {order_ids:[item.order.id]} : {})};
 }
+const paymentInfoPrefix = 'frontvia_order_payment_';
+const knownPaymentStatuses = new Set([
+  'paid', 'partially_refunded', 'refunded', 'authorized', 'requires_action',
+  'pending', 'failed', 'voided', 'not_required',
+]);
+function orderPayment(messages: unknown) {
+  if (!Array.isArray(messages)) return undefined;
+  const statuses = new Set<string>();
+  for (const message of messages) {
+    if (message?.type !== 'info' || typeof message.content !== 'string' ||
+        typeof message.code !== 'string' || !message.code.startsWith(paymentInfoPrefix)) continue;
+    const status = message.code.slice(paymentInfoPrefix.length);
+    if (knownPaymentStatuses.has(status)) statuses.add(status);
+  }
+  return statuses.size === 1 ? [...statuses][0] : undefined;
+}
 function isUuid(value: unknown): value is string {
   return typeof value === 'string' && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/.test(value);
 }
@@ -237,8 +253,15 @@ export async function requestUcp(method:string,params:Record<string,any>,operati
     data={items:result.items.map(({order_id}:any)=>({order_id})),page:{has_more:page.has_more,next_cursor:page.next_cursor}};
   }else {
     data=resource(result,response.etag);
-    if(id==='get_order')data.shipments=(result.fulfillment?.events??[]).map((event:any)=>({id:event.id,status:event.type,occurred_at:event.occurred_at,description:event.description,
-      tracking:event.tracking_number||event.tracking_url?[{carrier:event.carrier,tracking_number:event.tracking_number,tracking_url:event.tracking_url}]:[]}));
+    if(id==='get_order'){
+      data.shipments=(result.fulfillment?.events??[]).map((event:any)=>({id:event.id,status:event.type,occurred_at:event.occurred_at,description:event.description,
+        tracking:event.tracking_number||event.tracking_url?[{carrier:event.carrier,tracking_number:event.tracking_number,tracking_url:event.tracking_url}]:[]}));
+      const status = orderPayment(result.messages);
+      if (status) {
+        data.payment = { status };
+        if (status === 'not_required') data.payment_required = false;
+      }
+    }
   }
   if (path?.id && ['get_cart','get_checkout','update_checkout','cancel_checkout','prepare_checkout','complete_checkout','get_order'].includes(id)
       && data.id !== path.id) throw new Error('INVALID_UCP_RESPONSE');

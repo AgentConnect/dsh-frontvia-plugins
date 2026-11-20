@@ -12,7 +12,7 @@ const storeContext='com.frontvia.shopping.store_context';
 const orderHistory='com.frontvia.shopping.order_history';
 const metadata=(capability:string)=>({version,status:'success',capabilities:{[capability]:[{version}]}});
 const product={id:'product-1',title:'Mug',description:{plain:'Ceramic'},price_range:{min:{amount:1250,currency:'USD'},max:{amount:1250,currency:'USD'}},variants:[{id:'variant-1',title:'Blue',description:{plain:'Blue ceramic'},price:{amount:1250,currency:'USD'},sku:'MUG-BLUE',availability:{available:false},media:[{type:'image',url:'https://shop.example/mug.jpg',alt_text:'Blue mug'}],options:[{name:'Color',id:'blue',label:'Blue'}]}]};
-function fixture(cartOnly=false, fullFlow=false, hosted=false){
+function fixture(cartOnly=false, fullFlow=false, hosted=false, orderMessages?: unknown[]){
   let loseNext=false, dropCompleteBeforeAdmission=false, rejection: {status:number;code:string;version:string}|undefined;const receipts=new Map<string,any>();let effects=0;
   const calls:any[]=[],store={companyRef:'shop',companyId:fullFlow?'https://issuer.example':'https://shop.example',domain:'shop.example',name:'Shop',ucpCapabilities:['dev.ucp.shopping.fulfillment']};
   if (fullFlow && !hosted) store.ucpCapabilities.push(UCP_CHECKOUT_CONFIRMATION);
@@ -104,7 +104,7 @@ function fixture(cartOnly=false, fullFlow=false, hosted=false){
     else if(input.operationRef==='list_orders')body={ucp:metadata(orderHistory),items:[{order_id:orderId}],page:input.query?.cursor?{has_more:false,next_cursor:null}:{has_more:true,next_cursor:'opaque-next'}};
     else if(input.operationRef==='create_checkout'||input.operationRef==='get_checkout'||input.operationRef==='update_checkout')body={...cart,ucp:{version,payment_handlers:{}},id:'draft-1',status:'incomplete',links:[],messages:[{type:'error',code:'payment_method_unavailable',severity:'recoverable',content:'Payment is unavailable'}],...(input.operationRef==='update_checkout'?{buyer:input.body.buyer,fulfillment:input.body.fulfillment}:{})};
     else if(input.operationRef==='cancel_checkout')body={...cart,ucp:{version,payment_handlers:{}},id:'draft-1',status:'canceled',links:[]};
-    else if(input.operationRef==='get_order')body={...cart,id:fullFlow?orderId:'order-1',checkout_id:checkoutId,permalink_url:'https://shop.example/orders/order-1',line_items:cart.line_items.map((line:any)=>({...line,quantity:{original:line.quantity,total:line.quantity,fulfilled:line.quantity}})),fulfillment:{events:[{id:'shipment-event',type:'shipped',occurred_at:'2026-11-15T00:00:00Z',tracking_number:'track-1',tracking_url:'https://carrier.example/track-1',carrier:'Carrier',line_items:[{id:'line-1',quantity:1}]}]}};
+    else if(input.operationRef==='get_order')body={...cart,id:fullFlow?orderId:'order-1',checkout_id:checkoutId,permalink_url:'https://shop.example/orders/order-1',line_items:cart.line_items.map((line:any)=>({...line,quantity:{original:line.quantity,total:line.quantity,fulfilled:line.quantity}})),fulfillment:{events:[{id:'shipment-event',type:'shipped',occurred_at:'2026-11-15T00:00:00Z',tracking_number:'track-1',tracking_url:'https://carrier.example/track-1',carrier:'Carrier',line_items:[{id:'line-1',quantity:1}]}]},...(orderMessages?{messages:orderMessages}:{})};
     else if(input.operationRef==='get_cart')body=cart;
     else if(input.operationRef==='update_cart'){assert.equal(input.ifMatch,etag);etag='"v2"';cart={...cart,line_items:input.body.line_items.map((line:any)=>({...line,item:{...line.item,title:'Mug',price:1250},totals:[{type:'subtotal',amount:1250},{type:'total',amount:1250}]}))};body=cart;}
     else if(input.operationRef==='create_cart'){cart={...cart,line_items:input.body.line_items.map((line:any,index:number)=>({...line,id:`line-${index+1}`,item:{...line.item,title:'Mug',price:1250},totals:[{type:'subtotal',amount:1250},{type:'total',amount:1250}]}))};body=cart;}
@@ -194,6 +194,24 @@ test('standard Order quantities and fulfillment events project without inventing
  const f=fixture();const response:any=await f.transport.request('shop.example','commerce.orders.get',{order_id:'order-1'});
  assert.deepEqual(f.calls.at(-1),{operationRef:'get_order',path:{id:'order-1'}});
  const order=response.result.data;assert.equal(order.lines[0].quantity,1);assert.equal(order.checkout_id,'draft-1');assert.equal(order.shipments[0].status,'shipped');assert.equal(order.shipments[0].tracking[0].tracking_number,'track-1');assert.equal(order.payment,undefined);assert.equal(order.status,undefined);
+});
+
+test('UCP Order uses only an unambiguous Frontvia payment info code',async()=>{
+ const info=(status:string,type='info')=>({type,code:`frontvia_order_payment_${status}`,content:'Payment status'});
+ for(const [messages,status] of [
+  [[info('paid')],'paid'],
+  [[info('refunded')],'refunded'],
+  [[info('not_required')],'not_required'],
+  [[info('pending')],'pending'],
+  [[info('paid'),info('refunded')],undefined],
+  [[info('paid','error'),info('unknown'),{type:'info',content:'Payment received'}],undefined],
+ ] as const){
+  const f=fixture(false,false,false,[...messages]);const response:any=await f.transport.request('shop.example','commerce.orders.get',{order_id:'order-1'});
+  const order=response.result.data;
+  assert.deepEqual(order.payment,status===undefined?undefined:{status});
+  assert.equal(order.status,undefined);
+  assert.equal(order.payment_required,status==='not_required'?false:undefined);
+ }
 });
 
 async function connectFlow(f: ReturnType<typeof fixture>, sites: {siteId:string;storeId:string}[] = []) {
