@@ -1455,7 +1455,9 @@ export class CustomerService {
     if (checkout && f.order && !fetchedOrders.has(f.order.id))
       f.order = await order(f.order.id);
     if (includes("order-detail") && f.viewedOrder)
-      f.viewedOrder = await order(f.viewedOrder.id);
+      await order(f.viewedOrder.id);
+    if (f.viewedOrder && fetchedOrders.has(f.viewedOrder.id))
+      f.viewedOrder = fetchedOrders.get(f.viewedOrder.id);
     // Listing is explicit. Never turn a background refresh into N+1 history reads.
     if (Array.isArray(f.orders?.items))
       f.orders.items = f.orders.items.map(

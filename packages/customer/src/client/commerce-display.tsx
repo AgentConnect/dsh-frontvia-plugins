@@ -175,7 +175,7 @@ export function Order({ order, download }: { order: any; download?: (orderId: st
         <div>
           <h4>{summary.label}</h4>
           <p className="fv-description">
-            订单号：{order.display_number ?? order.id}
+            订单号：{order.display_number ?? order.label ?? order.id}
           </p>
         </div>
       </div>

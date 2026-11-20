@@ -196,6 +196,27 @@ test('standard Order quantities and fulfillment events project without inventing
  const order=response.result.data;assert.equal(order.lines[0].quantity,1);assert.equal(order.checkout_id,'draft-1');assert.equal(order.shipments[0].status,'shipped');assert.equal(order.shipments[0].tracking[0].tracking_number,'track-1');assert.equal(order.payment,undefined);assert.equal(order.status,undefined);
 });
 
+test('physical Order reads use standard quantities for the shipping progress', async () => {
+ const f = fixture();
+ const transport = f.sdk.request;
+ let fulfilled = 0;
+ f.sdk.request = async (input, signal) => {
+  const response = await transport(input, signal);
+  if (!input || typeof input !== 'object' || !('operationRef' in input) ||
+      input.operationRef !== 'get_order' || !response.ok) return response;
+  const { body } = response.value as any;
+  body.fulfillment.expectations = [{ method_type: 'shipping' }];
+  body.line_items[0].quantity.fulfilled = fulfilled > 0 ? 1 : 0;
+  body.line_items[1].quantity.fulfilled = fulfilled > 1 ? 1 : 0;
+  return response;
+ };
+ for (const [quantity, status] of [[0, 'unfulfilled'], [1, 'partially_shipped'], [2, 'shipped']] as const) {
+  fulfilled = quantity;
+  const response: any = await f.transport.request('shop.example', 'commerce.orders.get', { order_id: 'order-1' });
+  assert.equal(response.result.data.fulfillment_status, status);
+ }
+});
+
 test('UCP Order uses only an unambiguous Frontvia payment info code',async()=>{
  const info=(status:string,type='info')=>({type,code:`frontvia_order_payment_${status}`,content:'Payment status'});
  for(const [messages,status] of [

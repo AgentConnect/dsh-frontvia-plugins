@@ -36,6 +36,8 @@ export function orderStatus(order: any): {
   if (order.fulfillment_status === "delivered")return {label:"已交付 · 待商家确认",variant:"secondary"};
   if (order.fulfillment_status === "shipped")
     return { label: "已发货", variant: "secondary" };
+  if (order.fulfillment_status === "partially_shipped")
+    return { label: "部分发货", variant: "secondary" };
   if (["paid", "captured"].includes(payment))
     return { label: "已付款", variant: "success" };
   if (payment === "not_required" && order.payment_required === false)
@@ -55,10 +57,10 @@ export function storefrontOrders(data: any): any[] {
     const id = order?.id ?? order?.order_id;
     if (typeof id !== "string" || !id) continue;
     const detail =
-      data?.order?.id === id
-        ? data.order
-        : data?.viewedOrder?.id === id
-          ? data.viewedOrder
+      data?.viewedOrder?.id === id
+        ? data.viewedOrder
+        : data?.order?.id === id
+          ? data.order
           : undefined;
     rows.set(id, { ...order, ...detail, id });
   }
