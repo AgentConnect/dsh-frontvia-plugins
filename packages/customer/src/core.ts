@@ -1,4 +1,5 @@
 import { ucpCheckoutContact, ucpCheckoutDelivery, isUcpBusinessMethod, UcpCartRejection, isUcpResponseError, matchesUcpConfirmation, MOCK_HANDLER, UCP_PURCHASE_PROFILE, type CartRejection, type UcpPurchase } from "./ucp-business.js";
+import { projectOrderShipping } from "./order-tracking.js";
 import { viewScopes, type ViewScope } from "./view-scope.js";
 import { createHash, randomUUID } from "node:crypto";
 import {
@@ -215,6 +216,12 @@ export class CustomerService {
     if (this.pap.canAccess?.(f.connectionRef) === false)
       fail(this.pap.isCurrentIdentity?.(f.connectionRef) === true
         ? "PAP_DISCONNECTED" : "PERSONAL_ACCOUNT_CHANGED");
+    for (const order of [f.order, f.viewedOrder, ...(f.orders?.items ?? [])]) {
+      if (order?.ucp && !order.pending_items && Array.isArray(order.line_items) &&
+          order.fulfillment?.expectations?.some((entry: any) => entry.method_type === "shipping")) {
+        projectOrderShipping(order);
+      }
+    }
     const submitted = f.intent?.token && f.commands[f.intent.key];
     if (!f.pending && submitted && submitted.status === "done") {
       this.retireFailedConfirmation(f, submitted, submitted.result?.operation);

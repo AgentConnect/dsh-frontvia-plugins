@@ -13,10 +13,13 @@ try {
       import React from 'react';
       import {createRoot} from 'react-dom/client';
       import {Order} from './packages/customer/src/client/commerce-display.tsx';
-      import {orderShipments} from './packages/customer/src/order-tracking.ts';
+      import {buyerTrackingEvents, orderShipments, orderShippingProgress} from './packages/customer/src/order-tracking.ts';
       const root=createRoot(document.getElementById('root'));
-      window.showOrder=(events,code)=>root.render(<Order order={{ucp:{},id:'order',lines:[],line_items:[{id:'line',item:{title:'装订本'},quantity:{total:3,fulfilled:2}}],
-        messages:code?[{code}]:[],shipments:orderShipments(events)}} download={async()=>({bytes_base64:btoa('%PDF-synthetic')})}/>);
+      window.showOrder=(events,code)=>{
+        const order={ucp:{},id:'order',lines:[],line_items:[{id:'line',item:{title:'装订本'},quantity:{total:2,fulfilled:2}}],
+          fulfillment:{expectations:code?[]:[{method_type:'shipping'}],events:buyerTrackingEvents(events)}};
+        root.render(<Order order={{...order,pending_items:orderShippingProgress(order, events)?.pending,
+        messages:code?[{code}]:[],shipments:orderShipments(buyerTrackingEvents(events))}} download={async()=>({bytes_base64:btoa('%PDF-synthetic')})}/>);};
     `}});
   const page = await browser.newPage();
   await page.setContent('<div id="root"></div>');
@@ -25,13 +28,28 @@ try {
     occurred_at:'2026-11-'+day+'T00:00:00Z',line_items:[{id:'line',quantity:1}]});
   const a=entry('揽件','A','shipped',10), b=entry('派送失败记录','B','failed_attempt',12);
   const show=(events,code)=>page.evaluate(([e,c])=>window.showOrder(e,c),[events,code]);
+  await show([],null);
+  await page.getByText('装订本 × 2',{exact:true}).waitFor();
   await show([a,b,a],null);
+  await page.getByText('装订本 × 1',{exact:true}).last().waitFor();
   await page.getByText('已发货，暂无承运商轨迹。').waitFor();
   await page.getByText('待发商品',{exact:true}).waitFor();
   await page.getByText('查看轨迹（1）',{exact:true}).first().click();
   assert.equal(await page.locator('details[open]').count(),1);
   await show([a,b,entry('签收记录','B','delivered',14)],null);
   await page.getByText('已签收',{exact:false}).first().waitFor();
+  const corrections = [entry('r1','A','tracking_replaced',15),entry('c1','MID','tracking_corrected',15),
+    entry('r2','MID','tracking_replaced',16),entry('c2','NEW','tracking_corrected',16)];
+  await show([a,...corrections,entry('迟到旧号','A','delivered',17)],null);
+  assert.equal(await page.getByText('迟到旧号',{exact:true}).count(),0);
+  await page.getByText('测试承运商 · NEW',{exact:true}).waitFor();
+  assert.equal(await page.getByText('测试承运商 · A',{exact:true}).count(),0);
+  assert.equal(await page.getByText('测试承运商 · MID',{exact:true}).count(),0);
+  assert.equal(await page.getByText(/运单已更新/).count(),2);
+  assert.equal(await page.getByText('待发商品',{exact:true}).count(),1);
+  await show([a,...corrections,entry('二号包裹','B','shipped',17)],null);
+  await page.getByText('测试承运商 · B',{exact:true}).waitFor();
+  assert.equal(await page.getByText('待发商品',{exact:true}).count(),0);
   await show([],'digital_delivery_available');
   const download=page.waitForEvent('download');
   await page.getByRole('button',{name:'下载已购 PDF'}).click();

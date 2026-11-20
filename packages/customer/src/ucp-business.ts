@@ -1,4 +1,4 @@
-import {orderShipments} from './order-tracking.js';
+import {projectOrderShipping} from './order-tracking.js';
 import {createHash} from 'node:crypto';
 
 export type UcpOperation={operationRef:string;operationId?:string;channel?:string;method:string;pathParameters?:string[]};
@@ -116,17 +116,6 @@ function orderPayment(messages: unknown) {
   return statuses.size === 1 ? [...statuses][0] : undefined;
 }
 
-function orderShippingProgress(order: any) {
-  const expectations = order.fulfillment?.expectations;
-  if (!Array.isArray(expectations) || !expectations.some(entry => entry?.method_type === 'shipping')) return;
-  const quantities = order.line_items.map((line: any) => line.quantity);
-  if (!quantities.every((quantity: any) => Number.isSafeInteger(quantity?.total) &&
-    Number.isSafeInteger(quantity?.fulfilled) && quantity.fulfilled >= 0 && quantity.fulfilled <= quantity.total)) return;
-  const active = quantities.filter((quantity: any) => quantity.total > 0);
-  if (!active.length) return;
-  if (active.every((quantity: any) => quantity.fulfilled === quantity.total)) return 'shipped';
-  return active.some((quantity: any) => quantity.fulfilled > 0) ? 'partially_shipped' : 'unfulfilled';
-}
 function isUuid(value: unknown): value is string {
   return typeof value === 'string' && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/.test(value);
 }
@@ -267,9 +256,7 @@ export async function requestUcp(method:string,params:Record<string,any>,operati
   }else {
     data=resource(result,response.etag);
     if(id==='get_order'){
-      data.shipments = orderShipments(result.fulfillment?.events ?? []);
-      const progress = orderShippingProgress(result);
-      if (progress) data.fulfillment_status = progress;
+      projectOrderShipping(data);
       const status = orderPayment(result.messages);
       if (status) {
         data.payment = { status };
