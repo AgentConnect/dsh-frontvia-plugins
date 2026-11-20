@@ -259,17 +259,29 @@ export class CustomerService {
     signal?.throwIfAborted();
     if (method !== "capabilities.get")
       this.requireMethod(f, `commerce.${method}`);
+    const canRetryRead = /^(capabilities\.get|products\.(search|get)|variants\.(list|get)|carts\.get|checkouts\.get|orders\.(get|list))$/.test(method);
     const fetch = async () => {
+      const request = () => this.pap.request(
+        f.connectionRef,
+        `commerce.${method}`,
+        params,
+        signal,
+        /^(products|variants|carts|quotes|orders)\./.test(method)
+          ? { maxResponseBytes: 8 * 1024 * 1024 }
+          : undefined,
+      );
+      const isTemporarilyUnavailable = (error: unknown) =>
+        isUcpResponseError(error) && error.status === 503 &&
+          ["upstream_unavailable", "temporarily_unavailable"].includes(error.code ?? "") ||
+        error instanceof PapRequestError && error.detail.httpStatus === 503 &&
+          error.detail.businessRequest === "response_received";
       try {
-        const r = await this.pap.request(
-          f.connectionRef,
-          `commerce.${method}`,
-          params,
-          signal,
-          /^(products|variants|carts|quotes|orders)\./.test(method)
-            ? { maxResponseBytes: 8 * 1024 * 1024 }
-            : undefined,
-        );
+        const r = await request().catch((error: unknown) => {
+          if (!canRetryRead || !isTemporarilyUnavailable(error)) throw error;
+          signal?.throwIfAborted();
+          if (this.pap.canAccess?.(f.connectionRef) === false) fail("PERSONAL_ACCOUNT_CHANGED");
+          return request();
+        });
         if (r.error)
           fail(
             typeof r.error.data?.type === "string" &&
@@ -283,6 +295,8 @@ export class CustomerService {
       } catch (error) {
         this.capabilitiesCache.clear();
         this.catalogCache.clear();
+        if (canRetryRead && isTemporarilyUnavailable(error))
+          fail("READ_TEMPORARILY_UNAVAILABLE");
         throw error;
       }
     };

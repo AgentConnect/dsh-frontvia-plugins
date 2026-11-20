@@ -96,6 +96,7 @@ type UI = { flowId: string; sessionId: string; card: string; orderId?: string };
 const errorText: Record<string, string> = {
   INVALID_UI_REQUEST: "请求参数无效。",
   SHOPPING_VIEW_FAILED: "暂时无法读取购物进度，请刷新此卡片。",
+  READ_TEMPORARILY_UNAVAILABLE: "暂时无法读取商家最新状态。已付款时请稍后刷新订单，不要重复付款。",
   FRONTVIA_UI_ACTION_FAILED: "请求未完成，请先核对原操作结果，不要重复提交。",
   HANDOFF_UNAVAILABLE: "当前结算无法进行浏览器授权。",
   HANDOFF_APPROVAL_FAILED: "未能授权浏览器，请核对原页面显示的配对代码。",
@@ -403,6 +404,8 @@ export function apply(ctx: any) {
           setLiveRevision(accountRevision);
           setData(state.value);
           setViewError(state.error?.message ?? "");
+          if (state.value && !state.error)
+            setError((previous) => previous === "READ_TEMPORARILY_UNAVAILABLE" ? "" : previous);
           if (state.value && !dirtyForm.current) {
             setForm(contactFrom(state.value));
           }

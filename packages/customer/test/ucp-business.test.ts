@@ -222,6 +222,31 @@ async function connectFlow(f: ReturnType<typeof fixture>, sites: {siteId:string;
  const call=(args:object,command:string)=>service.tool('chat','frontvia_cart',{...args,flowId},command);
  return {service,flowId,call,vault,flow:()=>service.flow('chat',flowId)};
 }
+
+test('UCP order reads retry a transient 503 once without sending a mutation', async () => {
+ const f=fixture(false,true,true);
+ const {service,flowId}=await connectFlow(f);
+ const request=f.sdk.request.bind(f.sdk);
+ let statuses=[503],reads=0;
+ f.sdk.request=async(input,signal)=>{
+  if((input as {operationRef?:string})?.operationRef!=='get_order')return request(input,signal);
+  reads++;
+  const status=statuses.shift();
+  return status ? {ok:true,value:{status,body:{ucp:{version,status:'error'},messages:[{
+   type:'error',code:status===503?'upstream_unavailable':'invalid_session',
+  }]}}} : request(input,signal);
+ };
+ const order=()=>service.shopping('chat', flowId, {intent:{action:'order-detail',orderId:f.orderId},actionId:randomUUID()});
+ await order();
+ assert.equal(reads,2);
+ statuses=[503,503];
+ await assert.rejects(order(),/READ_TEMPORARILY_UNAVAILABLE/);
+ assert.equal(reads,4);
+ statuses=[400];
+ await assert.rejects(order(),/UCP_INVALID_SESSION/);
+ assert.equal(reads,5);
+ assert(f.calls.every(call=>!call.idempotencyKey));
+});
 async function cartFlow(f: ReturnType<typeof fixture>) {
  const flow=await connectFlow(f);
  await flow.call({action:'add',variant_id:'variant-1',quantity:1},'initial');
