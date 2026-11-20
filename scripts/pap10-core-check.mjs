@@ -10,7 +10,7 @@ import {readFile,writeFile,rename,rm,access} from 'node:fs/promises';
 import https from 'node:https';
 import {setTimeout as delay} from 'node:timers/promises';
 import {randomUUID} from 'node:crypto';
-import {loadPublicIdentity,loadPublicPap,publicIdentityPackage,publicPapPackage} from '../tests/support/public-pap.mjs';
+import {loadPublicIdentity,loadPublicPap} from '../tests/support/public-pap.mjs';
 
 const root=resolve(dirname(fileURLToPath(import.meta.url)),'..');
 const require=createRequire(join(root,'package.json'));
@@ -30,8 +30,6 @@ const take=result=>{
   return result.value;
 };
 async function run(){
-  assert.equal(publicPapPackage().source,'explicit-local','PAP 1.0 verification requires an explicit PAP candidate');
-  assert.equal(publicIdentityPackage().source,'explicit-local','PAP 1.0 verification requires an explicit Identity candidate');
   const selected=await loadPublicPap();
   const selectedIdentity=await loadPublicIdentity();
   const sources={papSource:selected.source,papVersion:selected.version,papRoot:selected.root,

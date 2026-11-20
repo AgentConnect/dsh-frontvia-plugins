@@ -9,8 +9,7 @@ Give Customer the shop domain in the conversation.
 
 Install the matching source candidates in the selected DSH profile using the
 [workspace packaging and installation instructions](../../README.md#本地开发).
-The UCP build requires PAP 0.2.1 with Store Context and Order History. The
-current registry build of PAP 0.2.1 lacks those operations.
+The UCP build requires PAP 0.2.2 with Store Context, Order History, verified order PDF downloads and Fulfillment parent negotiation.
 
 首次使用须在当前 Profile 的 `cordis.patch.yml` 中显式开启域名接入（合并到已有同 ID 配置）：
 
@@ -204,10 +203,7 @@ Checkout and Order through the same PAP identity.
 For isolated acceptance, `scripts/pap10-core-check.mjs` connects the real
 awiki.me Identity custodian to the independent Python wire runner through
 owner-only, temporary IPC. It signs only discovered operation targets and never
-exports private keys. Select the built PAP and Identity candidates with
-`FRONTVIA_PAP_TEST_PACKAGE_ROOT` and `FRONTVIA_IDENTITY_TEST_PACKAGE_ROOT`.
-The candidate versions are PAP 0.2.1, Identity 0.1.18 and Customer
-0.2.0, with the published Native Identity 0.2.6 binding. Set
+exports private keys. Install the workspace lockfile for PAP 0.2.2 and Identity 0.1.18. Set
 `FRONTVIA_CORE_ROOT` to the isolated Core checkout for the Claude
 Code/DeepSeek domain-browsing and DSH Web browser tests. Run
 `node --import tsx scripts/pap10-core-check.mjs --preflight` from the plugin

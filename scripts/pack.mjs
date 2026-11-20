@@ -16,7 +16,7 @@ const bundles = pluginPackages.map(({ folder, name }) => [
 const selectedPap=publicPapPackage(),selectedIdentity=publicIdentityPackage();
 const buildManifest = JSON.parse(await readFile(resolve("package.json"), "utf8"));
 const papManifest = JSON.parse(await readFile(resolve(selectedPap.root, "package.json"), "utf8"));
-assertPapPackage(papManifest, buildManifest.devDependencies["@awiki/dsh-pap"]);
+assertPapPackage(papManifest);
 const runtime = process.env.FRONTVIA_DSH_RUNTIME ?? buildManifest.devDependencies["@deepseek-ai/dsh"];
 if (runtime !== "0.2.2-rc.1" && runtime !== "0.2.2-rc.3") {
   throw new Error("FRONTVIA_DSH_RUNTIME must be 0.2.2-rc.1 or 0.2.2-rc.3");

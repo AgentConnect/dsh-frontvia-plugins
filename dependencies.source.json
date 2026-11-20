@@ -1,0 +1,10 @@
+{
+  "schema_version": 1,
+  "dependencies": {
+    "@awiki/dsh-pap": {
+      "repository": "https://github.com/AgentConnect/dsh-pap.git",
+      "commit": "a8004f8f10b8307f553f3771dc37550bd180b40c",
+      "pull_request": "https://github.com/AgentConnect/dsh-pap/pull/5"
+    }
+  }
+}

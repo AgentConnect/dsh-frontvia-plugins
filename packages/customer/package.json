@@ -52,7 +52,7 @@
     "@deepseek-ai/dsh-tools": "0.2.2-rc.1 || 0.2.2-rc.3",
     "react": "^18.3.1",
     "react-dom": "18.3.1",
-    "@awiki/dsh-pap": "^0.2.1",
+    "@awiki/dsh-pap": "^0.2.2",
     "@agent-network-protocol/dsh-anp-identity": ">=0.1.18"
   },
   "dependencies": {
@@ -64,7 +64,7 @@
   },
   "devDependencies": {
     "react-dom": "18.3.1",
-    "@awiki/dsh-pap": "0.2.1",
+    "@awiki/dsh-pap": "https://github.com/AgentConnect/dsh-pap.git#a8004f8f10b8307f553f3771dc37550bd180b40c",
     "@agent-network-protocol/dsh-anp-identity": "0.1.18"
   },
   "description": "Frontvia 商品、购物车、购买确认、订单及咨询插件。",
