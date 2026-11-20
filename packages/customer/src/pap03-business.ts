@@ -29,7 +29,7 @@ export class Pap03Business implements PapPort {
         if(typeof c.domain!=='string'||typeof c.companyId!=='string'||typeof c.companyRef!=='string')continue;
         const own=operations.filter((op:any)=>op.companyRef===c.companyRef);
         const methods=[...new Set([...own.filter((op:any)=>typeof op.operationId==='string').map((op:any)=>op.operationId),...ucpBusinessMethods(own),...(own.some((op:any)=>op.channel==='ucp')?['commerce.capabilities.get']:[])])];
-        const store={ucp:own.some((op:any)=>op.channel==='ucp'),ucpCapabilities:c.ucpCapabilities,domain:c.domain,companyRef:c.companyRef,companyId:c.companyId,name:c.name??c.domain,methods};
+        const store={ucp:own.some((op:any)=>op.channel==='ucp'),ucpCapabilities:c.ucpCapabilities,ucpFulfillmentParents:c.ucpFulfillmentParents,domain:c.domain,companyRef:c.companyRef,companyId:c.companyId,name:c.name??c.domain,methods};
         this.transport.restore(store);
         const ref=createHash('sha256').update(JSON.stringify([store.companyRef,this.epoch])).digest('hex');
         this.connections.set(ref,{store,identity:this.epoch});

@@ -62,6 +62,7 @@ import {
 import type { ShoppingAction } from "../shopping-action.js";
 type Action = (operation: string, payload?: any, onResult?: (value: any) => void) => Promise<boolean>;
 type Props = {
+  downloadOrder?: (orderId: string) => Promise<any>;
   draftScope: string;
   data: any;
   busy: boolean;
@@ -309,6 +310,7 @@ export function Storefront(props: Props) {
   return <StorefrontContent key={props.draftScope} {...props} />;
 }
 function StorefrontContent({
+  downloadOrder,
   data,
   busy,
   error,
@@ -819,6 +821,8 @@ function StorefrontContent({
                                 </CardHeader>
                                 <CardContent>
                                   <Attributes terms={v} />
+                                  {v.fulfillment?.methods?.filter((m: any) => m.type === "shipping" && typeof m.description?.plain === "string")
+                                    .map((m: any, i: number) => <p key={i}>{m.description.plain}</p>)}
                                   <p className="fv-price">
                                     {money(v.unit_price)}
                                   </p>
@@ -1757,7 +1761,7 @@ function StorefrontContent({
                             <CardTitle>商品与金额</CardTitle>
                           </CardHeader>
                           <CardContent>
-                            <Order order={selectedOrder} />
+                            <Order order={selectedOrder} download={downloadOrder} />
                           </CardContent>
                         </Card>
                         <div className="fv-stack">
@@ -1775,7 +1779,7 @@ function StorefrontContent({
                               cancel={() => action("order-cancel")}
                             />
                           )}
-                          {selectedOrder.status !== "canceled" &&
+                          {!selectedOrder.ucp && selectedOrder.status !== "canceled" &&
                             selectedOrder.fulfillment_kind !== "manual" && (
                               <Logistics order={selectedOrder} />
                             )}

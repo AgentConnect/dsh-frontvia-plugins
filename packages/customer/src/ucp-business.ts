@@ -1,3 +1,4 @@
+import {orderShipments} from './order-tracking.js';
 import {createHash} from 'node:crypto';
 
 export type UcpOperation={operationRef:string;operationId?:string;channel?:string;method:string;pathParameters?:string[]};
@@ -254,8 +255,7 @@ export async function requestUcp(method:string,params:Record<string,any>,operati
   }else {
     data=resource(result,response.etag);
     if(id==='get_order'){
-      data.shipments=(result.fulfillment?.events??[]).map((event:any)=>({id:event.id,status:event.type,occurred_at:event.occurred_at,description:event.description,
-        tracking:event.tracking_number||event.tracking_url?[{carrier:event.carrier,tracking_number:event.tracking_number,tracking_url:event.tracking_url}]:[]}));
+      data.shipments = orderShipments(result.fulfillment?.events ?? []);
       const status = orderPayment(result.messages);
       if (status) {
         data.payment = { status };

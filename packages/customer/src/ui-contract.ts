@@ -39,6 +39,7 @@ export const uiSchemas = {
   "recover-status": z.object(common).strict(),
   "retry-cart": z.object(common).strict(),
   "discard-cart-add": z.object(common).strict(),
+  "order-file": z.object({ ...common, order_id: z.uuid() }).strict(),
   original: z
     .object({ ...common, sourceRef: z.string().regex(/^[a-f0-9]{64}$/) })
     .strict(),

@@ -12,7 +12,7 @@ function value(result:ProductResult):unknown {
   return result.value;
 }
 type Operation={channel?:string;operationRef:string;companyRef:string;operationId?:string;method:string;queryParameters?:{name:string;required:boolean}[];pathParameters?:string[]};
-export type StoreConnection={ucp?:boolean;ucpCapabilities?:string[];domain:string;companyRef:string;companyId:string;name:string;methods:string[]};
+export type StoreConnection={ucp?:boolean;ucpCapabilities?:string[];ucpFulfillmentParents?:string[];domain:string;companyRef:string;companyId:string;name:string;methods:string[]};
 const allowedLegacyMethod = (method: string) => !method.startsWith('commerce.') ||
   method === 'commerce.capabilities.get' || method === 'commerce.connections.list';
 
@@ -42,14 +42,14 @@ export class Pap03Transport {
   constructor(private readonly pap:PapOperationsClient) {}
   async connect(domain:string):Promise<StoreConnection> {
     // The public client validates the domain and performs the only discovery.
-    const connected=value(await this.pap.connect(domain)) as {company?:{companyRef?:string;companyId?:string;name?:string;ucpCapabilities?:string[]}};
+    const connected=value(await this.pap.connect(domain)) as {company?:{companyRef?:string;companyId?:string;name?:string;ucpCapabilities?:string[];ucpFulfillmentParents?:string[]}};
     const companyRef=connected?.company?.companyRef;
     const companyId=connected?.company?.companyId;
     if(typeof companyRef!=='string'||!companyRef||typeof companyId!=='string'||!companyId)throw new Error('INVALID_PAP_COMPANY');
     const operations=await this.operations(companyRef);
     const methods=operations.map(o=>o.operationId).filter((m):m is string=>typeof m==='string'&&/^(commerce|consultation|knowledge)\./.test(m));
     const ucp=operations.some(op=>op.channel==='ucp');
-    const store={domain,companyRef,companyId,ucp,ucpCapabilities:connected.company?.ucpCapabilities,name:connected.company?.name??domain,methods:[...new Set(ucp
+    const store={domain,companyRef,companyId,ucp,ucpCapabilities:connected.company?.ucpCapabilities,ucpFulfillmentParents:connected.company?.ucpFulfillmentParents,name:connected.company?.name??domain,methods:[...new Set(ucp
       ? [...methods.filter(allowedLegacyMethod),...ucpBusinessMethods(operations),'commerce.capabilities.get']
       : methods)]};
     this.stores.set(domain,store);return {...store,methods:[...store.methods]};
@@ -90,13 +90,22 @@ export class Pap03Transport {
         data.methods?.some?.((entry:any)=>entry.method==='commerce.connections.list'&&entry.availability==='supported')
         ?['commerce.connections.list']:[])];
       const ucpFulfillment = ucpMethods.includes('commerce.checkouts.update')
-        && store.ucpCapabilities?.includes('dev.ucp.shopping.fulfillment')===true;
+        && store.ucpCapabilities?.includes('dev.ucp.shopping.fulfillment')===true
+        && (store.ucpFulfillmentParents === undefined || store.ucpFulfillmentParents.includes('dev.ucp.shopping.checkout'));
       const ucpCheckoutConfirmation = !!data.ucp_connection && store.ucpCapabilities?.includes(UCP_CHECKOUT_CONFIRMATION) === true
         && ['commerce.checkouts.create','commerce.checkouts.get','commerce.checkouts.update','commerce.checkouts.prepare',
           'commerce.checkouts.confirm','commerce.checkouts.handoff.approve','commerce.orders.get'].every(method=>ucpMethods.includes(method));
       return {result:{data:{...data,ucp:true,ucpSyntheticStoreId:store.companyRef,ucpFulfillment,ucpCheckoutConfirmation,
         methods:methods.map(method=>({method,availability:'supported'})),
         business_profiles:[{id:UCP_PURCHASE_PROFILE,availability:'supported'}]}}};
+    }
+    if (method === 'commerce.orders.file') {
+      const routes = operations.filter(op => op.operationId === method && op.method === 'GET' && op.channel === 'openapi');
+      if (routes.length !== 1) throw new Error('ORDER_FILE_UNAVAILABLE');
+      const { store_id, order_id, line_id, sha256 } = params;
+      if (![store_id,order_id,line_id,sha256].every(value => typeof value === 'string')) throw new Error('ORDER_FILE_UNAVAILABLE');
+      const response = await this.send({ operationRef: routes[0]!.operationRef, path: { store_id,order_id,line_id,sha256 } as Record<string,string> }, signal);
+      return response.body;
     }
     const ucp=await requestUcp(method,params,operations,request=>this.send(request,signal,true));
     if(ucp!==undefined)return ucp;

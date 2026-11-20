@@ -1,3 +1,4 @@
+import { OrderTracking } from "./order-tracking.js";
 import { CatalogTerms } from "./catalog-terms.js";
 import React from "react";
 import {
@@ -104,7 +105,20 @@ export function Totals({ totals }: { totals: any }) {
     </>
   );
 }
-export function Order({ order }: { order: any }) {
+export function Order({ order, download }: { order: any; download?: (orderId: string) => Promise<any> }) {
+  const [downloadState, setDownloadState] = React.useState<"idle" | "busy" | "failed">("idle");
+  async function savePdf() {
+    if (!download || downloadState === "busy") return;
+    setDownloadState("busy");
+    try {
+      const file = await download(order.id);
+      const bytes = Uint8Array.from(atob(file.bytes_base64), c => c.charCodeAt(0));
+      const url = URL.createObjectURL(new Blob([bytes], { type: "application/pdf" }));
+      const link = document.createElement("a"); link.href = url; link.download = "document.pdf"; link.click();
+      setTimeout(() => URL.revokeObjectURL(url), 10000);
+      setDownloadState("idle");
+    } catch { setDownloadState("failed"); }
+  }
   const manual = order.fulfillment_kind === "manual";
   const status = order.payment?.status;
   const paid = status === "paid" || status === "captured";
@@ -190,6 +204,9 @@ export function Order({ order }: { order: any }) {
         </div>
       </dl>
       <Lines lines={order.lines} />
+      {order.messages?.some((m: any) => m.code === "digital_delivery_available") && download && <button type="button" disabled={downloadState === "busy"} onClick={() => void savePdf()}>下载已购 PDF</button>}
+      {downloadState === "failed" && <p role="alert">当前无法下载，请刷新原订单核对交付状态。</p>}
+      {order.messages?.some((m: any) => m.code === "digital_delivery_revoked") && <p>下载权限已撤销</p>}
       {order.manual_deliveries?.items?.map((record: any) => (
         <section key={record.record_id} className="fv-stack">
           <h4>{record.kind === "correction" ? "交付更正" : "商家交付"}</h4>
@@ -210,7 +227,7 @@ export function Order({ order }: { order: any }) {
           <p className="fv-muted">{record.created_at}</p>
         </section>
       ))}
-      {order.shipments?.map((shipment: any) => (
+      {order.ucp ? <OrderTracking order={order} /> : order.shipments?.map((shipment: any) => (
         <section key={shipment.id} className="fv-stack">
           <h4>物流配送</h4>
           {shipment.tracking?.map((tracking: any, i: number) => (

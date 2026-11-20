@@ -1827,7 +1827,9 @@ export class CustomerService {
 
   private canPrepareUcpPurchase(f: Flow) {
     const handlers = f.checkout?.ucp?.payment_handlers?.[MOCK_HANDLER];
-    return f.capabilities?.ucpCheckoutConfirmation === true && Array.isArray(handlers) && handlers.length > 0;
+    const free = f.checkout?.totals?.grand_total?.amount_minor === "0" &&
+      f.checkout?.messages?.some((message: any) => message.code === "purchase_preparation_required");
+    return f.capabilities?.ucpCheckoutConfirmation === true && (free || Array.isArray(handlers) && handlers.length > 0);
   }
 
   private ucpEmailOnly(f: Flow) {
@@ -2144,6 +2146,25 @@ export class CustomerService {
     );
   }
   /** Owner-only: close the original payment at the merchant before canceling. */
+  async downloadOrderFile(sessionId: string, flowId: string, orderId: string, signal?: AbortSignal) {
+    const flow = this.flow(sessionId, flowId);
+    const result = await this.pap.request(flow.connectionRef, "commerce.orders.get", { order_id: orderId }, signal);
+    const order = result?.result?.data ?? result?.result;
+    if (order?.id !== orderId || !Array.isArray(order.messages)) return fail("ORDER_FILE_UNAVAILABLE");
+    const available = order.messages.filter((m: any) => m.code === "digital_delivery_available" && m.content_type === "markdown");
+    const link = available.length === 1 && /^\[Download the PDF\]\((https:\/\/[^()\s]+)\)$/.exec(available[0].content);
+    if (!link) return fail("ORDER_FILE_UNAVAILABLE");
+    const url = new URL(link[1]);
+    const parts = /^\/commerce\/v1\/stores\/([^/]+)\/orders\/([^/]+)\/lines\/([^/]+)\/files\/([a-f0-9]{64})$/.exec(url.pathname);
+    if (!parts || parts[1] !== flow.storeId || parts[2] !== orderId || !order.line_items?.some((line: any) => line.id === parts[3]))
+      return fail("ORDER_FILE_UNAVAILABLE");
+    const file = await this.pap.request(flow.connectionRef, "commerce.orders.file",
+      { store_id:flow.storeId, order_id:orderId, line_id:parts[3], sha256:parts[4] }, signal);
+    this.flow(sessionId, flowId);
+    if (file?.sha256 !== parts[4] || typeof file?.bytes_base64 !== "string") return fail("ORDER_FILE_UNAVAILABLE");
+    return { bytes_base64:file.bytes_base64 };
+  }
+
   async cancelOrder(sessionId: string, flowId: string) {
     this.views.clear();
     return this.serial
