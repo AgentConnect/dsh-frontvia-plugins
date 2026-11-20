@@ -94,6 +94,9 @@ export const inject = [
 ];
 type UI = { flowId: string; sessionId: string; card: string; orderId?: string };
 const errorText: Record<string, string> = {
+  INVALID_UI_REQUEST: "请求参数无效。",
+  SHOPPING_VIEW_FAILED: "暂时无法读取购物进度，请刷新此卡片。",
+  FRONTVIA_UI_ACTION_FAILED: "请求未完成，请先核对原操作结果，不要重复提交。",
   HANDOFF_UNAVAILABLE: "当前结算无法进行浏览器授权。",
   HANDOFF_APPROVAL_FAILED: "未能授权浏览器，请核对原页面显示的配对代码。",
   UCP_HANDOFF_AUTHORIZATION_REQUIRED: "配对代码无效或已过期，请回到原浏览器页面刷新。",
@@ -208,6 +211,11 @@ const baseContactFields = [
   },
 ] as const;
 type Contact = Record<(typeof baseContactFields)[number]["key"], string>;
+function errorLabel(error: string, fallback: string) {
+  const [code, referenceId] = error.split(":");
+  const label = errorText[code];
+  return label && referenceId ? `${label} 排查编号：${referenceId}` : label ?? fallback;
+}
 const blankContact: Contact = {
   phone: "",
   recipient: "",
@@ -242,7 +250,13 @@ export function apply(ctx: any) {
         if(identityRevision&&['IDENTITY_CHANGED','PERSONAL_ACCOUNT_CHANGED','PAP_PERMISSION_DENIED'].includes(r.error.code)){
           identityRevision='';window.dispatchEvent(new Event('frontvia-public-identity-change'));
         }
-        throw new Error(r.error.code);
+        const referenceId = (r.error.details as { referenceId?: unknown }).referenceId;
+        const code = r.error.code;
+        throw new Error(
+          (code === "SHOPPING_VIEW_FAILED" || code === "FRONTVIA_UI_ACTION_FAILED") &&
+            typeof referenceId === "string" && /^[a-f0-9-]{36}$/.test(referenceId)
+            ? `${code}:${referenceId}` : code,
+        );
       }
       const revision=r.value?.identityRevision;
       if(typeof revision==='string'){
@@ -581,7 +595,7 @@ export function apply(ctx: any) {
             data={data}
             busy={!!busy}
             error={
-              error ? (errorText[error] ?? "暂时无法完成，请稍后重试。") : ""
+              error ? errorLabel(error, "暂时无法完成，请稍后重试。") : ""
             }
             errorCode={error}
             action={action}
@@ -659,7 +673,7 @@ export function apply(ctx: any) {
                 <Alert variant="destructive">
                   <Info aria-hidden />
                   <AlertDescription>
-                    {errorText[error] ?? error}
+                    {errorLabel(error, error)}
                     {!data && (
                       <div>
                         <Button

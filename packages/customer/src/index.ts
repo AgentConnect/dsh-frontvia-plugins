@@ -1,18 +1,16 @@
 import type { Context } from "@deepseek-ai/cordis";
 import { credentialRef } from "@deepseek-ai/dsh-credentials";
-import {
-  clientRequestSchema,
-  type ConnectionRpcResult,
-} from "@deepseek-ai/dsh-client-connection";
+import { clientRequestSchema } from "@deepseek-ai/dsh-client-connection";
 import type {} from "@awiki/dsh-pap/plugin";
 import {Pap03Business} from "./pap03-business.js";
-import {PapError,fail,type Secrets} from "./state.js";
+import {fail,type Secrets} from "./state.js";
 import {openProfileVault,profileStorage,readProfileConfig} from "./profile.js";
 import type {} from "@deepseek-ai/dsh-app-boot";
 import { join } from "node:path";
 import { CustomerService, type CustomerConfig } from "./core.js";
 import { tools, guidance } from "./tools.js";
 import { uiSchemas } from "./ui-contract.js";
+import { runUiRequest } from "./ui-request.js";
 export const name = "dsh-frontvia-customer";
 export const inject = [
   "pap",
@@ -69,9 +67,7 @@ export async function apply(
           }
           if (message.method !== `frontvia-customer/${operation}`)
             return new Response(null, { status: 400 });
-          let result: ConnectionRpcResult<unknown>;
-          try {
-            const a = uiSchemas[operation].parse(message.payload) as any;
+          const result = await runUiRequest(operation, message.payload, async (a: any) => {
             let value: any;
             await pap.refresh();
             if (operation === "identity-status") value = pap.identityStatus();
@@ -145,20 +141,8 @@ export async function apply(
                 value = await service.view(a.sessionId, a.flowId, a.scopes);
               }
             }
-            result = { ok: true, value: value&&typeof value==="object"&&!Array.isArray(value)?{...value,identityRevision:pap.revision()}:value };
-          } catch (e) {
-            result = {
-              ok: false,
-              error: {
-                details: {},
-                code: e instanceof PapError ? e.code : "INVALID_UI_REQUEST",
-                message:
-                  e instanceof PapError
-                    ? e.code
-                    : "请求未完成，请检查输入后重试",
-              },
-            };
-          }
+            return value&&typeof value==="object"&&!Array.isArray(value)?{...value,identityRevision:pap.revision()}:value;
+          });
           return Response.json(
             { type: "server-response", rpcId: message.rpcId, result },
             { headers: { "cache-control": "no-store" } },
