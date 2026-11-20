@@ -1,4 +1,5 @@
 import React from "react";
+import { currentTrackingEvent } from "../order-tracking.js";
 
 const states: Record<string, string> = {
   processing: "备货中", shipped: "已发货", in_transit: "运输中", tracking_update: "轨迹更新",
@@ -27,7 +28,7 @@ export function OrderTracking({ order }: { order: any }) {
   return <section className="fv-stack" aria-label="物流与配送">
     <h4>物流与配送</h4>
     {shipments.map((shipment: any) => {
-      const latest = shipment.events[0];
+      const latest = currentTrackingEvent(shipment.events);
       const tracking = shipment.tracking[0];
       return <section key={shipment.id} className="fv-stack">
         <strong>{tracking ? [tracking.carrier, tracking.tracking_number].filter(Boolean).join(" · ") : "订单物流时间线"}</strong>

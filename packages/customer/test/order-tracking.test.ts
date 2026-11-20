@@ -26,3 +26,16 @@ test("a shipped package without carrier scans remains visible", () => {
   const html = renderToStaticMarkup(createElement(OrderTracking, {order:{shipments:orderShipments([node("shipped","shipped",10,"box")]),line_items:[]}}));
   assert(html.includes("暂无承运商轨迹"));
 });
+test("recording an already delivered waybill preserves its carrier status and event chronology", () => {
+  const shipments = orderShipments([
+    node("corrected", "tracking_corrected", 21, "historical"),
+    node("recorded", "shipped", 20, "historical"),
+    node("signed", "delivered", 18, "historical"),
+    node("transit", "in_transit", 17, "historical"),
+  ]);
+  assert.equal(shipments[0]?.status, "delivered");
+  assert.equal(shipments[0]?.occurred_at, "2026-11-18T01:00:00Z");
+  assert.deepEqual(shipments[0]?.events.map(event => event.id), ["corrected", "recorded", "signed", "transit"]);
+  const html = renderToStaticMarkup(createElement(OrderTracking, { order: { shipments } }));
+  assert.match(html, /historical<\/strong><p>已签收/);
+});
