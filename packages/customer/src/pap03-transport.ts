@@ -40,12 +40,13 @@ function storeContext(body: any) {
 export class Pap03Transport {
   private stores=new Map<string,StoreConnection>();
   constructor(private readonly pap:PapOperationsClient) {}
-  async connect(domain:string):Promise<StoreConnection> {
+  async connect(domain:string, expected?:StoreConnection):Promise<StoreConnection> {
     // The public client validates the domain and performs the only discovery.
     const connected=value(await this.pap.connect(domain)) as {company?:{companyRef?:string;companyId?:string;name?:string;ucpCapabilities?:string[];ucpFulfillmentParents?:string[]}};
     const companyRef=connected?.company?.companyRef;
     const companyId=connected?.company?.companyId;
     if(typeof companyRef!=='string'||!companyRef||typeof companyId!=='string'||!companyId)throw new Error('INVALID_PAP_COMPANY');
+    if(expected && (expected.companyRef!==companyRef || expected.companyId!==companyId)) throw new PapError('PAP_STORE_CHANGED');
     const operations=await this.operations(companyRef);
     const methods=operations.map(o=>o.operationId).filter((m):m is string=>typeof m==='string'&&/^(commerce|consultation|knowledge)\./.test(m));
     const ucp=operations.some(op=>op.channel==='ucp');
@@ -60,9 +61,9 @@ export class Pap03Transport {
     if(!Array.isArray(operations))throw new Error('INVALID_PAP_OPERATIONS');
     return operations.filter((o):o is Operation=>!!o&&typeof o==='object'&&o.companyRef===company&&typeof o.operationRef==='string'&&typeof o.method==='string');
   }
-  async request(domain:string,method:string,params:Record<string,unknown>,signal?:AbortSignal):Promise<unknown> {
+  async request(target:string|StoreConnection,method:string,params:Record<string,unknown>,signal?:AbortSignal):Promise<unknown> {
     signal?.throwIfAborted();
-    const store=this.stores.get(domain)??await this.connect(domain);
+    const store=typeof target==='string' ? this.stores.get(target)??await this.connect(target) : target;
     if(!/^(commerce|consultation|knowledge)\./.test(method))throw new Error('METHOD_NOT_ADVERTISED');
     const operations=await this.operations(store.companyRef);
     const ucpMethods=ucpBusinessMethods(operations);
@@ -101,7 +102,8 @@ export class Pap03Transport {
     }
     if (method === 'commerce.orders.file') {
       const routes = operations.filter(op => op.operationId === method && op.method === 'GET' && op.channel === 'openapi');
-      if (routes.length !== 1) throw new Error('ORDER_FILE_UNAVAILABLE');
+      if (routes.length === 0) throw new PapError('ORDER_FILE_ROUTE_MISSING');
+      if (routes.length !== 1) throw new PapError('ORDER_FILE_UNAVAILABLE');
       const { store_id, order_id, line_id, sha256 } = params;
       if (![store_id,order_id,line_id,sha256].every(value => typeof value === 'string')) throw new Error('ORDER_FILE_UNAVAILABLE');
       const response = await this.send({ operationRef: routes[0]!.operationRef, path: { store_id,order_id,line_id,sha256 } as Record<string,string> }, signal);

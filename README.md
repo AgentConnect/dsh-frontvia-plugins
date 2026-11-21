@@ -95,7 +95,7 @@ pnpm pack:local
 node --import tsx scripts/pap10-core-check.mjs --preflight
 ```
 
-PAP 0.2.2 上架 npm 后，从此分支运行以下命令，把两个开发依赖切回公开包并生成 registry 锁文件。删除临时的 `dependencies.source.json` 与 `pnpm-workspace.yaml` 中仅供 PAP Git 构建使用的 `onlyBuiltDependencies` 项。在新的检出中重复上方命令，确认 PAP 的 `source` 为 `registry`，再验收已购 PDF 摘要、全额退款撤权及 Fulfillment 协商。
+PAP 0.2.2 上架 npm 后，从此分支运行以下命令，把两个开发依赖切回公开包并生成 registry 锁文件。删除临时的 `dependencies.source.json` 与 `pnpm-workspace.yaml` 中仅供 PAP Git 构建使用的 `onlyBuiltDependencies` 项。在新的检出中重复上方命令，确认 PAP 的 `source` 为 `registry`，再验收已购 PDF 摘要、全额退款撤权及 Fulfillment 协商。PDF 下载须覆盖已有测试 Profile。使用升级前已连接店铺且目录尚无下载操作的 Profile，重启现有会话，刷新原订单后直接下载，再核对退款撤权。
 
 ```sh
 npm pkg set 'devDependencies.@awiki/dsh-pap=0.2.2'

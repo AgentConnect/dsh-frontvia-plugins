@@ -12,8 +12,8 @@ importers:
         specifier: 0.1.18
         version: 0.1.18(@deepseek-ai/cordis@4.1.0)(@deepseek-ai/dsh-api-remotes@0.2.2-rc.1(@deepseek-ai/cordis@4.1.0)(@deepseek-ai/dsh-scope@0.2.2-rc.1(@deepseek-ai/cordis@4.1.0)))(@deepseek-ai/dsh-client-connection@0.2.2-rc.1(@deepseek-ai/cordis@4.1.0)(@deepseek-ai/dsh-scope@0.2.2-rc.1(@deepseek-ai/cordis@4.1.0)))(@deepseek-ai/dsh-client-ui-layout@0.2.2-rc.1(@deepseek-ai/cordis@4.1.0))(@deepseek-ai/dsh-client-ui-renderer@0.2.2-rc.1(@deepseek-ai/cordis@4.1.0))(@deepseek-ai/dsh-client-ui-settings@0.2.2-rc.1(@deepseek-ai/cordis@4.1.0))(@deepseek-ai/dsh-credentials@0.2.2-rc.1(@deepseek-ai/cordis@4.1.0))(@deepseek-ai/dsh-system-prompt@0.2.2-rc.1(@deepseek-ai/cordis@4.1.0)(@deepseek-ai/dsh-llm@0.2.2-rc.1(@deepseek-ai/cordis@4.1.0))(@deepseek-ai/dsh-scope@0.2.2-rc.1(@deepseek-ai/cordis@4.1.0)))(@deepseek-ai/dsh-tools@0.2.2-rc.1(71e9b8099add9aaf7bb42662f07c41a3))(@deepseek-ai/dsh-typert-protocol@0.2.2-rc.1(@deepseek-ai/cordis@4.1.0))(react@18.3.1)
       '@awiki/dsh-pap':
-        specifier: https://github.com/AgentConnect/dsh-pap.git#a8004f8f10b8307f553f3771dc37550bd180b40c
-        version: https://codeload.github.com/AgentConnect/dsh-pap/tar.gz/a8004f8f10b8307f553f3771dc37550bd180b40c(692c52e85753a53aa0e029bdcbfd62f7)
+        specifier: https://github.com/AgentConnect/dsh-pap.git#562ea445ca4374217b6e9837bed2536a84763b30
+        version: https://codeload.github.com/AgentConnect/dsh-pap/tar.gz/562ea445ca4374217b6e9837bed2536a84763b30(692c52e85753a53aa0e029bdcbfd62f7)
       '@deepseek-ai/cordis':
         specifier: 4.1.0
         version: 4.1.0(@deepseek-ai/cordis-plugin-include@1.1.0)(@deepseek-ai/cordis-plugin-loader@1.1.0)
@@ -118,8 +118,8 @@ importers:
         specifier: 0.1.18
         version: 0.1.18(@deepseek-ai/cordis@4.1.0)(@deepseek-ai/dsh-api-remotes@0.2.2-rc.1(@deepseek-ai/cordis@4.1.0)(@deepseek-ai/dsh-scope@0.2.2-rc.1(@deepseek-ai/cordis@4.1.0)))(@deepseek-ai/dsh-client-connection@0.2.2-rc.1(@deepseek-ai/cordis@4.1.0)(@deepseek-ai/dsh-scope@0.2.2-rc.1(@deepseek-ai/cordis@4.1.0)))(@deepseek-ai/dsh-client-ui-layout@0.2.2-rc.1(@deepseek-ai/cordis@4.1.0))(@deepseek-ai/dsh-client-ui-renderer@0.2.2-rc.1(@deepseek-ai/cordis@4.1.0))(@deepseek-ai/dsh-client-ui-settings@0.2.2-rc.1(@deepseek-ai/cordis@4.1.0))(@deepseek-ai/dsh-credentials@0.2.2-rc.1(@deepseek-ai/cordis@4.1.0))(@deepseek-ai/dsh-system-prompt@0.2.2-rc.1(@deepseek-ai/cordis@4.1.0)(@deepseek-ai/dsh-llm@0.2.2-rc.1(@deepseek-ai/cordis@4.1.0))(@deepseek-ai/dsh-scope@0.2.2-rc.1(@deepseek-ai/cordis@4.1.0)))(@deepseek-ai/dsh-tools@0.2.2-rc.1(71e9b8099add9aaf7bb42662f07c41a3))(@deepseek-ai/dsh-typert-protocol@0.2.2-rc.1(@deepseek-ai/cordis@4.1.0))(react@18.3.1)
       '@awiki/dsh-pap':
-        specifier: https://github.com/AgentConnect/dsh-pap.git#a8004f8f10b8307f553f3771dc37550bd180b40c
-        version: https://codeload.github.com/AgentConnect/dsh-pap/tar.gz/a8004f8f10b8307f553f3771dc37550bd180b40c(692c52e85753a53aa0e029bdcbfd62f7)
+        specifier: https://github.com/AgentConnect/dsh-pap.git#562ea445ca4374217b6e9837bed2536a84763b30
+        version: https://codeload.github.com/AgentConnect/dsh-pap/tar.gz/562ea445ca4374217b6e9837bed2536a84763b30(692c52e85753a53aa0e029bdcbfd62f7)
       react-dom:
         specifier: 18.3.1
         version: 18.3.1(react@18.3.1)
@@ -219,8 +219,8 @@ packages:
       zod:
         optional: true
 
-  '@awiki/dsh-pap@https://codeload.github.com/AgentConnect/dsh-pap/tar.gz/a8004f8f10b8307f553f3771dc37550bd180b40c':
-    resolution: {tarball: https://codeload.github.com/AgentConnect/dsh-pap/tar.gz/a8004f8f10b8307f553f3771dc37550bd180b40c}
+  '@awiki/dsh-pap@https://codeload.github.com/AgentConnect/dsh-pap/tar.gz/562ea445ca4374217b6e9837bed2536a84763b30':
+    resolution: {tarball: https://codeload.github.com/AgentConnect/dsh-pap/tar.gz/562ea445ca4374217b6e9837bed2536a84763b30}
     version: 0.2.2
     engines: {dsh: 0.2.2-rc.1 || 0.2.2-rc.3, node: ^22.19.0 || >=24.0.0}
     peerDependencies:
@@ -4816,7 +4816,7 @@ snapshots:
     optionalDependencies:
       zod: 4.3.6
 
-  '@awiki/dsh-pap@https://codeload.github.com/AgentConnect/dsh-pap/tar.gz/a8004f8f10b8307f553f3771dc37550bd180b40c(692c52e85753a53aa0e029bdcbfd62f7)':
+  '@awiki/dsh-pap@https://codeload.github.com/AgentConnect/dsh-pap/tar.gz/562ea445ca4374217b6e9837bed2536a84763b30(692c52e85753a53aa0e029bdcbfd62f7)':
     dependencies:
       '@deepseek-ai/cordis': 4.1.0(@deepseek-ai/cordis-plugin-include@1.1.0)(@deepseek-ai/cordis-plugin-loader@1.1.0)
       proper-lockfile: 4.1.2

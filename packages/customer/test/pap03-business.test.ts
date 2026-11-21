@@ -35,6 +35,67 @@ test('public business projection restores the same identity/domain connection af
  assert.equal(restarted.canAccess(connectionRef),true);assert.equal(restarted.sites()[0].domain,'shop.example');
  await restarted.request(connectionRef,'commerce.products.search',{});assert.equal(f.connects.length,1);assert.equal(f.calls.length,1);
 });
+test('an old Profile rediscovers its order PDF route and respects a later refund',async()=>{
+ const f=fixture(),s=shopping(f);
+ const original=await s.service().connect('chat','shop.example');
+ const connect=f.sdk.connect, operations=f.sdk.operations, request=f.sdk.request;
+ const orderId='00000000-0000-4000-8000-000000000001';
+ const digest='a'.repeat(64), bytes='JVBERi0xLjQ=';
+ let discovered=false,revoked=false;
+ f.sdk.connect=async domain=>{
+  const result=await connect(domain);
+  discovered=result.ok;
+  return result;
+ };
+ f.sdk.operations=async()=>{
+  const result=await operations();
+  assert(result.ok && Array.isArray(result.value));
+  return {ok:true,value:[
+    ...result.value,
+    {companyRef:'company',operationRef:'order',operationId:'get_order',channel:'ucp',method:'GET'},
+    ...(discovered?[{companyRef:'company',operationRef:'file',operationId:'commerce.orders.file',channel:'openapi',method:'GET'}]:[]),
+  ]};
+ };
+ f.sdk.request=async input=>{
+  const ref=(input as {operationRef:string}).operationRef;
+  if(ref!=='file'&&ref!=='order')return request(input);
+  f.calls.push(input);
+  const body=ref==='file'?{sha256:digest,bytes_base64:bytes}:{
+   id:orderId,currency:'CNY',ucp:{version:'2026-08-25',status:'success'},
+   line_items:[{id:'line',item:{id:'pdf',title:'Purchased PDF',price:100},quantity:{total:1}}],
+   totals:[{type:'total',amount:100}],
+   messages:[revoked?{code:'digital_delivery_revoked'}:{code:'digital_delivery_available',content_type:'markdown',
+     content:`[Download the PDF](https://shop.example/commerce/v1/stores/store/orders/${orderId}/lines/line/files/${digest})`}],
+  };
+  return {ok:true,value:{status:200,body}};
+ };
+ const pap=new Pap03Business(f.sdk);
+ await pap.refresh();
+ const restored=new CustomerService({dataDir:'unused',sites:[]},pap,{
+  keys:prefix=>[...s.saved.keys()].filter(key=>key.startsWith(prefix)),
+  get:key=>structuredClone(s.saved.get(key)),
+  set:(key,value)=>{s.saved.set(key,structuredClone(value));},
+ });
+ assert.equal(f.connects.length,1);
+ assert.deepEqual(await restored.downloadOrderFile('chat',original.flowId,orderId),{bytes_base64:bytes});
+ assert.deepEqual(f.connects,['shop.example','shop.example']);
+ assert.deepEqual(f.calls.at(-1),{operationRef:'file',path:{store_id:'store',order_id:orderId,line_id:'line',sha256:digest}});
+ revoked=true;
+ await assert.rejects(restored.downloadOrderFile('chat',original.flowId,orderId),{code:'ORDER_FILE_UNAVAILABLE'});
+ assert.equal(f.calls.filter(call=>call.operationRef==='file').length,1);
+ assert.equal(f.connects.length,2);
+});
+
+test('missing PDF routes do not allow a restored flow to switch shop',async()=>{
+ const f=fixture(),first=new Pap03Business(f.sdk);
+ const {connectionRef}=await first.connect('shop.example');
+ const restored=new Pap03Business(f.sdk);
+ await restored.refresh();
+ f.sdk.connect=async()=>({ok:true,value:{company:{companyRef:'replacement',companyId:'https://shop.example'}}});
+ await assert.rejects(restored.request(connectionRef,'commerce.orders.file',{}),{code:'PAP_STORE_CHANGED'});
+ assert.equal(f.calls.length,0);
+});
+
 test('public identity switch or revoked access prevents old flow reads and dispatch',async()=>{
  for(const revoke of [false,true]){
   const f=fixture(),business=new Pap03Business(f.sdk);const {connectionRef}=await business.connect('shop.example');

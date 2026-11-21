@@ -39,7 +39,7 @@
     "tsx": "4.20.6",
     "typescript": "5.9.3",
     "zod": "4.3.6",
-    "@awiki/dsh-pap": "https://github.com/AgentConnect/dsh-pap.git#a8004f8f10b8307f553f3771dc37550bd180b40c",
+    "@awiki/dsh-pap": "https://github.com/AgentConnect/dsh-pap.git#562ea445ca4374217b6e9837bed2536a84763b30",
     "@agent-network-protocol/dsh-anp-identity": "0.1.18"
   }
 }
