@@ -8,7 +8,7 @@ Frontvia 业务插件支持商品、购物车、地址、报价、订单和咨�
 | 公共 PAP | `@awiki/dsh-pap`；发现、Session、请求签名和一次操作批准 |
 | Customer | 本仓库 `packages/customer`；业务工具、卡片、报价核对及原 operation 恢复 |
 
-本分支要求 PAP 0.2.2 的订单 PDF 下载和 Fulfillment 父能力协商。锁文件暂时使用 PAP #5 的固定 Git 提交，并从 npm 安装 Identity 0.1.18。提交和 PR 记录在 `dependencies.source.json`。
+本仓库从 npm 安装 `@awiki/dsh-pap@0.2.2` 和 Identity 0.1.18。PAP 0.2.2 提供已购 PDF 下载校验和 Fulfillment 父能力协商。
 
 ## 安装与更新
 
@@ -95,13 +95,7 @@ pnpm pack:local
 node --import tsx scripts/pap10-core-check.mjs --preflight
 ```
 
-PAP 0.2.2 上架 npm 后，从此分支运行以下命令，把两个开发依赖切回公开包并生成 registry 锁文件。删除临时的 `dependencies.source.json` 与 `pnpm-workspace.yaml` 中仅供 PAP Git 构建使用的 `onlyBuiltDependencies` 项。在新的检出中重复上方命令，确认 PAP 的 `source` 为 `registry`，再验收已购 PDF 摘要、全额退款撤权及 Fulfillment 协商。PDF 下载须覆盖已有测试 Profile。使用升级前已连接店铺且目录尚无下载操作的 Profile，重启现有会话，刷新原订单后直接下载，再核对退款撤权。
-
-```sh
-npm pkg set 'devDependencies.@awiki/dsh-pap=0.2.2'
-(cd packages/customer && npm pkg set 'devDependencies.@awiki/dsh-pap=0.2.2')
-pnpm install --lockfile-only
-```
+在新的检出中使用空的 pnpm store 执行上方命令，确认 PAP 的 `source` 为 `registry`、`version` 为 `0.2.2`，并核对锁文件的 integrity 与 npm registry 一致。验收覆盖已购 PDF 摘要、全额退款撤权及 Fulfillment 父能力协商。使用升级前已连接店铺且目录尚无下载操作的已有测试 Profile，重启现有会话，刷新原订单后直接下载，再核对退款撤权。
 
 设置 `FRONTVIA_IDENTITY_TEST_AUTH_FILE` 指向已有的 0600 awiki.me 测试输入，将 `FRONTVIA_IDENTITY_TEST_STATE` 指向任务专用受保护工作状态。Core 的 `platform/tests/pap03/commerce.py --suite pap10` 和 `--suite ucp` 复用这两个候选包。产品用例使用 `python3 tests/e2e/dsh/run.py --ucp`，需继承 `DEEPSEEK_API_KEY`。构建和临时 profile 都在候选或测试工作目录内。
 
