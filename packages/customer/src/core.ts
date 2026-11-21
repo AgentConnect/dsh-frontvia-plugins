@@ -1,4 +1,5 @@
 import { ucpCheckoutContact, ucpCheckoutDelivery, isUcpBusinessMethod, UcpCartRejection, isUcpResponseError, matchesUcpConfirmation, MOCK_HANDLER, UCP_PURCHASE_PROFILE, type CartRejection, type UcpPurchase } from "./ucp-business.js";
+import { projectOrderShipping } from "./order-tracking.js";
 import { viewScopes, type ViewScope } from "./view-scope.js";
 import { createHash, randomUUID } from "node:crypto";
 import {
@@ -215,6 +216,12 @@ export class CustomerService {
     if (this.pap.canAccess?.(f.connectionRef) === false)
       fail(this.pap.isCurrentIdentity?.(f.connectionRef) === true
         ? "PAP_DISCONNECTED" : "PERSONAL_ACCOUNT_CHANGED");
+    for (const order of [f.order, f.viewedOrder, ...(f.orders?.items ?? [])]) {
+      if (order?.ucp && !order.pending_items && Array.isArray(order.line_items) &&
+          order.fulfillment?.expectations?.some((entry: any) => entry.method_type === "shipping")) {
+        projectOrderShipping(order);
+      }
+    }
     const submitted = f.intent?.token && f.commands[f.intent.key];
     if (!f.pending && submitted && submitted.status === "done") {
       this.retireFailedConfirmation(f, submitted, submitted.result?.operation);
@@ -1455,7 +1462,9 @@ export class CustomerService {
     if (checkout && f.order && !fetchedOrders.has(f.order.id))
       f.order = await order(f.order.id);
     if (includes("order-detail") && f.viewedOrder)
-      f.viewedOrder = await order(f.viewedOrder.id);
+      await order(f.viewedOrder.id);
+    if (f.viewedOrder && fetchedOrders.has(f.viewedOrder.id))
+      f.viewedOrder = fetchedOrders.get(f.viewedOrder.id);
     // Listing is explicit. Never turn a background refresh into N+1 history reads.
     if (Array.isArray(f.orders?.items))
       f.orders.items = f.orders.items.map(
@@ -1827,7 +1836,9 @@ export class CustomerService {
 
   private canPrepareUcpPurchase(f: Flow) {
     const handlers = f.checkout?.ucp?.payment_handlers?.[MOCK_HANDLER];
-    return f.capabilities?.ucpCheckoutConfirmation === true && Array.isArray(handlers) && handlers.length > 0;
+    const free = f.checkout?.totals?.grand_total?.amount_minor === "0" &&
+      f.checkout?.messages?.some((message: any) => message.code === "purchase_preparation_required");
+    return f.capabilities?.ucpCheckoutConfirmation === true && (free || Array.isArray(handlers) && handlers.length > 0);
   }
 
   private ucpEmailOnly(f: Flow) {
@@ -2144,6 +2155,25 @@ export class CustomerService {
     );
   }
   /** Owner-only: close the original payment at the merchant before canceling. */
+  async downloadOrderFile(sessionId: string, flowId: string, orderId: string, signal?: AbortSignal) {
+    const flow = this.flow(sessionId, flowId);
+    const result = await this.pap.request(flow.connectionRef, "commerce.orders.get", { order_id: orderId }, signal);
+    const order = result?.result?.data ?? result?.result;
+    if (order?.id !== orderId || !Array.isArray(order.messages)) return fail("ORDER_FILE_UNAVAILABLE");
+    const available = order.messages.filter((m: any) => m.code === "digital_delivery_available" && m.content_type === "markdown");
+    const link = available.length === 1 && /^\[Download the PDF\]\((https:\/\/[^()\s]+)\)$/.exec(available[0].content);
+    if (!link) return fail("ORDER_FILE_UNAVAILABLE");
+    const url = new URL(link[1]);
+    const parts = /^\/commerce\/v1\/stores\/([^/]+)\/orders\/([^/]+)\/lines\/([^/]+)\/files\/([a-f0-9]{64})$/.exec(url.pathname);
+    if (!parts || parts[1] !== flow.storeId || parts[2] !== orderId || !order.line_items?.some((line: any) => line.id === parts[3]))
+      return fail("ORDER_FILE_UNAVAILABLE");
+    const file = await this.pap.request(flow.connectionRef, "commerce.orders.file",
+      { store_id:flow.storeId, order_id:orderId, line_id:parts[3], sha256:parts[4] }, signal);
+    this.flow(sessionId, flowId);
+    if (file?.sha256 !== parts[4] || typeof file?.bytes_base64 !== "string") return fail("ORDER_FILE_UNAVAILABLE");
+    return { bytes_base64:file.bytes_base64 };
+  }
+
   async cancelOrder(sessionId: string, flowId: string) {
     this.views.clear();
     return this.serial

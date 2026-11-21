@@ -303,6 +303,37 @@ test("hosted checkout opens the exact browser link and keeps the original checko
   }
 });
 
+test("the browser link opens the separate pairing form and pairing confirms in place", async () => {
+  let tree!: ReactTestRenderer;
+  const calls: Array<{ operation: string; payload: any }> = [];
+  const details = { open: false };
+  const code = "a".repeat(43);
+  const url = "https://shop.example/ucp/v1/checkout-sessions/draft/handoff";
+  try {
+    await act(async () => {
+      tree = create(React.createElement(Storefront, {
+        draftScope: "browser-pairing", initialTab: "cart", busy: false, error: "", now: Date.now(),
+        data: { ...initial(), checkout: { id: "draft", status: "requires_escalation", handoff: url },
+          capabilities: { ucp: true, methods: [{ method: "commerce.checkouts.get", availability: "supported" }] } },
+        action: async (operation, payload) => { calls.push({ operation, payload }); return true; },
+      }), { createNodeMock: element => element.type === "details" ? details : null });
+    });
+    await act(async () => tree.root.findByProps({ href: url }).props.onClick());
+    assert.equal(details.open, true);
+    const pairing = tree.root.findByProps({ className: "fv-browser-pairing" });
+    assert.equal(button(tree, "授权浏览器")?.props.disabled, true);
+    await act(async () => pairing.findByType("input").props.onChange({ target: { value: code } }));
+    await act(async () => pairing.findByType("form").props.onSubmit({ preventDefault: () => {} }));
+    assert.equal(calls.length, 1);
+    assert.equal(calls[0]?.operation, "approve-handoff");
+    assert.equal(calls[0]?.payload.challenge, code);
+    assert.equal(pairing.findAllByType("input").length, 0);
+    assert.equal(pairing.findByProps({ role: "status" }).children.join(""), "已授权，请回到浏览器查看。");
+  } finally {
+    await act(async () => tree?.unmount());
+  }
+});
+
 test("checkout preparation offers a separate resume and restores checkout on the same cart after cancellation", async () => {
   const requests: { operation: string; payload?: any }[] = [];
   let tree!: ReactTestRenderer;

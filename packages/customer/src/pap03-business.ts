@@ -3,7 +3,7 @@ import {createHash} from 'node:crypto';
 import type {PapOperationsClient} from '@awiki/dsh-pap/product-api';
 import {Pap03Transport,PapRequestError,type StoreConnection} from './pap03-transport.js';
 import type {PapPort,BusinessSite} from './pap-port.js';
-import {fail} from './state.js';
+import {fail,PapError} from './state.js';
 
 /** Small card-facing projection of the one public PAP client, with no own protocol state. */
 export class Pap03Business implements PapPort {
@@ -29,7 +29,7 @@ export class Pap03Business implements PapPort {
         if(typeof c.domain!=='string'||typeof c.companyId!=='string'||typeof c.companyRef!=='string')continue;
         const own=operations.filter((op:any)=>op.companyRef===c.companyRef);
         const methods=[...new Set([...own.filter((op:any)=>typeof op.operationId==='string').map((op:any)=>op.operationId),...ucpBusinessMethods(own),...(own.some((op:any)=>op.channel==='ucp')?['commerce.capabilities.get']:[])])];
-        const store={ucp:own.some((op:any)=>op.channel==='ucp'),ucpCapabilities:c.ucpCapabilities,domain:c.domain,companyRef:c.companyRef,companyId:c.companyId,name:c.name??c.domain,methods};
+        const store={ucp:own.some((op:any)=>op.channel==='ucp'),ucpCapabilities:c.ucpCapabilities,ucpFulfillmentParents:c.ucpFulfillmentParents,domain:c.domain,companyRef:c.companyRef,companyId:c.companyId,name:c.name??c.domain,methods};
         this.transport.restore(store);
         const ref=createHash('sha256').update(JSON.stringify([store.companyRef,this.epoch])).digest('hex');
         this.connections.set(ref,{store,identity:this.epoch});
@@ -81,10 +81,34 @@ export class Pap03Business implements PapPort {
   capabilityCacheKey(ref:string){const value=this.current(ref);return createHash('sha256').update(JSON.stringify([value.identity,value.store.companyRef,this.publicState.sessions])).digest('hex');}
   async request(ref:string,method:string,params:unknown,signal?:AbortSignal){
     await this.refresh();const {store}=this.current(ref);
-    try{const result=await this.transport.request(store.domain,method,params as Record<string,unknown>,signal);await this.refresh();this.current(ref);return result;}
-    catch(error){
+    const send = (target:StoreConnection) => this.transport.request(target,method,params as Record<string,unknown>,signal);
+    try {
+      let result: unknown;
+      try {
+        result = await send(store);
+      } catch (error) {
+        if (!(error instanceof PapError) || error.code !== 'ORDER_FILE_ROUTE_MISSING') throw error;
+        signal?.throwIfAborted();
+        // Rediscover only the original store, before dispatch, under the restored owner.
+        await this.refresh();
+        this.current(ref);
+        const discovered = await this.transport.connect(store.domain,store);
+        await this.refresh();
+        this.current(ref);
+        this.connections.set(ref,{store:discovered,identity:this.epoch});
+        try {
+          result = await send(discovered);
+        } catch (error) {
+          if (error instanceof PapError && error.code === 'ORDER_FILE_ROUTE_MISSING') fail('ORDER_FILE_UNAVAILABLE');
+          throw error;
+        }
+      }
+      await this.refresh();
+      this.current(ref);
+      return result;
+    } catch(error){
       if(error instanceof PapRequestError){
-        if(error.detail.code==='permission_denied'||error.detail.code==='disconnected')this.epoch='';
+        if(error.detail?.code==='permission_denied'||error.detail?.code==='disconnected')this.epoch='';
         // Preserve admission/response uncertainty for original-operation recovery.
         throw error;
       }

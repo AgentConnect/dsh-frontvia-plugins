@@ -15,7 +15,7 @@ import { withFileLock, writeFileAtomic } from "@deepseek-ai/dsh-atomic-write";
 import spawn from "cross-spawn";
 import { orderFrontviaBundles } from "./desktop-bundles.mjs";
 import { pluginPackages, legacyFrontviaPackages } from "./plugin-packages.mjs";
-import { assertPapPackage } from "./package-inputs.mjs";
+import { assertPapPackage, requiredPapVersion } from "./package-inputs.mjs";
 
 const profile = resolveProfileDir("desktop");
 const manifestPath = join(profile, "package.json");
@@ -29,8 +29,7 @@ const artifacts = JSON.parse(
   await readFile(resolve(".local/packages/manifest.json"), "utf8"),
 );
 const papName = "@awiki/dsh-pap";
-const buildManifest = JSON.parse(await readFile(resolve("package.json"), "utf8"));
-const papVersion = buildManifest.devDependencies[papName];
+const papVersion = requiredPapVersion;
 assertPapPackage(artifacts.artifacts.find(item => item.name === papName), papVersion);
 // Explicit source builds install the verified Identity artifact as well.
 if (artifacts.identitySource === 'explicit-local') {

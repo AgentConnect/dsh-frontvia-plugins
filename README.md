@@ -8,15 +8,11 @@ Frontvia 业务插件支持商品、购物车、地址、报价、订单和咨�
 | 公共 PAP | `@awiki/dsh-pap`；发现、Session、请求签名和一次操作批准 |
 | Customer | 本仓库 `packages/customer`；业务工具、卡片、报价核对及原 operation 恢复 |
 
-当前代码的开发锁文件固定 Identity `0.1.18` 和 PAP `0.2.1`。UCP 安装另外要求 PAP 包实际提供 Store Context 和 Order History。当前 npm 的 PAP `0.2.1` 缺少两项操作，UCP 请使用下述本地候选。
+本仓库从 npm 安装 `@awiki/dsh-pap@0.2.2` 和 Identity 0.1.18。PAP 0.2.2 提供已购 PDF 下载校验和 Fulfillment 父能力协商。
 
-## npm 安装与更新
+## 安装与更新
 
-以下已发布组合用于旧版 PAP，配套 DSH `0.2.2-rc.1`，要求 Node.js >= 24.9.0。完全退出 DSH 后执行：
-
-```sh
-dsh plugin --profile web add @agent-network-protocol/dsh-anp-identity@0.1.18 @awiki/dsh-pap@0.2.0 dsh-frontvia-customer@0.2.0
-```
+在独立工作目录检出本分支，使用 Node.js 24.9 或更高版本和 pnpm 10.28.2。按下方本地开发步骤打包。隔离验收使用测试 Host；如需更新本机 desktop Profile，完全退出桌面版后运行 `pnpm install:desktop`。
 
 已有 Profile 须按 Identity、PAP、Customer 顺序加载；启用 PAP 的 `enabled`、`autoConnect`，保留 `businessConsumers: ['dsh-frontvia-customer']`。Mac 上在 Identity 的 `domainAccess` 中显式设置 `secretStore: local-file`；PAP 默认 Secret Service 后端仅支持 Linux，不自动降级。Identity 自身的密钥后端无需修改。用户 Host 覆盖配置仍优先。
 
@@ -31,15 +27,16 @@ dsh plugin --profile web add @agent-network-protocol/dsh-anp-identity@0.1.18 @aw
 
 ## 本地开发
 
-使用独立工作目录。公共 Identity/PAP 使用 npm 正式发布包，不要求相邻源码仓库。
+锁文件可以在独立检出中安装两个依赖。
 
 ```sh
-pnpm install --frozen-lockfile --ignore-scripts
+unset FRONTVIA_PAP_TEST_PACKAGE_ROOT FRONTVIA_IDENTITY_TEST_PACKAGE_ROOT
+pnpm install --frozen-lockfile
 pnpm typecheck
 pnpm build
 ```
 
-`pack:local` 生成本机安装候选，并记录所选 PAP 版本和包的 SHA-256。打包与桌面安装器复用同一项 PAP 版本和能力校验。当前先从 [PAP #4](https://github.com/AgentConnect/dsh-pap/pull/4) 对应源码构建候选，再通过 `FRONTVIA_PAP_TEST_PACKAGE_ROOT` 选择它。
+`pack:local` 生成本机安装候选，并记录所选 PAP 版本和包的 SHA-256。打包与桌面安装器均核对 PAP 版本、Store Context、Order History 和订单 PDF 能力。
 
 源码候选支持 DSH `0.2.2-rc.1` 和 `0.2.2-rc.3`。打包默认针对 `rc.1`。为 `rc.3` 打包时，设置 `FRONTVIA_DSH_RUNTIME=0.2.2-rc.3`，并通过 `FRONTVIA_PAP_TEST_PACKAGE_ROOT` 和 `FRONTVIA_IDENTITY_TEST_PACKAGE_ROOT` 选用已构建且声明兼容 `rc.3` 的公共插件候选。打包会检查三个包的目标版本，安装器会核对候选清单与桌面 CLI 版本。
 
@@ -87,25 +84,18 @@ MCP 测试投影仅描述工具的根对象参数；实际 Customer 仍执行完
 
 ## 系统测试的公共包来源
 
-正式包测试使用锁定的 npm Identity 0.1.18 和 PAP 0.2.1。身份使用 `https://awiki.me`。
+在独立检出中核对实际加载的依赖来源和打包清单：
 
 ```sh
+unset FRONTVIA_PAP_TEST_PACKAGE_ROOT FRONTVIA_IDENTITY_TEST_PACKAGE_ROOT
+pnpm install --frozen-lockfile
 node tests/support/public-pap.mjs
 pnpm check
-pnpm test:e2e:dsh
-```
-
-PAP 1.0 / UCP 2026-08-25 联调使用已构建的 Identity 和 PAP 源码候选。候选 manifest 使用 Identity 0.1.18、PAP 0.2.1 和 Customer 0.2.0，Native Identity 使用锁定的 registry 0.2.6。`--preflight` 导入选定的模块并打印绝对路径和版本，配置缺失或候选无法加载时以非零退出。
-
-```sh
-# 在各候选 SDK 包目录安装其锁文件依赖并运行 npm run build
-export FRONTVIA_PAP_TEST_PACKAGE_ROOT=/absolute/path/to/dsh-pap
-export FRONTVIA_IDENTITY_TEST_PACKAGE_ROOT=/absolute/path/to/anp-identity/packages/dsh-anp-identity
-export FRONTVIA_CORE_ROOT=/absolute/path/to/frontvia-core
-node --import tsx scripts/pap10-core-check.mjs --preflight
-pnpm build
 pnpm pack:local
+node --import tsx scripts/pap10-core-check.mjs --preflight
 ```
+
+在新的检出中使用空的 pnpm store 执行上方命令，确认 PAP 的 `source` 为 `registry`、`version` 为 `0.2.2`，并核对锁文件的 integrity 与 npm registry 一致。验收覆盖已购 PDF 摘要、全额退款撤权及 Fulfillment 父能力协商。使用升级前已连接店铺且目录尚无下载操作的已有测试 Profile，重启现有会话，刷新原订单后直接下载，再核对退款撤权。
 
 设置 `FRONTVIA_IDENTITY_TEST_AUTH_FILE` 指向已有的 0600 awiki.me 测试输入，将 `FRONTVIA_IDENTITY_TEST_STATE` 指向任务专用受保护工作状态。Core 的 `platform/tests/pap03/commerce.py --suite pap10` 和 `--suite ucp` 复用这两个候选包。产品用例使用 `python3 tests/e2e/dsh/run.py --ucp`，需继承 `DEEPSEEK_API_KEY`。构建和临时 profile 都在候选或测试工作目录内。
 

@@ -1,3 +1,4 @@
+import {requiredPapVersion} from '../../scripts/package-inputs.mjs';
 import assert from 'node:assert/strict';
 import {existsSync,readFileSync,realpathSync} from 'node:fs';
 import {createRequire} from 'node:module';
@@ -14,15 +15,22 @@ function selectPackage(name,candidate,entries){
   assert(/^\d+\.\d+\.\d+(?:-[a-zA-Z0-9.-]+)?$/.test(manifest.version),'Invalid package version');
   for(const entry of entries)
     assert(existsSync(join(root,'lib',entry)),`Build the selected ${name} package before testing`);
+  const pin=require('./package.json').devDependencies[name];
+  const source=candidate!==undefined?'explicit-local':pin.includes('#')?'git':'registry';
   if(candidate===undefined){
-    assert(root.split(sep).includes('node_modules'),'Registry mode must not resolve a linked source checkout');
-    assert.equal(manifest.version,require('./package.json').devDependencies[name]);
+    assert(root.split(sep).includes('node_modules'),'Locked dependency must resolve inside node_modules');
+    if(source==='git'){
+      const record=require('./dependencies.source.json').dependencies[name];
+      assert.match(record.commit,/^[0-9a-f]{40}$/);
+      assert.equal(pin,record.repository+'#'+record.commit);
+      assert.equal(manifest.version,requiredPapVersion);
+    }else assert.equal(manifest.version,pin);
   }else assert(!root.split(sep).includes('node_modules'),'Source candidate must resolve outside node_modules');
   const dependencyRoot=existsSync(join(root,'node_modules'))?join(root,'node_modules'):resolve(root,'../..');
-  return {root,version:manifest.version,source:candidate===undefined?'registry':'explicit-local',dependencyRoot};
+  return {root,version:manifest.version,source,dependencyRoot};
 }
 
-/** Registry dependencies by default; source candidates require an explicit opt-in. */
+/** Use the locked dependency unless a separately built candidate was selected. */
 export function publicPapPackage(environment=process.env){
   const selected=selectPackage('@awiki/dsh-pap',environment.FRONTVIA_PAP_TEST_PACKAGE_ROOT,['plugin.js','product-api.js','network.js']);
   return {...selected,

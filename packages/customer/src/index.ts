@@ -89,6 +89,7 @@ export async function apply(
                 },
                 request.signal,
               );
+            if (operation === "order-file") value = await service.downloadOrderFile(a.sessionId, a.flowId, a.order_id, request.signal);
             if (operation === "original")
               value = await service.consultation.original(
                 a.sessionId,

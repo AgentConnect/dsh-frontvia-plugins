@@ -196,6 +196,45 @@ test('standard Order quantities and fulfillment events project without inventing
  const order=response.result.data;assert.equal(order.lines[0].quantity,1);assert.equal(order.checkout_id,'draft-1');assert.equal(order.shipments[0].status,'shipped');assert.equal(order.shipments[0].tracking[0].tracking_number,'track-1');assert.equal(order.payment,undefined);assert.equal(order.status,undefined);
 });
 
+test('shipping progress counts actual handovers once across preparation, corrections and split shipments', async () => {
+ const f = fixture();
+ const transport = f.sdk.request;
+ let events: any[] = [];
+ f.sdk.request = async (input, signal) => {
+  const response = await transport(input, signal);
+  if (!input || typeof input !== 'object' || !('operationRef' in input) ||
+      input.operationRef !== 'get_order' || !response.ok) return response;
+  const {body} = response.value as any;
+  body.fulfillment = {expectations:[{method_type:'shipping'}],events};
+  for (const line of body.line_items) line.quantity = {total:1, fulfilled:1};
+  return response;
+ };
+ const event = (id:string,type:string,day:number,tracking_number:string,line='line-1') => ({
+  id,type,tracking_number,carrier:'Test',occurred_at:`2026-11-${day}T00:00:00Z`,line_items:[{id:line,quantity:1}],
+  description: type.startsWith('tracking_') ? 'old-waybill → next-waybill' : id,
+ });
+ const first = event('one','shipped',10,'old-waybill');
+ const cases = [
+  {add:[],status:'unfulfilled',pending:2,changes:0},
+  {add:[first, first],status:'partially_shipped',pending:1,changes:0},
+  {add:[event('r1','tracking_replaced',11,'old-waybill'),event('c1','tracking_corrected',11,'middle-waybill'),
+    event('r2','tracking_replaced',12,'middle-waybill'),event('c2','tracking_corrected',12,'new-waybill'),
+    event('late','delivered',13,'old-waybill')],status:'partially_shipped',pending:1,changes:2},
+  {add:[event('two','shipped',14,'second-waybill','line-2')],status:'shipped',pending:0,changes:2},
+ ];
+ for (const step of cases) {
+  events = [...events,...step.add];
+  const response:any = await f.transport.request('shop.example','commerce.orders.get',{order_id:'order-1'});
+  const order = response.result.data;
+  assert.equal(order.fulfillment_status,step.status);
+  assert.equal(order.pending_items.reduce((n:number,item:any)=>n+item.quantity,0),step.pending);
+  if (step.changes) {
+   assert.equal(order.fulfillment.events.filter((event:any)=>event.type==='tracking_corrected').length,step.changes);
+   assert.doesNotMatch(JSON.stringify(order),/old-waybill|middle-waybill/);
+  }
+ }
+});
+
 test('UCP Order uses only an unambiguous Frontvia payment info code',async()=>{
  const info=(status:string,type='info')=>({type,code:`frontvia_order_payment_${status}`,content:'Payment status'});
  for(const [messages,status] of [
@@ -211,6 +250,26 @@ test('UCP Order uses only an unambiguous Frontvia payment info code',async()=>{
   assert.deepEqual(order.payment,status===undefined?undefined:{status});
   assert.equal(order.status,undefined);
   assert.equal(order.payment_required,status==='not_required'?false:undefined);
+ }
+});
+
+test('restored order detail and list use handovers recorded before a waybill change', async () => {
+ const f = fixture();
+ const c = await connectFlow(f);
+ const flow = c.flow();
+ const order = {ucp:{},line_items:[{id:'line',quantity:{total:2,fulfilled:2}}],fulfillment:{
+  expectations:[{method_type:'shipping'}],
+  events:['shipped','tracking_replaced','tracking_corrected'].map((type,index) => ({
+   id:type,type,occurred_at:`2026-11-${10+index}T00:00:00Z`,tracking_number:index<2?'old-waybill':'new-waybill',
+   line_items:[{id:'line',quantity:1}],
+  })),
+ },fulfillment_status:'shipped'};
+ c.vault.set(`flow:${c.flowId}`,{...flow,order,viewedOrder:order,orders:{items:[order]}});
+ const restored = c.flow();
+ for (const item of [restored.order,restored.viewedOrder,restored.orders.items[0]]) {
+  assert.equal(item.fulfillment_status,'partially_shipped');
+  assert.deepEqual(item.pending_items,[{id:'line',quantity:1}]);
+  assert.doesNotMatch(JSON.stringify(item),/old-waybill/);
  }
 });
 

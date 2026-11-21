@@ -595,6 +595,23 @@
 .fv .fv-confirm-box .fv-button {
   width: 100%;
 }
+.fv-browser-handoff {
+  display: grid;
+  justify-items: start;
+  gap: 12px;
+  min-width: 0;
+  padding: 14px;
+  border: 1px solid var(--fv-border);
+  border-radius: 10px;
+}
+.fv-browser-handoff > a.fv-button { max-width: 100%; white-space: normal; text-decoration: none; }
+.fv-browser-pairing { width: 100%; min-width: 0; }
+.fv-browser-pairing summary { cursor: pointer; color: var(--fv-muted); }
+.fv-browser-pairing summary:focus-visible { outline: 2px solid var(--fv-primary); outline-offset: 3px; }
+.fv-browser-pairing form { margin-top: 12px; }
+.fv-browser-pairing input { font-family: ui-monospace, SFMono-Regular, Consolas, monospace; }
+.fv-browser-pairing .fv-button { justify-self: start; align-self: flex-start; }
+.fv-browser-paired { margin-top: 10px; }
 .fv .fv-address {
   border: 1px solid var(--fv-border);
   padding: 14px;
@@ -687,6 +704,18 @@
 .fv .fv-order h4 {
   font-size: 18px;
 }
+.fv .fv-order-download { align-self: flex-start; }
+.fv .fv-order-logistics { gap: 12px; }
+.fv .fv-order-package {
+  gap: 6px;
+  min-width: 0;
+  padding: 12px 14px;
+  border: 1px solid var(--fv-border);
+  border-radius: 10px;
+  overflow-wrap: anywhere;
+}
+.fv .fv-order-package summary { cursor: pointer; color: var(--fv-muted); }
+.fv .fv-order-package summary:focus-visible { outline: 2px solid var(--fv-primary); outline-offset: 3px; }
 .fv .fv-order-meta {
   display: grid;
   grid-template-columns: 1fr 1fr;

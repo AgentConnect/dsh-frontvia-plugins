@@ -425,6 +425,7 @@ export function apply(ctx: any) {
       const t = setInterval(() => setTick(Date.now()), 1000);
       return () => clearInterval(t);
     }, []);
+    const downloadOrder = (order_id: string) => call("order-file", { flowId: ui.flowId, sessionId: ui.sessionId, order_id, card: ui.card });
     const action = async (op: string, payload: any = {}, onResult?: (value: any) => void) => {
       if (acting.current) return false;
       acting.current = true;
@@ -585,7 +586,7 @@ export function apply(ctx: any) {
           }}
         >
           {!resume && <style>{styles}</style>}
-          <Storefront
+          <Storefront downloadOrder={downloadOrder}
             key={accountRevision}
             draftScope={JSON.stringify([
               accountRevision,
@@ -1280,13 +1281,13 @@ export function apply(ctx: any) {
                           void action("payment-start");
                         }}
                       />
-                      {data.order && <Order order={data.order} />}{" "}
+                      {data.order && <Order order={data.order} download={downloadOrder} />}{" "}
                       {items(data.orders)
                         .filter(
                           (o: any) => !data.order || o.id !== data.order.id,
                         )
                         .map((o: any) => (
-                          <Order order={o} key={o.id} />
+                          <Order order={o} key={o.id} download={downloadOrder} />
                         ))}
                       {!data.order && !items(data.orders).length && (
                         <Empty>
