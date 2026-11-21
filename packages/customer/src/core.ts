@@ -19,6 +19,7 @@ import {
 } from "./shopping-action.js";
 import { contactSchema, cartContactReady, manualCart, manualContactSchema } from "./contact-fields.js";
 import { ConsultationService, consultationSite } from "./consultation.js";
+import { ASK_METHOD, type AskConversation, type AskResponse } from "./ucp-ask.js";
 export type CustomerConfig = {
   dataDir: string;
   sites: {
@@ -104,6 +105,10 @@ export type Flow = {
   quote?: any;
   checkout?: any;
   ucpPurchase?: UcpPurchase;
+  ask?: {
+    conversation?: AskConversation;
+    last?: { callId: string; operationRef: string; idempotencyKey: string; conversation?: AskConversation; reply?: AskResponse };
+  };
   order?: any;
   orders?: any;
   viewedOrder?: any;
@@ -777,9 +782,48 @@ export class CustomerService {
       };
     }
     const flowId = id.parse(args.flowId);
+    if (name === "frontvia_ask") return this.serial.run(flowId, () =>
+      this.ask(sessionId, flowId, args.query, args.product_ids, callId, signal),
+    );
     return this.serial.run(flowId, () =>
       this.shoppingTool(sessionId, flowId, name, args, callId, signal),
     );
+  }
+  private async ask(sessionId: string, flowId: string, query: string, ids: string[] | undefined, callId: string, signal?: AbortSignal) {
+    signal?.throwIfAborted();
+    const f = this.flow(sessionId, flowId);
+    this.policy(f);
+    if (!this.pap.askOperationRef || !this.pap.sites().find(site => site.id === f.siteId)?.description?.methods.includes(ASK_METHOD))
+      fail("UCP_ASK_UNAVAILABLE");
+    const state = f.ask ??= {};
+    const invocationKey = digest(callId);
+    const fingerprint = digest({ method: ASK_METHOD, query, ids: ids ?? [] });
+    const prior = f.invocations?.[invocationKey];
+    if (prior && prior !== fingerprint) fail("UCP_ASK_CALL_CONFLICT");
+    const previous = state.conversation;
+    let last = state.last;
+    if (last?.callId !== callId) {
+      // A displaced turn cannot safely be replayed against the current conversation.
+      if (prior) fail("UCP_ASK_CALL_SUPERSEDED");
+      const operationRef = await this.pap.askOperationRef(f.connectionRef, signal);
+      (f.invocations ??= {})[invocationKey] = fingerprint;
+      last = state.last = {
+        callId, operationRef, idempotencyKey: randomUUID(),
+        ...(previous?.operationRef === operationRef && (!previous.expires_at || Date.parse(previous.expires_at) > Date.now())
+          ? { conversation: previous } : {}),
+      };
+      this.save(f);
+    }
+    if (!last.reply) {
+      const reply: AskResponse = await this.pap.request(f.connectionRef, ASK_METHOD, {
+        query, ids, expectedOperationRef: last.operationRef, idempotencyKey: last.idempotencyKey, conversation: last.conversation,
+      }, signal);
+      signal?.throwIfAborted();
+      state.conversation = reply.conversation;
+      last.reply = reply;
+      this.save(f);
+    }
+    return { flowId, source: "merchant", untrusted: true, answer: last.reply.answer, links: last.reply.links };
   }
   // Caller holds the flow lease, including all steps of a manual UI action.
   private async shoppingTool(

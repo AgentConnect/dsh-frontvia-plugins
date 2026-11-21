@@ -64,6 +64,23 @@ pnpm build
 
 完整退出并重开 DSH 后，在「设置 → 协议管理」核对读取策略及“写入：每次确认”。首次提供店铺域名才建立具体连接；完整重启后可在原对话再次连接同一域名，公共 PAP 会先恢复本地状态，Customer 再核对聊天所属身份。同一身份保留原流程；更换身份须新建聊天。主动断开的连接须由用户在「设置 → PAP 连接」重新连接。设置中的 `Host 尚未开启全局域名接入` 说明缺少本段配置。
 
+## 本地试用 UCP Ask
+
+Ask 提供公开商品和政策问答。当前 npm 锁定的 PAP `0.2.3` 继续支持原有购物流程。试用 Ask 时使用已包含 `ask_business` 的本地 PAP 源码构建，并在隔离 DSH 测试 Profile 中沿用现有 `businessConsumers` 配置。
+
+```sh
+(cd /absolute/path/to/dsh-pap && npm ci && npm run build)
+export FRONTVIA_PAP_TEST_PACKAGE_ROOT=/absolute/path/to/dsh-pap
+node tests/support/public-pap.mjs
+pnpm check
+```
+
+在测试 Profile 的 PAP `ucpPlatformProfileUrl` 指向的平台 UCP 描述中，为 `2026-08-25` 添加 `ucp.services["dev.ucp.common"]` 的 REST 声明和 `ucp.capabilities["dev.ucp.common.ask"]` 的同版本声明。测试商家的 `/.well-known/ucp` 也须声明这两项，并在 Common REST 中提供同源 `endpoint`。现有购物能力继续使用各自的服务声明。
+
+用 `frontvia_connection` 连接已启用 Ask 的测试店铺，确认返回 `ucp.ask`。接着调用 `frontvia_ask`，传 `action: "ask"`、原 `flowId`、`query` 和可选 `product_ids`。同一聊天和店铺沿用返回的 `flowId` 续问。答复和相关链接来自商家。
+
+可用 Frontvia Core 的 `ecommerce/modules/commerce/tests/fixtures/buyer-ask-runtime.mts` 启动隔离 HTTPS 测试店铺，再用本仓库的 `node --import tsx tests/e2e/dsh/ucp-ask-local.mts /absolute/path/to/ready.json` 运行跨仓验证。`ready.json` 由测试店铺脚本生成。
+
 ## 迁移状态
 
 公共身份、域名发现、Claude Code/DeepSeek 实际浏览、Core/Medusa 购物与公共一次批准、同域实际咨询的 focused 核心串联已通过。Customer 168 项与公共 PAP 147 项单测通过；这些结果不代表完整浏览器、真实支付渠道或跨平台验收。当前源码和候选配置的旧入口清理已完成；此前 Customer 0.2.0 的发布验证使用公共 PAP 0.2.0 与 Identity 0.1.18，发布不自动切换共享环境或部署服务。当前进度见 Frontvia Core 的 `docs/plan/platform/pap03-shared-identity-domain-discovery-plan.md`。
