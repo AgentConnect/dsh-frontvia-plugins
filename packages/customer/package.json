@@ -1,6 +1,6 @@
 {
   "name": "dsh-frontvia-customer",
-  "version": "0.2.0",
+  "version": "0.2.1",
   "type": "module",
   "main": "dist/index.js",
   "types": "src/index.ts",
@@ -64,7 +64,7 @@
   },
   "devDependencies": {
     "react-dom": "18.3.1",
-    "@awiki/dsh-pap": "0.2.2",
+    "@awiki/dsh-pap": "0.2.3",
     "@agent-network-protocol/dsh-anp-identity": "0.1.18"
   },
   "description": "Frontvia 商品、购物车、购买确认、订单及咨询插件。",

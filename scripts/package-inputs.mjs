@@ -1,6 +1,6 @@
 import { readFile, stat } from 'node:fs/promises';
 import { join } from 'node:path';
-export const requiredPapVersion = '0.2.2';
+export const requiredPapVersion = '0.2.3';
 export function assertPapPackage(manifest, lockedVersion = requiredPapVersion) {
   if (manifest?.name !== '@awiki/dsh-pap' || manifest.version !== lockedVersion ||
       !Array.isArray(manifest.dshPapUcpOperations) ||

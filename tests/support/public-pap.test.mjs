@@ -9,7 +9,7 @@ import {assertPapPackage} from '../../scripts/package-inputs.mjs';
 test('PAP tests select the installed locked package without a sibling checkout',()=>{
   const selected=publicPapPackage({});
   assert.ok(['git','registry'].includes(selected.source));
-  assert.equal(selected.version,'0.2.2');
+  assert.equal(selected.version,'0.2.3');
   assert(selected.root.includes('node_modules/'));
   assert(selected.transportModule.startsWith(selected.root+'/lib/'));
 });
