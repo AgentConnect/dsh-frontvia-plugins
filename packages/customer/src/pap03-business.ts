@@ -1,4 +1,5 @@
 import {ucpBusinessMethods} from './ucp-business.js';
+import {ASK_METHOD,askOperations} from './ucp-ask.js';
 import {createHash} from 'node:crypto';
 import type {PapOperationsClient} from '@awiki/dsh-pap/product-api';
 import {Pap03Transport,PapRequestError,type StoreConnection} from './pap03-transport.js';
@@ -28,7 +29,8 @@ export class Pap03Business implements PapPort {
       for(const c of state.companies??[]){
         if(typeof c.domain!=='string'||typeof c.companyId!=='string'||typeof c.companyRef!=='string')continue;
         const own=operations.filter((op:any)=>op.companyRef===c.companyRef);
-        const methods=[...new Set([...own.filter((op:any)=>typeof op.operationId==='string').map((op:any)=>op.operationId),...ucpBusinessMethods(own),...(own.some((op:any)=>op.channel==='ucp')?['commerce.capabilities.get']:[])])];
+        const ask=askOperations(c.ucpCapabilities,own).length===1;
+        const methods=[...new Set([...own.filter((op:any)=>typeof op.operationId==='string').map((op:any)=>op.operationId),...ucpBusinessMethods(own),...(own.some((op:any)=>op.channel==='ucp')?['commerce.capabilities.get']:[]),...(ask?[ASK_METHOD]:[])])];
         const store={ucp:own.some((op:any)=>op.channel==='ucp'),ucpCapabilities:c.ucpCapabilities,ucpFulfillmentParents:c.ucpFulfillmentParents,domain:c.domain,companyRef:c.companyRef,companyId:c.companyId,name:c.name??c.domain,methods};
         this.transport.restore(store);
         const ref=createHash('sha256').update(JSON.stringify([store.companyRef,this.epoch])).digest('hex');
@@ -78,7 +80,16 @@ export class Pap03Business implements PapPort {
   }
   status(ref?:string){return [...this.connections.keys()].filter(r=>(!ref||r===ref)&&this.canAccess(r)).map(r=>{const {store}=this.current(r);return {connectionRef:r,siteId:store.domain,label:store.name,domain:store.domain,issuer:store.companyId,resource:store.companyId,signedIn:false,connected:true};});}
   identity(ref:string){const {store}=this.current(ref);return {issuer:store.companyId,resource:store.companyId,signedIn:false};}
-  capabilityCacheKey(ref:string){const value=this.current(ref);return createHash('sha256').update(JSON.stringify([value.identity,value.store.companyRef,this.publicState.sessions])).digest('hex');}
+  capabilityCacheKey(ref:string){const value=this.current(ref);return createHash('sha256').update(JSON.stringify([value.identity,value.store.companyRef,value.store.methods,this.publicState.sessions])).digest('hex');}
+  async askOperationRef(ref:string,signal?:AbortSignal){
+    signal?.throwIfAborted();
+    await this.refresh();
+    const {store}=this.current(ref);
+    const operationRef=await this.transport.askOperationRef(store);
+    this.current(ref);
+    signal?.throwIfAborted();
+    return operationRef;
+  }
   async request(ref:string,method:string,params:unknown,signal?:AbortSignal){
     await this.refresh();const {store}=this.current(ref);
     const send = (target:StoreConnection) => this.transport.request(target,method,params as Record<string,unknown>,signal);

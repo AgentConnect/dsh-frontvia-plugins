@@ -1,6 +1,7 @@
-import {requestUcp,ucpBusinessMethods,isUcpBusinessMethod,UCP_CHECKOUT_CONFIRMATION,UCP_PURCHASE_PROFILE,type UcpRequest,type UcpResponse} from './ucp-business.js';
+import {requestUcp,ucpBusinessMethods,isUcpBusinessMethod,UCP_CHECKOUT_CONFIRMATION,UCP_PURCHASE_PROFILE,type UcpOperation,type UcpRequest,type UcpResponse} from './ucp-business.js';
 import type {PapOperationsClient, ProductResult} from '@awiki/dsh-pap/product-api';
 import {PapError} from './state.js';
+import {ASK_METHOD,askOperations,requestAsk,type AskInput} from './ucp-ask.js';
 
 export class PapRequestError extends PapError {
   constructor(readonly detail: Extract<ProductResult,{ok:false}>['error']) {
@@ -11,10 +12,15 @@ function value(result:ProductResult):unknown {
   if(!result.ok)throw new PapRequestError(result.error);
   return result.value;
 }
-type Operation={channel?:string;operationRef:string;companyRef:string;operationId?:string;method:string;queryParameters?:{name:string;required:boolean}[];pathParameters?:string[]};
+type Operation={channel?:string;operationRef:string;companyRef:string;operationId?:string;method:string;queryParameters?:{name:string;required:boolean}[];pathParameters?:string[];account?:boolean;blocked?:boolean};
 export type StoreConnection={ucp?:boolean;ucpCapabilities?:string[];ucpFulfillmentParents?:string[];domain:string;companyRef:string;companyId:string;name:string;methods:string[]};
 const allowedLegacyMethod = (method: string) => !method.startsWith('commerce.') ||
   method === 'commerce.capabilities.get' || method === 'commerce.connections.list';
+
+function askRoute(routes: UcpOperation[]) {
+  if(routes.length!==1)throw new PapError('UCP_ASK_UNAVAILABLE');
+  return routes[0]!;
+}
 
 function storeContext(body: any) {
   const capability = 'com.frontvia.shopping.store_context';
@@ -50,8 +56,9 @@ export class Pap03Transport {
     const operations=await this.operations(companyRef);
     const methods=operations.map(o=>o.operationId).filter((m):m is string=>typeof m==='string'&&/^(commerce|consultation|knowledge)\./.test(m));
     const ucp=operations.some(op=>op.channel==='ucp');
+    const ask=askOperations(connected.company?.ucpCapabilities,operations).length===1;
     const store={domain,companyRef,companyId,ucp,ucpCapabilities:connected.company?.ucpCapabilities,ucpFulfillmentParents:connected.company?.ucpFulfillmentParents,name:connected.company?.name??domain,methods:[...new Set(ucp
-      ? [...methods.filter(allowedLegacyMethod),...ucpBusinessMethods(operations),'commerce.capabilities.get']
+      ? [...methods.filter(allowedLegacyMethod),...ucpBusinessMethods(operations),'commerce.capabilities.get',...(ask?[ASK_METHOD]:[])]
       : methods)]};
     this.stores.set(domain,store);return {...store,methods:[...store.methods]};
   }
@@ -61,11 +68,20 @@ export class Pap03Transport {
     if(!Array.isArray(operations))throw new Error('INVALID_PAP_OPERATIONS');
     return operations.filter((o):o is Operation=>!!o&&typeof o==='object'&&o.companyRef===company&&typeof o.operationRef==='string'&&typeof o.method==='string');
   }
+  async askOperationRef(store:StoreConnection):Promise<string> {
+    return askRoute(askOperations(store.ucpCapabilities,await this.operations(store.companyRef))).operationRef;
+  }
   async request(target:string|StoreConnection,method:string,params:Record<string,unknown>,signal?:AbortSignal):Promise<unknown> {
     signal?.throwIfAborted();
     const store=typeof target==='string' ? this.stores.get(target)??await this.connect(target) : target;
-    if(!/^(commerce|consultation|knowledge)\./.test(method))throw new Error('METHOD_NOT_ADVERTISED');
+    if(method!==ASK_METHOD&&!/^(commerce|consultation|knowledge)\./.test(method))throw new Error('METHOD_NOT_ADVERTISED');
     const operations=await this.operations(store.companyRef);
+    const ask=askOperations(store.ucpCapabilities,operations);
+    if(method===ASK_METHOD) {
+      const route=askRoute(ask);
+      if(route.operationRef!==params.expectedOperationRef)throw new PapError('UCP_ASK_ROUTE_CHANGED');
+      return requestAsk(route,params as AskInput,request=>this.send(request,signal,true));
+    }
     const ucpMethods=ucpBusinessMethods(operations);
     const useUcp = store.ucp || operations.some(op=>op.channel==='ucp');
     if(useUcp && method==='commerce.capabilities.get') {
@@ -87,7 +103,7 @@ export class Pap03Transport {
       }
       const available=contexts.length||hasLegacyMetadata?ucpMethods:
         ucpMethods.filter(method=>/^commerce\.(products|variants)\./.test(method));
-      const methods=[...available,'commerce.capabilities.get',...(!contexts.length&&connections.length===1&&
+      const methods=[...available,'commerce.capabilities.get',...(ask.length===1?[ASK_METHOD]:[]),...(!contexts.length&&connections.length===1&&
         data.methods?.some?.((entry:any)=>entry.method==='commerce.connections.list'&&entry.availability==='supported')
         ?['commerce.connections.list']:[])];
       const ucpFulfillment = ucpMethods.includes('commerce.checkouts.update')
