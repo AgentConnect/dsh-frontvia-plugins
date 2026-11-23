@@ -19,6 +19,8 @@ import {
 } from "./shopping-action.js";
 import { contactSchema, cartContactReady, manualCart, manualContactSchema } from "./contact-fields.js";
 import { ConsultationService, consultationSite } from "./consultation.js";
+import { CustomerAftersales } from "./aftersales.js";
+import type { AftersalesChange } from "./aftersales-contract.js";
 export type CustomerConfig = {
   dataDir: string;
   sites: {
@@ -197,6 +199,7 @@ export class CustomerService {
   private catalogCache = new ReadCache(60000, Date.now, 32);
   private views = new SharedReads();
   readonly consultation: ConsultationService;
+  private readonly aftersales: CustomerAftersales;
   private serial = new Serial();
   constructor(
     readonly config: CustomerConfig,
@@ -205,6 +208,7 @@ export class CustomerService {
   ) {
     if (pap.apiVersion !== 3) fail("PAP_VERSION_UNSUPPORTED");
     this.consultation = new ConsultationService(pap, vault);
+    this.aftersales = new CustomerAftersales(pap, vault);
   }
   private save(f: Flow) {
     f.updatedAt = new Date().toISOString();
@@ -777,6 +781,17 @@ export class CustomerService {
       };
     }
     const flowId = id.parse(args.flowId);
+    if (name === "frontvia_orders" && args.action === "aftersales") {
+      const orderId=z.uuid().parse(args.order_id);
+      const f=this.flow(sessionId,flowId);
+      const view=await this.viewAftersales(sessionId,flowId,orderId,undefined,undefined,signal);
+      const result=this.result(f,"aftersales",{
+        order_id:orderId, available_actions:view.eligibility.allowed,
+        case:view.selected?{id:view.selected.id, stage:view.selected.stage, kind:view.selected.kind}:null,
+        nextStep:"在原订单的售后卡片查看并办理。提交或撤回需要买家在宿主确认。",
+      },orderId);
+      return { ...result, ui:{...result.ui,...(view.selected?{afterSalesCaseId:view.selected.id}:{})} };
+    }
     return this.serial.run(flowId, () =>
       this.shoppingTool(sessionId, flowId, name, args, callId, signal),
     );
@@ -2154,7 +2169,21 @@ export class CustomerService {
       )
     );
   }
-  /** Owner-only: close the original payment at the merchant before canceling. */
+  async viewAftersales(sessionId:string,flowId:string,orderId:string,caseId?:string,cursor?:string,signal?:AbortSignal) {
+    const {connectionRef}=this.flow(sessionId,flowId);
+    const result=await this.aftersales.view({connectionRef,orderId},caseId,cursor,signal);
+    this.flow(sessionId,flowId);
+    return result;
+  }
+
+  /** This is called exclusively from the owner UI and still requires PAP's separate operation approval. */
+  async changeAftersales(sessionId:string,flowId:string,orderId:string,input:AftersalesChange,signal?:AbortSignal) {
+    const {connectionRef}=this.flow(sessionId,flowId);
+    const result=await this.aftersales.change({connectionRef,orderId},input,signal);
+    this.flow(sessionId,flowId);
+    return result;
+  }
+
   async downloadOrderFile(sessionId: string, flowId: string, orderId: string, signal?: AbortSignal) {
     const flow = this.flow(sessionId, flowId);
     const result = await this.pap.request(flow.connectionRef, "commerce.orders.get", { order_id: orderId }, signal);

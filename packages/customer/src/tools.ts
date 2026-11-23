@@ -136,6 +136,7 @@ export const schemas = {
       .object({ ...flow, action: z.literal("list"), cursor: cursor.optional() })
       .strict(),
     z.object({ ...flow, action: z.literal("get"), order_id: ref }).strict(),
+    z.object({ ...flow, action: z.literal("aftersales"), order_id: z.uuid() }).strict(),
     z.object({ ...flow, action: z.literal("recover") }).strict(),
   ]),
 };
@@ -153,7 +154,7 @@ const descriptions: Record<string, string> = {
   frontvia_checkout:
     "UCP 有 Checkout 能力时，prepare 在同一购物车上打开结算草稿卡片，买家在卡片核对地址、配送和实际报价。只支持目录或购物车时，明确告知暂不能结算。旧店铺按已公布的报价操作使用 quote。status 查询原状态。revise 仅处理未确认的结算草稿。提交购买由买家完成。",
   frontvia_orders:
-    "查询本人订单，或在网络结果未知时 recover 核对原操作。禁止新建订单替代未知结果。",
+    "查询本人订单。取消已付款订单、退款、退货、撤回售后或查询售后进度时，先用本人订单 ID 调用 aftersales，打开原订单的售后卡片。申请和撤回由买家在卡片操作并在 PAP 宿主确认。recover 核对原购物操作，禁止新建订单替代未知结果。",
 };
 export function tools(service: CustomerService) {
   return Object.entries(schemas)

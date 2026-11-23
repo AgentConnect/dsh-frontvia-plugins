@@ -90,6 +90,10 @@ export async function apply(
                 request.signal,
               );
             if (operation === "order-file") value = await service.downloadOrderFile(a.sessionId, a.flowId, a.order_id, request.signal);
+            if (operation === "aftersales-view")
+              value = await service.viewAftersales(a.sessionId,a.flowId,a.order_id,a.case_id,a.cursor,request.signal);
+            if (operation === "aftersales-change")
+              value = await service.changeAftersales(a.sessionId,a.flowId,a.order_id,a.input,request.signal);
             if (operation === "original")
               value = await service.consultation.original(
                 a.sessionId,

@@ -60,9 +60,13 @@ import {
   manualCart,
 } from "../contact-fields.js";
 import type { ShoppingAction } from "../shopping-action.js";
+import { AftersalesPanel, type AftersalesRequest } from "./aftersales.js";
 type Action = (operation: string, payload?: any, onResult?: (value: any) => void) => Promise<boolean>;
 type Props = {
   downloadOrder?: (orderId: string) => Promise<any>;
+  aftersales?: AftersalesRequest;
+  initialAftersales?: boolean;
+  initialAftersalesCaseId?: string;
   draftScope: string;
   data: any;
   busy: boolean;
@@ -241,7 +245,7 @@ function UcpCheckoutActions({data, busy, action, now, orderView = false}: {
             pairing.current.open = true;
           }
         }}>
-        {checkout.status === "completed" ? "在浏览器查看订单与售后" : "在浏览器继续"}
+        {checkout.status === "completed" ? "在浏览器查看订单" : "在浏览器继续"}
       </a>
       {!hosted && <details ref={pairing} className="fv-browser-pairing">
         <summary>浏览器要求配对时，输入代码</summary>
@@ -323,6 +327,9 @@ export function Storefront(props: Props) {
 }
 function StorefrontContent({
   downloadOrder,
+  aftersales,
+  initialAftersales,
+  initialAftersalesCaseId,
   data,
   busy,
   error,
@@ -1777,6 +1784,11 @@ function StorefrontContent({
                           </CardContent>
                         </Card>
                         <div className="fv-stack">
+                          {aftersales && (initialAftersales || data.capabilities?.methods?.some(
+                            (method:{method:string;availability:string})=>method.method==="aftersales.eligibility"&&method.availability==="supported",
+                          )) && <AftersalesPanel key={selectedOrder.id} orderId={selectedOrder.id}
+                            initialOpen={initialAftersales && initialOrderId===selectedOrder.id} request={aftersales}
+                            originalCaseId={initialOrderId===selectedOrder.id?initialAftersalesCaseId:undefined} />}
                           {ucpConfirmation && data.checkout?.id === selectedOrder.checkout_id && (
                             <UcpCheckoutActions data={data} busy={busy} action={action} now={now} orderView />
                           )}

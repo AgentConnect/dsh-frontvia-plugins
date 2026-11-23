@@ -259,8 +259,8 @@ export function Order({ order, download }: { order: any; download?: (orderId: st
           )}
         </section>
       ))}
-      {adjustments.length > 0 && <section className="fv-stack" aria-label="售后进展">
-        <h4>售后进展</h4>
+      {adjustments.length > 0 && <section className="fv-stack" aria-label="订单变更记录">
+        <h4>订单变更记录</h4>
         <ul>{adjustments.map((entry: any) => {
           const amount = entry.totals?.find((total: any) => total.type === "total")?.amount;
           return <li key={entry.id}>

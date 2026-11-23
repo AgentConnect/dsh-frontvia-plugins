@@ -51,10 +51,14 @@ async function checkoutBrowserProxy(origin){
 export async function runDsh({fixture,commerce,root}){
   const started=performance.now();
   const selectedPap=publicPapPackage(),selectedIdentity=publicIdentityPackage();
+  const host=JSON.parse(await readFile(join(root,'node_modules/@deepseek-ai/dsh/package.json'),'utf8'));
+  const customer=JSON.parse(await readFile(join(root,'packages/customer/package.json'),'utf8'));
+  const supportedHosts=customer.engines.dsh.split('||').map(version=>version.trim());
+  assert(supportedHosts.includes(host.version),`DSH ${host.version} is outside the pinned Customer host range`);
   const fullFlow=commerce.suite==='dsh-ucp-full';
   const ucp=commerce.suite==='dsh-ucp'||fullFlow;
   const suite=fullFlow?'dsh-ucp-full-e2e':ucp?'dsh-ucp-e2e':'dsh-e2e';
-  console.log(JSON.stringify({suite,papVersion:selectedPap.version,papSource:selectedPap.source,
+  console.log(JSON.stringify({suite,nodeVersion:process.version,dshVersion:host.version,papVersion:selectedPap.version,papSource:selectedPap.source,
     identityVersion:selectedIdentity.version,identitySource:selectedIdentity.source,nativeVersion:selectedIdentity.nativeVersion}));
   const home=join(fixture.root,'dsh-home'),profile=join(home,'profiles','frontvia-e2e');
   await mkdir(join(profile,'node_modules'),{recursive:true,mode:0o700});
@@ -149,7 +153,8 @@ export async function runDsh({fixture,commerce,root}){
       args.push(`--ignore-certificate-errors-spki-list=${spki}`);
       browserProxy=await checkoutBrowserProxy(commerce.origin);
     }
-    browser=await chromium.launch({headless:true,args,...(browserProxy?{proxy:browserProxy.options}:{})});
+    const executablePath=process.env.CHROMIUM_PATH;
+    browser=await chromium.launch({headless:true,args,...(executablePath?{executablePath}:{}),...(browserProxy?{proxy:browserProxy.options}:{})});
     const page=await browser.newPage({viewport:{width:1440,height:1000}});
     await page.goto(url,{waitUntil:'domcontentloaded'});
     // A fresh profile always has the preview notice; late client startup must

@@ -24,3 +24,20 @@ test('PAP03 Customer: uncertain writes preserve the public trace and are not ret
  const f=fixture();f.setResult({ok:false,error:{code:'request_uncertain',businessRequest:'unknown',phase:'request'}});
  await assert.rejects(f.wire.request('shop.example','commerce.carts.create',{}),e=>e instanceof PapRequestError&&e.detail.businessRequest==='unknown');assert.equal(f.requests.length,1);
 });
+
+test('PAP03 Customer: after-sales uses the discovered original path parameters and never injects approval',async()=>{
+ const f=fixture();
+ f.setRows([
+  {companyRef:'shop',operationRef:'get',operationId:'aftersales.get',channel:'openapi',method:'GET',pathParameters:['order_id','case_id']},
+  {companyRef:'shop',operationRef:'send',operationId:'aftersales.submit',channel:'openapi',method:'POST',pathParameters:['order_id'],approvalProtocol:'pap-operations-v3'},
+ ]);
+ await f.wire.request('shop.example','aftersales.get',{order_id:'original-order',case_id:'original-case'});
+ await f.wire.request('shop.example','aftersales.submit',{order_id:'original-order',input:{kind:'cancel_order'},poppyApproval:'ignored'});
+ assert.deepEqual(f.requests,[
+  {operationRef:'get',path:{order_id:'original-order',case_id:'original-case'},query:{}},
+  {operationRef:'send',path:{order_id:'original-order'},query:{},body:{kind:'cancel_order'}},
+ ]);
+ f.setRows([{companyRef:'shop',operationRef:'old',operationId:'aftersales.submit',channel:'openapi',method:'POST',pathParameters:['order_id']}]);
+ await assert.rejects(f.wire.request('shop.example','aftersales.submit',{order_id:'original-order',input:{}}),/AFTERSALES_PAP_UPDATE_REQUIRED/);
+ assert.equal(f.requests.length,2);
+});

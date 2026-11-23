@@ -84,6 +84,7 @@ import {
 import styles from "./styles.css";
 import { ConnectionHelp } from "./connection-help.js";
 import { ConsultationCard } from "./consultation.js";
+import { AftersalesPanel, type AftersalesRequest } from "./aftersales.js";
 export const inject = [
   "slots",
   "layout",
@@ -92,7 +93,7 @@ export const inject = [
   "sessions",
   "conversation",
 ];
-type UI = { flowId: string; sessionId: string; card: string; orderId?: string };
+type UI = { flowId: string; sessionId: string; card: string; orderId?: string; afterSalesCaseId?:string };
 const errorText: Record<string, string> = {
   INVALID_UI_REQUEST: "请求参数无效。",
   SHOPPING_VIEW_FAILED: "暂时无法读取购物进度，请刷新此卡片。",
@@ -306,6 +307,7 @@ export function apply(ctx: any) {
     initialError?: string;
     catalog?: CatalogSnapshot;
   }) {
+    const isAftersales=ui.card==="aftersales";
     const accountRevision = useAccountRevision();
     const [liveRevision, setLiveRevision] = useState(accountRevision);
     const container = useRef<HTMLElement | null>(null);
@@ -317,7 +319,7 @@ export function apply(ctx: any) {
     const scope = useRef<ViewScope>(
       resume || ["products", "connection"].includes(ui.card)
         ? "catalog"
-        : ui.card === "order"
+        : ui.card === "order" || isAftersales
           ? "order"
           : "checkout",
     );
@@ -337,7 +339,7 @@ export function apply(ctx: any) {
       [actionError, setError] = useState(initialError ?? ""),
       [viewError, setViewError] = useState(""),
       [tab, setTab] = useState<string | undefined>(
-        resume ? undefined : ui.card === "connection" ? "products" : ui.card,
+        resume ? undefined : ui.card === "connection" ? "products" : isAftersales?"order":ui.card,
       ),
       [tick, setTick] = useState(Date.now());
     useEffect(() => {
@@ -395,7 +397,7 @@ export function apply(ctx: any) {
       setError(initialError ?? "");
       setViewError("");
       setTab(
-        resume ? undefined : ui.card === "connection" ? "products" : ui.card,
+        resume ? undefined : ui.card === "connection" ? "products" : isAftersales?"order":ui.card,
       );
       return views.subscribe(
         ui,
@@ -426,6 +428,8 @@ export function apply(ctx: any) {
       return () => clearInterval(t);
     }, []);
     const downloadOrder = (order_id: string) => call("order-file", { flowId: ui.flowId, sessionId: ui.sessionId, order_id, card: ui.card });
+    const aftersales:AftersalesRequest=useCallback((op,payload)=>call(op,{flowId:ui.flowId,sessionId:ui.sessionId,card:ui.card,...payload}),
+      [ui.flowId,ui.sessionId,ui.card]);
     const action = async (op: string, payload: any = {}, onResult?: (value: any) => void) => {
       if (acting.current) return false;
       acting.current = true;
@@ -586,7 +590,8 @@ export function apply(ctx: any) {
           }}
         >
           {!resume && <style>{styles}</style>}
-          <Storefront downloadOrder={downloadOrder}
+          <Storefront downloadOrder={downloadOrder} aftersales={aftersales} initialAftersales={isAftersales}
+            initialAftersalesCaseId={ui.afterSalesCaseId}
             key={accountRevision}
             draftScope={JSON.stringify([
               accountRevision,
@@ -603,7 +608,7 @@ export function apply(ctx: any) {
             now={tick}
             startShopping={startShopping}
             addedQuantity={addedQuantity}
-            initialTab={resume ? undefined : ui.card === "order" ? "orders"
+            initialTab={resume ? undefined : ui.card === "order" || isAftersales ? "orders"
               : ui.card === "cart" || ui.card === "quote" ? "cart" : "products"}
             initialOrderId={resume ? undefined : ui.orderId}
             onViewChange={onViewChange}
@@ -1282,6 +1287,8 @@ export function apply(ctx: any) {
                         }}
                       />
                       {data.order && <Order order={data.order} download={downloadOrder} />}{" "}
+                      {isAftersales&&ui.orderId&&<AftersalesPanel key={ui.orderId} orderId={ui.orderId}
+                        request={aftersales} initialOpen originalCaseId={ui.afterSalesCaseId} />}
                       {items(data.orders)
                         .filter(
                           (o: any) => !data.order || o.id !== data.order.id,
