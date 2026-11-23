@@ -47,3 +47,4 @@ python3 tests/e2e/dsh/run.py
 浏览器 suite 输出 3 条逐用例结果，Claude 浏览单独输出 1 条结果。
 
 `python3 tests/e2e/dsh/run.py --ucp-full` 使用同一隔离流程，启动候选 TypeScript Commerce 买家服务和 worker，并通过受控 Mock 渠道完成实际付款链。执行前配置 Core 的专用 PostgreSQL 管理连接和隔离测试身份，沿用上述候选包及浏览器设置。
+付款后用 390px 浏览器从原订单打开售后，核对 PAP 宿主显示的取消条款并由买家确认。Core 读取原生申请和发货占用，确认批准前没有申请、批准后只有一笔在办申请，且店员决定前资金效果为零。重新打开同一订单后核对原申请和协议回执。

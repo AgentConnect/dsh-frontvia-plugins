@@ -30,6 +30,17 @@ export async function apply(ctx,config){
       }
       console.log(JSON.stringify({event:'frontvia-e2e-http',operation,method:options.method,status:response.status,pap10,...(checkout?{checkout}:{})}));
     }
+    if(pathname.startsWith('/poppy/v1/aftersales/')){
+      const headers=new Headers(options?.headers);
+      console.log(JSON.stringify({event:'frontvia-e2e-http',
+        operation:pathname.slice('/poppy/v1/'.length).replace(/\/orders\/[^/]+/,'/orders/:id')
+          .replace(/\/(cases|intents|operations)\/[^/]+/,'/$1/:id'),
+        method:options.method,status:response.status,
+        pap10:headers.get('poppy-version')==='1.0'&&headers.has('poppy-session'),
+        operationsV3:/"operations"\s*;\s*v="3"/.test(headers.get('poppy-extensions')??''),
+        userApproval:/(?:^|,\s*)approver="user"(?:,|$)/.test(headers.get('poppy-approval')??''),
+      }));
+    }
     const operation=pathname.split('/api/')[1];
     if(operation){
       let code;

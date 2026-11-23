@@ -116,6 +116,53 @@ export async function shopUcpFullFlow({page,commerce,logPath}){
       ['PUT','checkout-sessions/:id'],['POST','checkout-sessions/:id/prepare'],['POST','checkout-sessions/:id/handoff/approve'],['GET','orders/:id'],
     ])assert(http.some(request=>request.pap10&&request.method===method&&request.operation===operation&&request.status<300),`Missing PAP 1.0 ${method} ${operation}`);
     result('passed');
+
+    currentCase='DSH-UCP-FULL-004-original-order-aftersales-approval-and-reopen';
+    await page.setViewportSize({width:390,height:844});
+    const openAftersales=async()=>{
+      await storefront.getByRole('button',{name:'查看售后',exact:true}).click({timeout:60000});
+      await storefront.getByText('订单售后',{exact:true}).waitFor({state:'visible'});
+    };
+    checkpoint='aftersales-original-card';
+    await openAftersales();
+    await storefront.getByRole('heading',{name:'取消整张订单',exact:true}).waitFor({timeout:60000});
+    await storefront.getByRole('textbox',{name:'申请原因',exact:true}).fill('I placed this test order by mistake');
+    await storefront.getByRole('button',{name:'核对并确认申请',exact:true}).click();
+    checkpoint='aftersales-host-approval';
+    const approval=page.getByRole('dialog',{name:'确认本次操作',exact:true});
+    const approvalButton=approval.getByRole('button',{name:'允许本次操作',exact:true});
+    await approvalButton.waitFor({timeout:60000});
+    if(!(await approval.innerText()).includes('取消整张订单')){
+      await approvalButton.click();
+    }
+    const terms=approval.filter({hasText:'取消整张订单'});
+    await terms.getByText(/本单最多成功退款一次/).first().waitFor({timeout:60000});
+    assert((await terms.innerText()).includes(originalOrder));
+    const beforeApproval=await observeFacts(commerce,'ucp-before-aftersales-approval');
+    assert.equal(beforeApproval.cancelCases,0);
+    assert.equal(beforeApproval.refunds,0);
+    await terms.getByRole('button',{name:'允许本次操作',exact:true}).click();
+    await terms.waitFor({state:'hidden'});
+    checkpoint='aftersales-original-receipt';
+    const status=storefront.getByRole('heading',{name:'等待店铺审核',exact:true});
+    const checkOriginal=storefront.getByRole('button',{name:'查询这笔申请',exact:true});
+    await status.or(checkOriginal).first().waitFor({state:'visible',timeout:60000});
+    if(await checkOriginal.isVisible())await checkOriginal.click();
+    await status.waitFor({state:'visible',timeout:60000});
+    const admitted=await observeFacts(commerce,'ucp-after-aftersales-approval');
+    assert.deepEqual(admitted,{cancelCases:1,heldOrders:1,refunds:0});
+    await page.reload({waitUntil:'domcontentloaded'});
+    if(!await storefront.isVisible())await page.getByRole('button',{name:'Frontvia 服务',exact:true}).click({timeout:30000});
+    await storefront.getByRole('tab',{name:'我的订单',exact:true}).click({timeout:60000});
+    await original.getByRole('button',{name:/^查看详情：/}).click({timeout:60000});
+    await openAftersales();
+    await status.waitFor({state:'visible',timeout:60000});
+    assert.deepEqual(await observeFacts(commerce,'ucp-aftersales-reopened'),admitted);
+    const operations=(await readFile(logPath,'utf8')).split('\n').filter(line=>line.startsWith('{"event":"frontvia-e2e-http"'))
+      .map(line=>JSON.parse(line)).filter(entry=>entry.operation==='aftersales/orders/:id/cases'&&entry.method==='POST');
+    assert(operations.some(entry=>entry.pap10&&entry.operationsV3&&!entry.userApproval&&entry.status===403));
+    assert(operations.some(entry=>entry.pap10&&entry.operationsV3&&entry.userApproval&&[200,202].includes(entry.status)));
+    result('passed');
   }catch(error){
     result('failed');
     throw error;
