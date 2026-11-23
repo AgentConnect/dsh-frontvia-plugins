@@ -90,7 +90,15 @@ export async function shopUcpFullFlow({page,commerce,logPath}){
     await handoff.locator('#handoff-order').waitFor({state:'visible',timeout:90000});
     await handoff.locator('#handoff-order').click();
     checkpoint='order-support';
-    await handoff.locator('#order-request-form').waitFor({state:'visible'});
+    await handoff.getByRole('heading',{name:'商品与金额',exact:true}).waitFor({state:'visible'});
+    const support=handoff.getByRole('region',{name:'订单咨询与客服',exact:true});
+    const contact=support.getByRole('link',{name:'联系客服',exact:true});
+    await contact.waitFor({state:'visible'});
+    const supportUrl=new URL(await contact.getAttribute('href'),handoff.url());
+    assert.equal(supportUrl.origin,commerce.origin);
+    assert.equal(supportUrl.pathname,'/');
+    assert(supportUrl.searchParams.get('support_order'),'Support retains the order number');
+    assert.equal(await support.locator('form').count(),0);
     assert.equal(await other.locator('#handoff-order').isVisible(),false);
     const done=await observeFacts(commerce,'ucp-after-full-purchase');
     for(const key of ['nativeCheckouts','quotas','paymentSessions','orders','captured'])assert.equal(done[key],before[key]+1,key);

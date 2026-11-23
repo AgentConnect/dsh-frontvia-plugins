@@ -32,6 +32,23 @@ def core_node(environment):
     return Path(node).resolve()
 
 
+def check_live_inputs(plugin, environment):
+    default_state = plugin / ".local/identity/awiki-me"
+    auth = plugin / environment.get("FRONTVIA_IDENTITY_TEST_AUTH_FILE", default_state / "auth.json")
+    state = plugin / environment.get("FRONTVIA_IDENTITY_TEST_STATE", default_state)
+    missing = []
+    if not auth.is_file():
+        missing.append("FRONTVIA_IDENTITY_TEST_AUTH_FILE or .local/identity/awiki-me/auth.json")
+    if not (state / "enrollment.json").is_file():
+        missing.append("FRONTVIA_IDENTITY_TEST_STATE with the published test identity enrollment")
+    if not environment.get("DEEPSEEK_API_KEY", "").strip():
+        missing.append("DEEPSEEK_API_KEY")
+    if not shutil.which("claude", path=environment.get("PATH")):
+        missing.append("claude on PATH")
+    if missing:
+        raise ValueError("Supply the live DSH test inputs " + ", ".join(missing))
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     suites = parser.add_mutually_exclusive_group()
@@ -43,6 +60,8 @@ def main():
     core = Path(os.environ.get("FRONTVIA_CORE_ROOT", str(plugin.parent / "frontvia-core"))).resolve()
     try:
         node, version = dsh_node(os.environ)
+        if not args.preflight_only:
+            check_live_inputs(plugin, os.environ)
     except (OSError, ValueError, subprocess.CalledProcessError) as error:
         parser.error(str(error))
     print(f"DSH Node.js {version}: {node}", flush=True)

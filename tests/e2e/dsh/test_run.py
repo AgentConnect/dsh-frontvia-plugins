@@ -1,5 +1,6 @@
 import importlib.util
 from pathlib import Path
+from tempfile import TemporaryDirectory
 import unittest
 from unittest.mock import patch
 
@@ -30,6 +31,23 @@ class RunnerPreflight(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "FRONTVIA_DSH_TEST_NODE"):
             runner.dsh_node({"PATH": "/test/missing"})
 
+    @patch.object(runner.shutil, "which", return_value="/test/claude")
+    def test_live_inputs_require_published_identity_and_model_without_reading_secrets(self, which):
+        with TemporaryDirectory() as directory:
+            plugin = Path(directory)
+            with self.assertRaisesRegex(ValueError, "FRONTVIA_IDENTITY_TEST_AUTH_FILE.*FRONTVIA_IDENTITY_TEST_STATE.*DEEPSEEK_API_KEY"):
+                runner.check_live_inputs(plugin, {})
+            auth = plugin / "test-auth.json"
+            auth.touch()
+            state = plugin / "existing-test-state"
+            state.mkdir()
+            (state / "enrollment.json").touch()
+            runner.check_live_inputs(plugin, {
+                "FRONTVIA_IDENTITY_TEST_AUTH_FILE": auth.name,
+                "FRONTVIA_IDENTITY_TEST_STATE": str(state),
+                "DEEPSEEK_API_KEY": "fixture",
+            })
+            which.assert_called_with("claude", path=None)
 
 if __name__ == "__main__":
     unittest.main()

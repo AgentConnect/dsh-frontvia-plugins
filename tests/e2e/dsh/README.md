@@ -18,6 +18,8 @@ python3 tests/e2e/dsh/run.py
 
 在运行前执行 `python3 tests/e2e/dsh/test_run.py` 和 `python3 tests/e2e/dsh/run.py --preflight-only`。DSH 使用从 PATH 解析的 Node.js，或 `FRONTVIA_DSH_TEST_NODE` 的指定可执行文件，版本至少为 24.9.0。Core 使用 mise 的 Node.js 22.23.1，或从 `FRONTVIA_CORE_TEST_NODE` 指定该版本的绝对路径。通过 `CHROMIUM_PATH` 可指定本机浏览器。runner 输出隔离进程的 Node.js、实际加载的 DSH 宿主和候选包版本。
 
+`--preflight-only` 核对 DSH Node.js 和 Chromium。实际用例在构建前检查保护的 OTP 输入文件、已发布测试身份的 `enrollment.json`、`DEEPSEEK_API_KEY` 和 PATH 上的 `claude`。缺少输入时报告配置名，凭据值不进入日志。
+
 测试预设配置方式及保留边界见 Core 系统测试目录 README；不再需要 `DSH_IDENTITY_USER_SERVICE_SOURCE` 或本地 User Service Python 路径。预设仅注册/Join/恢复可用，不用它模拟普通短信登录或注销。
 
 公共包来源由 `tests/support/public-pap.mjs` 选择：默认正式 npm 包，显式本地联调使用 `FRONTVIA_PAP_TEST_PACKAGE_ROOT` 并先重打包。开始时输出实际 PAP 版本及来源；源码候选结果不代表 registry 包验收。
@@ -47,4 +49,4 @@ python3 tests/e2e/dsh/run.py
 浏览器 suite 输出 3 条逐用例结果，Claude 浏览单独输出 1 条结果。
 
 `python3 tests/e2e/dsh/run.py --ucp-full` 使用同一隔离流程，启动候选 TypeScript Commerce 买家服务和 worker，并通过受控 Mock 渠道完成实际付款链。执行前配置 Core 的专用 PostgreSQL 管理连接和隔离测试身份，沿用上述候选包及浏览器设置。
-付款后用 390px 浏览器从原订单打开售后，核对 PAP 宿主显示的取消条款并由买家确认。Core 读取原生申请和发货占用，确认批准前没有申请、批准后只有一笔在办申请，且店员决定前资金效果为零。重新打开同一订单后核对原申请和协议回执。
+付款后先核对浏览器永久链接可读、客服同源并携带订单号、咨询区没有提交申请表单。再用 390px 浏览器从 DSH 的原订单打开售后，核对 PAP 宿主显示的取消条款并由买家确认。Core 读取原生申请和发货占用，确认批准前没有申请、批准后只有一笔在办申请，且店员决定前资金效果为零。重新打开同一订单后核对原申请和协议回执。
