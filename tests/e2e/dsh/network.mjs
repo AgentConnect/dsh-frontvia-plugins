@@ -1,5 +1,10 @@
+import {createHash} from 'node:crypto';
 import {readFile} from 'node:fs/promises';
 import {pathToFileURL} from 'node:url';
+
+export function caseFingerprint(orderId,caseId){
+  return createHash('sha256').update(JSON.stringify([orderId,caseId])).digest('hex');
+}
 
 /** Test-only loopback TLS routing; the production PAP transport still verifies certificates. */
 export async function apply(ctx,config){
@@ -32,6 +37,15 @@ export async function apply(ctx,config){
     }
     if(pathname.startsWith('/poppy/v1/aftersales/')){
       const headers=new Headers(options?.headers);
+      let originalCase;
+      if(response.status===200&&options.method==='GET'&&pathname.endsWith('/eligibility')){
+        try{
+          const facts=JSON.parse(Buffer.from(response.body).toString());
+          if(typeof facts.order_id==='string'&&typeof facts.active_case?.id==='string'){
+            originalCase=caseFingerprint(facts.order_id,facts.active_case.id);
+          }
+        }catch{}
+      }
       console.log(JSON.stringify({event:'frontvia-e2e-http',
         operation:pathname.slice('/poppy/v1/'.length).replace(/\/orders\/[^/]+/,'/orders/:id')
           .replace(/\/(cases|intents|operations)\/[^/]+/,'/$1/:id'),
@@ -39,6 +53,7 @@ export async function apply(ctx,config){
         pap10:headers.get('poppy-version')==='1.0'&&headers.has('poppy-session'),
         operationsV3:/"operations"\s*;\s*v="3"/.test(headers.get('poppy-extensions')??''),
         userApproval:/(?:^|,\s*)approver="user"(?:,|$)/.test(headers.get('poppy-approval')??''),
+        originalCase,
       }));
     }
     const operation=pathname.split('/api/')[1];

@@ -1,13 +1,22 @@
 import assert from 'node:assert/strict';
-import {readFile,writeFile} from 'node:fs/promises';
+import {readFile,rename,writeFile} from 'node:fs/promises';
 import {join} from 'node:path';
 import {setTimeout as delay} from 'node:timers/promises';
+import {caseFingerprint} from './network.mjs';
 
 const SUITE='dsh-ucp-full-e2e';
 const EMAIL='ucp-full-flow@example.test';
 
-async function observeFacts(commerce,phase){
-  await writeFile(join(commerce.controlDir,phase+'.request'),'ready',{mode:0o600});
+async function protocolTrace(logPath){
+  const output=await readFile(logPath,'utf8');
+  return output.split('\n').slice(0,-1)
+    .filter(line=>line.startsWith('{"event":"frontvia-e2e-http"')).map(line=>JSON.parse(line));
+}
+
+async function observeFacts(commerce,phase,orderId){
+  const request=join(commerce.controlDir,phase+'.request');
+  await writeFile(request+'.tmp',JSON.stringify({orderId}),{mode:0o600});
+  await rename(request+'.tmp',request);
   const deadline=Date.now()+30000;
   while(Date.now()<deadline){
     try{return JSON.parse(await readFile(join(commerce.controlDir,phase+'.json'),'utf8'));}
@@ -118,7 +127,7 @@ export async function shopUcpFullFlow({page,commerce,logPath}){
     await storefront.getByRole('heading',{name:'订单详情',exact:true}).waitFor({state:'visible',timeout:60000});
     const restored=await observeFacts(commerce,'ucp-after-browser-refresh');
     assert.deepEqual(restored,done,'Reload did not re-create the accepted transaction');
-    const http=(await readFile(logPath,'utf8')).split('\n').filter(line=>line.startsWith('{"event":"frontvia-e2e-http"')).map(line=>JSON.parse(line));
+    const http=await protocolTrace(logPath);
     for(const [method,operation] of [
       ['POST','catalog/search'],['POST','carts'],['POST','checkout-sessions'],
       ['PUT','checkout-sessions/:id'],['POST','checkout-sessions/:id/prepare'],['POST','checkout-sessions/:id/handoff/approve'],['GET','orders/:id'],
@@ -146,9 +155,8 @@ export async function shopUcpFullFlow({page,commerce,logPath}){
     const terms=approval.filter({hasText:'取消整张订单'});
     await terms.getByText(/本单最多成功退款一次/).first().waitFor({timeout:60000});
     assert((await terms.innerText()).includes(originalOrder));
-    const beforeApproval=await observeFacts(commerce,'ucp-before-aftersales-approval');
-    assert.equal(beforeApproval.cancelCases,0);
-    assert.equal(beforeApproval.refunds,0);
+    const beforeApproval=await observeFacts(commerce,'ucp-before-aftersales-approval',originalOrder);
+    assert.deepEqual(beforeApproval,{orderId:originalOrder,caseId:null,cancelCases:0,refunds:0});
     await terms.getByRole('button',{name:'允许本次操作',exact:true}).click();
     await terms.waitFor({state:'hidden'});
     checkpoint='aftersales-original-receipt';
@@ -157,17 +165,23 @@ export async function shopUcpFullFlow({page,commerce,logPath}){
     await status.or(checkOriginal).first().waitFor({state:'visible',timeout:60000});
     if(await checkOriginal.isVisible())await checkOriginal.click();
     await status.waitFor({state:'visible',timeout:60000});
-    const admitted=await observeFacts(commerce,'ucp-after-aftersales-approval');
-    assert.deepEqual(admitted,{cancelCases:1,heldOrders:1,refunds:0});
+    const admitted=await observeFacts(commerce,'ucp-after-aftersales-approval',originalOrder);
+    assert.match(admitted.caseId,/^[a-f0-9-]{36}$/);
+    assert.deepEqual(admitted,{orderId:originalOrder,caseId:admitted.caseId,cancelCases:1,refunds:0});
+    const admissionTrace=await protocolTrace(logPath);
     await page.reload({waitUntil:'domcontentloaded'});
     if(!await storefront.isVisible())await page.getByRole('button',{name:'Frontvia 服务',exact:true}).click({timeout:30000});
     await storefront.getByRole('tab',{name:'我的订单',exact:true}).click({timeout:60000});
     await original.getByRole('button',{name:/^查看详情：/}).click({timeout:60000});
     await openAftersales();
     await status.waitFor({state:'visible',timeout:60000});
-    assert.deepEqual(await observeFacts(commerce,'ucp-aftersales-reopened'),admitted);
-    const operations=(await readFile(logPath,'utf8')).split('\n').filter(line=>line.startsWith('{"event":"frontvia-e2e-http"'))
-      .map(line=>JSON.parse(line)).filter(entry=>entry.operation==='aftersales/orders/:id/cases'&&entry.method==='POST');
+    assert.deepEqual(await observeFacts(commerce,'ucp-aftersales-reopened',originalOrder),admitted);
+    const restoredTrace=(await protocolTrace(logPath)).slice(admissionTrace.length);
+    const expectedCase=caseFingerprint(originalOrder,admitted.caseId);
+    assert(restoredTrace.some(entry=>entry.pap10&&entry.operationsV3&&entry.method==='GET'&&
+      entry.operation==='aftersales/orders/:id/eligibility'&&entry.originalCase===expectedCase),
+      'After reload DSH must read the same Commerce case tied to the Native hold');
+    const operations=admissionTrace.filter(entry=>entry.operation==='aftersales/orders/:id/cases'&&entry.method==='POST');
     assert(operations.some(entry=>entry.pap10&&entry.operationsV3&&!entry.userApproval&&entry.status===403));
     assert(operations.some(entry=>entry.pap10&&entry.operationsV3&&entry.userApproval&&[200,202].includes(entry.status)));
     result('passed');
