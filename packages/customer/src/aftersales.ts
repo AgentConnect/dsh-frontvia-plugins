@@ -35,7 +35,6 @@ export class CustomerAftersales {
   private async read(scope:OrderScope,key:string,selected?:string,cursor?:string,signal?:AbortSignal,
       message?:AftersalesView["message"],deferHistory=false):Promise<AftersalesView> {
     const order_id=scope.orderId;
-    const previous=this.vault.get<string>(key+":case");
     let pending=this.vault.get<StoredIntent>(key);
     if(pending?.phase==="reconciling"){
       const outcome=aftersalesIntentOutcome.parse(pending.operationId
@@ -49,7 +48,7 @@ export class CustomerAftersales {
       }else if(!outcome.operation_id||pending.operationId&&outcome.operation_id!==pending.operationId){
         fail("AFTERSALES_CHANGED");
       }else if(outcome.status==="performed"){
-        selected=outcome.case_id??selected;
+        selected=selected??outcome.case_id;
         message=outcome.effect==="none"?"no_effect":"recorded";
         this.vault.set(key,null);
         pending=undefined;
@@ -65,15 +64,15 @@ export class CustomerAftersales {
     const defer=deferHistory&&!cursor;
     const [eligibility,history]=await Promise.all([readEligibility(),defer?undefined:readHistory()]);
     // A terminal order opened on a new device still needs its latest case.
-    const needsLatest=!selected&&!previous&&!eligibility.active_case&&!eligibility.allowed.length;
-    const caseHistory=history??(needsLatest?await readHistory():undefined);
+    const needsHistory=!selected&&!eligibility.active_case&&eligibility.latest_case_id===undefined;
+    const caseHistory=history??(needsHistory?await readHistory():undefined);
     if(eligibility.order_id!==order_id||caseHistory?.items.some(entry=>entry.order_id!==order_id))fail("AFTERSALES_CHANGED");
-    const caseId=selected??eligibility.active_case?.id??(!cursor?caseHistory?.items[0]?.id:undefined)??previous;
+    const caseId=selected??eligibility.active_case?.id??eligibility.latest_case_id;
     const entry=caseId&&caseId!==eligibility.active_case?.id
       ? aftersalesCase.parse(await this.request(scope,"aftersales.get",{order_id,case_id:caseId},signal))
       : eligibility.active_case;
     if(entry&&entry.order_id!==order_id)fail("AFTERSALES_CHANGED");
-    if(entry)this.vault.set(key+":case",entry.id);
+    if(caseId&&entry?.id!==caseId)fail("AFTERSALES_CHANGED");
     return {eligibility,selected:entry,history:caseHistory??{items:[],page:{has_more:false,next_cursor:null}},
       ...(!caseHistory?{historyDeferred:true as const}:{}),
       ...(pending?{pending:{phase:pending.phase,input:pending.input}}:{}),...(message?{message}:{})};

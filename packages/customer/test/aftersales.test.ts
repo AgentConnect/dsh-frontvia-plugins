@@ -24,7 +24,7 @@ const scope={orderId,connectionRef:"original-store-and-identity"};
 const cancel={kind:"cancel_order",reason:"重复购买"} as const;
 const eligibility:AftersalesView["eligibility"]={
   order_id:orderId,lines:[{id:lineId,title:"测试商品",kind:"physical",quantity:2,packed:0,shipped:0,unshipped:2}],
-  active_case:null,allowed:["cancel_order"],reasons:[],currency:"CNY",captured_minor:"21000",refundable_minor:"21000",
+  latest_case_id:null,active_case:null,allowed:["cancel_order"],reasons:[],currency:"CNY",captured_minor:"21000",refundable_minor:"21000",
   original_shipping_minor:"1000",refund_opportunity:"available",support:{support_contact:"support@example.test",support_hours:"周一至周五"},
 };
 const entry:NonNullable<AftersalesView["selected"]>={
@@ -35,7 +35,7 @@ const entry:NonNullable<AftersalesView["selected"]>={
 };
 const history={items:[entry],page:{has_more:false,next_cursor:null}};
 
-function fixture(currentHistory=history,currentEntry=entry) {
+function fixture(currentHistory=history,currentEntry=entry,qualification=eligibility) {
   const records=new Map<string,unknown>();
   const vault={get<T>(key:string){return records.get(key) as T|undefined;},set(key:string,value:unknown){records.set(key,structuredClone(value));}};
   const calls:{method:string;params:any}[]=[];
@@ -45,7 +45,7 @@ function fixture(currentHistory=history,currentEntry=entry) {
   const pap={request:async(ref:string,method:string,params:any)=>{
     assert.equal(ref,scope.connectionRef);
     calls.push({method,params});
-    if(method==="aftersales.eligibility")return eligibility;
+    if(method==="aftersales.eligibility")return qualification;
     if(method==="aftersales.list")return currentHistory;
     if(method==="aftersales.get")return currentEntry;
     if(method==="aftersales.operation.get")return lookup();
@@ -60,7 +60,7 @@ function fixture(currentHistory=history,currentEntry=entry) {
 test("a fresh client opens the original settled case when there is no active hold",async()=>{
   const settled:typeof entry={...entry,stage:"refunded",return_instructions:null,
     refund:{state:"confirmed",amount_minor:"100",shipping_minor:"0",currency:"CNY",reason:"已退"}};
-  const f=fixture({...history,items:[settled]},settled);
+  const f=fixture({...history,items:[{...entry,id:lineId}]},settled,{...eligibility,latest_case_id:caseId});
   const result=await f.build().view(scope);
   assert.equal(result.selected?.id,caseId);
   assert.equal(result.selected?.stage,"refunded");
@@ -176,6 +176,8 @@ test("the buyer sees verified money separately from a pending digital entitlemen
     })}));
   });
   const text=JSON.stringify(ui.toJSON());
+  assert.match(text,/裁定原因/);
+  assert.match(text,/退款已确认/);
   assert.match(text,/已确认退款/);
   assert.match(text,/数字内容已停止访问，正在更新权益记录/);
   assert.doesNotMatch(text,/数字内容权益已撤销/);
@@ -189,7 +191,8 @@ test("owner first paint reads eligibility before history and preserves original-
   assert.deepEqual(first.eligibility.allowed,["cancel_order"]);
   assert.deepEqual(f.calls.map(call=>call.method),["aftersales.eligibility"]);
   const full=await service.view(scope);
-  assert.equal(full.selected?.id,caseId);
+  assert.equal(full.selected,null);
+  assert.equal(full.history.items[0]?.id,caseId);
   const other=fixture({...history,items:[{...entry,order_id:lineId}]});
   await assert.rejects(other.build().view(scope),{code:"AFTERSALES_CHANGED"});
 });
@@ -208,7 +211,7 @@ test("an order refund rechecks the selected case and an empty action list render
   settled=true;
   await act(async()=>{ui.update(panel("refunded"));});
   assert.equal(calls.length,2);
-  assert.equal(calls[1].case_id,caseId);
+  assert.equal(calls[1].case_id,undefined);
   assert.match(JSON.stringify(ui.toJSON()),/渠道已确认退款/);
   assert(!ui.root.findAll(node=>node.children.some(child=>child==="0")).length);
   await act(async()=>ui.unmount());
@@ -236,4 +239,20 @@ test("a partial return keeps the original capture, refund, net and shipping inde
     assert.equal(siblings[siblings.indexOf(term)+1],rows.find(node=>node.children.join("")===amount));
   }
   await act(async()=>ui.unmount());
+});
+
+test("shows each unavailable purchase policy beside its product and preserves store contact",async()=>{
+  for (const allowed of [[],["refund_only"]] as const) {
+    let ui!:ReturnType<typeof create>;
+    const line={...eligibility.lines[0]!,refund_only:{allowed:allowed.length>0,reason:"policy_window_expired"},
+      return_and_refund:{allowed:false,reason:"policy_excludes_refund"}};
+    await act(async()=>{ui=create(React.createElement(AftersalesPanel,{orderId,initialOpen:true,request:async()=>({
+      eligibility:{...eligibility,lines:[line],allowed:[...allowed]},selected:null,history:{items:[],page:{has_more:false,next_cursor:null}}
+    })}));});
+    const text=JSON.stringify(ui.toJSON());
+    assert.match(text,/购买时的政策不支持这项退款/);
+    assert.equal(text.includes("已超过购买时政策的申请期限"),allowed.length===0);
+    assert.match(text,/support@example.test/);
+    await act(async()=>ui.unmount());
+  }
 });

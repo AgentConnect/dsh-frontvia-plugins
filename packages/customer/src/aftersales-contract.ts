@@ -18,7 +18,7 @@ export const aftersalesCase = caseSummary.extend({
   original_shipping_refund_minor: amount,
   digital_access: z.enum(["available","not_granted","revocation_pending","revoked"]).nullish(),
   cancellation_pending: z.boolean().optional(),
-  lines: z.array(selection.extend({merchant_review:z.boolean().optional()})),
+  lines: z.array(selection.extend({title:z.string().nullish(),merchant_review:z.boolean().optional()})),
   return: z.object({
     status: z.string(),
     items: z.array(selection.extend({received:nonnegative,damaged:nonnegative})),
@@ -44,6 +44,7 @@ export const aftersalesEligibility = z.object({
   original_shipping_minor:amount.nullish(),
   refund_opportunity:z.enum(["used","held","available","unavailable"]),
   support:z.object({support_contact:z.string().nullable(),support_hours:z.string().nullable()}),
+  latest_case_id: z.uuid().nullish(),
   active_case:aftersalesCase.nullable(),
 });
 export const aftersalesOutcome = z.object({
