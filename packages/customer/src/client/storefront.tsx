@@ -31,6 +31,7 @@ import {
   EmptyTitle,
   EmptyDescription,
   Field,
+  FieldError,
   FieldGroup,
   FieldSet,
   FieldLegend,
@@ -55,6 +56,8 @@ import { productImage } from "./product-image.js";
 import { PaymentCard, paymentState } from "./payment-card.js";
 import {
   isRequiredContact,
+  isNumericChineseAddress,
+  numericAddressMessage,
   cartContactReady,
   deliveryReady as currentDeliveryReady,
   manualCart,
@@ -108,8 +111,12 @@ function AddressForm({
   form,
   setForm,
   saveLabel,
+  error,
+  onSaveAttempt,
 }: {
   saveLabel?: string;
+  error?: string;
+  onSaveAttempt?: () => void;
   form: Record<string, string>;
   setForm: (value: Record<string, string>) => void;
   data: any;
@@ -119,12 +126,23 @@ function AddressForm({
 }) {
   const id = useId();
   const [saving, setSaving] = useState(false);
+  const [saveFailed, setSaveFailed] = useState(false);
+  const [invalidAddress, setInvalidAddress] = useState(false);
   const savingRef = useRef(false);
+  const lineInput = useRef<HTMLInputElement>(null);
   return (
     <form
       onSubmit={async (event) => {
         event.preventDefault();
-        if (savingRef.current) return;
+        if (busy || savingRef.current) return;
+        setSaveFailed(false);
+        onSaveAttempt?.();
+        if (isNumericChineseAddress(data.pricing.country, form.line1 ?? "")) {
+          setInvalidAddress(true);
+          lineInput.current?.focus();
+          return;
+        }
+        setInvalidAddress(false);
         savingRef.current = true;
         setSaving(true);
         try {
@@ -136,14 +154,16 @@ function AddressForm({
               ...(email?.trim() ? { email: email.trim() } : {}),
               shipping_address: { ...address, country: data.pricing.country },
             },
-          });
+          }).catch(() => false);
           if (ok) await next();
+          else setSaveFailed(true);
         } finally {
           savingRef.current = false;
           setSaving(false);
         }
       }}
       className="fv-stack"
+      aria-busy={saving}
     >
       <FieldGroup>
         {contactFields.map(([key, label, autoComplete, max]) => (
@@ -151,6 +171,7 @@ function AddressForm({
             key={key}
             className={key === "line1" ? "fv-wide" : undefined}
             data-disabled={busy || saving}
+            data-invalid={key === "line1" && invalidAddress ? true : undefined}
           >
             <FieldLabel htmlFor={`${id}-${key}`}>
               {label}
@@ -159,6 +180,7 @@ function AddressForm({
             <Input
               id={`${id}-${key}`}
               name={key}
+              ref={key === "line1" ? lineInput : undefined}
               autoComplete={autoComplete}
               required={isRequiredContact(data.pricing.country, key)}
               maxLength={max}
@@ -167,8 +189,17 @@ function AddressForm({
               }
               value={form[key] ?? ""}
               disabled={busy || saving}
-              onChange={(e) => setForm({ ...form, [key]: e.target.value })}
+              aria-invalid={key === "line1" && invalidAddress ? true : undefined}
+              aria-describedby={key === "line1" && invalidAddress ? `${id}-address-error` : undefined}
+              onChange={(e) => {
+                setSaveFailed(false);
+                if (key === "line1") setInvalidAddress(false);
+                setForm({ ...form, [key]: e.target.value });
+              }}
             />
+            {key === "line1" && invalidAddress && (
+              <FieldError id={`${id}-address-error`}>{numericAddressMessage}</FieldError>
+            )}
           </Field>
         ))}
       </FieldGroup>
@@ -177,9 +208,14 @@ function AddressForm({
         。收货资料仅用于配送，不会发送给 AI 模型。
       </p>
       <Button type="submit" disabled={busy || saving}>
-        {saving && <Spinner />}{saveLabel ?? "保存地址，选择配送"}
+        {saving && <Spinner />}{saving ? "正在保存…" : saveLabel ?? "保存地址，选择配送"}
         <ArrowRight data-icon="inline-end" />
       </Button>
+      {saveFailed && (
+        <Alert variant="destructive">
+          <AlertDescription>{error || "未能确认收货信息已保存，请核对原草稿。"}</AlertDescription>
+        </Alert>
+      )}
     </form>
   );
 }
@@ -339,6 +375,7 @@ function StorefrontContent({
     cartId: string;
     values: Record<string, string>;
   }>();
+  const [savedAddressCheckout, setSavedAddressCheckout] = useState<string>();
   useEffect(() => {
     // A missing read result must not clear the local draft. A different cart must.
     if (data?.cart?.id && addressDraft && addressDraft.cartId !== data.cart.id)
@@ -1243,10 +1280,27 @@ function StorefrontContent({
                                 )}
                                 {data.checkout?.status === "incomplete" && !data.checkout.emailOnly && !manualDelivery
                                     && data.capabilities.ucpFulfillment && ["US","CN"].includes(data.pricing.country) && (
-                                  <AddressForm data={data} busy={blocked} action={action} saveLabel="保存到结算草稿"
-                                    form={addressDraft&&addressDraft.cartId===data.cart.id?addressDraft.values:confirmedAddress}
-                                    setForm={values=>setAddressDraft({cartId:data.cart.id,values})}
-                                    next={async()=>{setAddressDraft(undefined);}} />
+                                  <AddressForm
+                                    key={data.checkout.id}
+                                    data={data}
+                                    busy={blocked}
+                                    action={action}
+                                    saveLabel="保存到结算草稿"
+                                    error={error}
+                                    form={addressDraft && addressDraft.cartId === data.cart.id ? addressDraft.values : confirmedAddress}
+                                    onSaveAttempt={() => setSavedAddressCheckout(undefined)}
+                                    setForm={values => {
+                                      setSavedAddressCheckout(undefined);
+                                      setAddressDraft({ cartId: data.cart.id, values });
+                                    }}
+                                    next={async () => {
+                                      setAddressDraft(undefined);
+                                      setSavedAddressCheckout(data.checkout.id);
+                                    }}
+                                  />
+                                )}
+                                {savedAddressCheckout && !canceledDraft && savedAddressCheckout === data.checkout?.id && (
+                                  <p className="fv-muted" role="status">收货信息已保存到结算草稿。</p>
                                 )}
                                 {data.checkout?.status === "incomplete" && shippingDraft?.groups?.map((group:any) => (
                                   <FieldSet key={group.id}>

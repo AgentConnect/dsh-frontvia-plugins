@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { cartContactReady } from "../src/contact-fields.js";
+import { cartContactReady, contactSchema } from "../src/contact-fields.js";
 import { uiSchemas } from "../src/ui-contract.js";
 
 test("owner contact route accepts a manual email patch without accepting invalid email or scope fields", () => {
@@ -9,6 +9,35 @@ test("owner contact route accepts a manual email patch without accepting invalid
   assert.equal(uiSchemas.contact.safeParse(request).success,true);
   assert.equal(uiSchemas.contact.safeParse({...request,patch:{email:"invalid"}}).success,false);
   assert.equal(uiSchemas.contact.safeParse({...request,tenant_id:"other-tenant"}).success,false);
+});
+
+test("owner contact route rejects a numeric-only mainland address without requiring split address fields", () => {
+  const complete = {
+    shipping_address: {
+      country: "CN",
+      recipient: "测试买家",
+      phone: "13800138000",
+      line1: "测试镇新庄村 1 号",
+      region: "",
+      city: "",
+      postal_code: "",
+    },
+  };
+  const request = {
+    sessionId: "owned-session",
+    flowId: "00000000-0000-4000-8000-000000000001",
+    actionId: "00000000-0000-4000-8000-000000000002",
+    expected_version: "v1",
+  };
+  assert.equal(uiSchemas.contact.safeParse({ ...request, patch: complete }).success, true);
+  const numeric = { shipping_address: { ...complete.shipping_address, line1: " 111 " } };
+  assert.equal(uiSchemas.contact.safeParse({ ...request, patch: numeric }).success, false);
+  const result = contactSchema.safeParse(numeric);
+  assert.equal(result.success, false);
+  if (!result.success) {
+    assert.deepEqual(result.error.issues[0]?.path, ["shipping_address", "line1"]);
+    assert.equal(result.error.issues[0]?.message, "请填写完整收货地址，不能只填数字。");
+  }
 });
 
 test("checkout address readiness uses CN and US required fields, not address-object presence", () => {
