@@ -114,14 +114,17 @@ export async function runDsh({fixture,commerce,root}){
   await fixture.ctx.fiber.dispose();
   const network=join(modules,'frontvia-e2e-network');await mkdir(network);
   await writeFile(join(network,'package.json'),JSON.stringify({name:'frontvia-e2e-network',version:'0.0.0',dsh:{bundle:{patch:'./cordis.patch.yml'}}}));
-  await writeFile(join(network,'cordis.patch.yml'),JSON.stringify([{insert:[{id:'frontvia-e2e-network',name:join(root,'tests/e2e/dsh/network.mjs'),config:{ca:commerce.ca,origin:commerce.origin,transportModule:selectedPap.transportModule,ucpPlatformProfileUrl:commerce.ucpPlatformProfileUrl}}]}]));
+  await writeFile(join(network,'cordis.patch.yml'),JSON.stringify([{insert:[{id:'frontvia-e2e-network',name:join(root,'tests/e2e/dsh/network.mjs'),config:{ca:commerce.ca,origin:commerce.origin,transportModule:selectedPap.transportModule,ucpPlatformProfileUrl:commerce.ucpPlatformProfileUrl,liveStore:commerce.liveStore===true}}]}]));
   await writeFile(join(profile,'package.json'),JSON.stringify({name:'frontvia-e2e-profile',private:true,dependencies,
     dsh:{profile:{bundles:['@deepseek-ai/dsh-base','frontvia-e2e-network','@deepseek-ai/dsh-web-app','@agent-network-protocol/dsh-anp-identity','@awiki/dsh-pap','dsh-frontvia-customer']}}}));
   const customerConfig=join(fixture.root,'dsh-customer.json');
   await writeFile(customerConfig,JSON.stringify({dataDir:join(fixture.root,'dsh-customer'),storageKeyRef:'FRONTVIA_E2E_STATE',sites:[]}),{mode:0o600});
   const patch=[{id:'anp-identity',config:identityConfig},{id:'anp-identity-provider',config:{stateRoot:fixture.identityRoot??join(fixture.root,'identity'),rootKeyProvider:'local-file'}},
     {id:'anp-identity-manager',config:{}},{id:'anp-identity-protocol-bootstrap',disabled:true},
-    {id:'pap',config:{enabled:true,autoConnect:true,stateRoot:join(fixture.root,'dsh-pap'),businessConsumers:['dsh-frontvia-customer'],
+    // The UCP domain probe already connected through the published PAP plugin.
+    // Reopen its private state after disposing the probe host so the browser
+    // starts from the same real connection and owner rather than an empty list.
+    {id:'pap',config:{enabled:true,autoConnect:true,stateRoot:join(fixture.root,ucp?'pap':'dsh-pap'),businessConsumers:['dsh-frontvia-customer'],
       ...(ucp?{ucpPlatformProfileUrl:commerce.ucpPlatformProfileUrl}:{})}},
     {id:'dsh-frontvia-customer',config:{configFile:customerConfig}},{id:'credentials',config:{path:fixture.credentialsFile??join(fixture.root,'.credentials.yaml'),watch:false}}];
   await writeFile(join(profile,'cordis.patch.yml'),JSON.stringify(patch),{mode:0o600});
@@ -130,7 +133,7 @@ export async function runDsh({fixture,commerce,root}){
   const child=spawn(process.execPath,[join(root,'node_modules/@deepseek-ai/dsh/lib/bin.js'),'--profile','frontvia-e2e','--host','127.0.0.1','--port','0','--no-open'],
     {cwd:workspace,env:{...process.env,DSH_HOME:home,DSH_TELEMETRY_DISABLED:'1'},stdio:['ignore',log.fd,log.fd]});
   await log.close();
-  let browser,browserProxy;
+  let browser,browserProxy,checkpoint='start';
   try{
     let url;const deadline=Date.now()+90000;
     while(Date.now()<deadline){
@@ -147,7 +150,7 @@ export async function runDsh({fixture,commerce,root}){
     const require=createRequire(join(core,'web/package.json'));
     const {chromium}=require('playwright-core');
     const args=['--no-sandbox'];
-    if(fullFlow){
+    if(fullFlow&&!commerce.liveStore){
       const certificate=new X509Certificate(await readFile(commerce.cert));
       const spki=createHash('sha256').update(certificate.publicKey.export({type:'spki',format:'der'})).digest('base64');
       args.push(`--ignore-certificate-errors-spki-list=${spki}`);
@@ -155,24 +158,26 @@ export async function runDsh({fixture,commerce,root}){
     }
     const executablePath=process.env.CHROMIUM_PATH;
     browser=await chromium.launch({headless:true,args,...(executablePath?{executablePath}:{}),...(browserProxy?{proxy:browserProxy.options}:{})});
-    const page=await browser.newPage({viewport:{width:1440,height:1000}});
+    const page=await browser.newPage({viewport:{width:1440,height:1000},locale:'en-US'});
     await page.goto(url,{waitUntil:'domcontentloaded'});
     // A fresh profile always has the preview notice; late client startup must
     // not leave it covering the shopping entry after a short optional wait.
-    const preview=page.getByRole('dialog',{name:'Preview Notice'})
-      .or(page.getByRole('dialog',{name:'Internal Testing Notice'}));
+    checkpoint='preview-notice';
+    const preview=page.getByRole('dialog',{name:/^(?:Preview Notice|Internal Testing Notice|预览版说明)$/});
     await preview.waitFor({state:'visible',timeout:60000});
-    await preview.getByRole('button',{name:'Continue',exact:true}).click();
+    await preview.getByRole('button',{name:/^(?:Continue|继续|同意并继续|我已了解|我已知晓)$/}).click();
     await preview.waitFor({state:'hidden'});
-    const keyDialog=page.getByRole('dialog',{name:'Add an API key to get started'});
+    const keyDialog=page.getByRole('dialog',{name:/^(?:Add an API key to get started|添加 API 密钥以开始使用)$/});
     await page.addLocatorHandler(keyDialog,async()=>{
-      await keyDialog.getByRole('button',{name:'Configure later',exact:true}).click();
+      await keyDialog.getByRole('button',{name:/^(?:Configure later|稍后配置)$/}).click();
     });
+    checkpoint='open-frontvia';
     await page.getByRole('button',{name:'Frontvia 服务',exact:true}).click({timeout:30000});
+    checkpoint='storefront';
     if(ucp){
       if(fullFlow){
-        const {shopUcpFullFlow}=await import('./ucp-full-flow.mjs');
-        await shopUcpFullFlow({page,commerce,logPath});
+        const {readUcpAftersales,shopUcpFullFlow}=await import('./ucp-full-flow.mjs');
+        await (commerce.existingAftersales?readUcpAftersales:shopUcpFullFlow)({page,commerce,logPath});
       }else{
         const {shopUcp}=await import('./ucp-shopping.mjs');
         await shopUcp({page,commerce,logPath});
@@ -188,8 +193,9 @@ export async function runDsh({fixture,commerce,root}){
     const failedPage=browser?.contexts()[0]?.pages()[0];
     if(failedPage){
       const alerts=(await failedPage.getByRole('alert').allTextContents()).flatMap(text=>text.match(/\b[a-zA-Z][a-zA-Z_]{2,60}_[a-zA-Z_]{2,40}\b/g)??[]);
-      console.log(JSON.stringify({suite,case:'browser-failure-context',buttonCount:await failedPage.getByRole('button').count(),headings:await failedPage.getByRole('heading').allTextContents(),
+      console.log(JSON.stringify({suite,case:'browser-failure-context',checkpoint,buttonCount:await failedPage.getByRole('button').count(),headings:await failedPage.getByRole('heading').allTextContents(),
         dialogs:await failedPage.getByRole('dialog').evaluateAll(nodes=>nodes.map(node=>node.getAttribute('aria-label')??document.getElementById(node.getAttribute('aria-labelledby'))?.textContent)),
+        dialogButtons:await failedPage.getByRole('dialog').getByRole('button').allTextContents(),
         alerts:[...new Set(alerts)].slice(0,12)}));
     }
     const output=await readFile(logPath,'utf8');

@@ -49,4 +49,12 @@ python3 tests/e2e/dsh/run.py
 浏览器 suite 输出 3 条逐用例结果，Claude 浏览单独输出 1 条结果。
 
 `python3 tests/e2e/dsh/run.py --ucp-full` 使用同一隔离流程，启动候选 TypeScript Commerce 买家服务和 worker，并通过受控 Mock 渠道完成实际付款链。执行前配置 Core 的专用 PostgreSQL 管理连接和隔离测试身份，沿用上述候选包及浏览器设置。
+
+现场 Mock 店使用 `python3 tests/e2e/dsh/run.py --site-config <0600 配置文件>`。配置包含 `liveStore: true`、`suite: "dsh-ucp-full"`、完整 `origin`、`domain`、公开的客户端 `ucpPlatformProfileUrl`、测试商品标题 `productTitle`、报价返回的配送选项 `shippingLabel`、`testContact` 和本轮独立证据目录 `controlDir`。测试联系人只使用专用夹具值，模型输入经进程环境注入。真实 HTTPS 店铺和客户端资料使用系统信任。买家端在下单前核对店铺和专用客户端资料都公开声明 `com.frontvia.payment.durable_mock`。
+
+在该目录运行只读事实观察器，按原请求文件返回 Commerce 店铺范围的结算草稿和已授权交接记录、该店 Native 的购物车、付款会话、订单和 capture。售后阶段按原订单公开编号回查同一 Native 占用和原申请编号。观察器按 `ucp-full-flow.mjs` 中的阶段原子写入响应。每次运行使用新证据目录和专用商品。发生浏览器或运输失败时先核对已有购物车、付款与原申请，再决定沿原入口恢复。
+
+现场 A 单使用 CNY 1.00 商品与 CNY 2.00 运费。需要同单商家签名回读时，在配置的 `merchantCancellation` 中写入 `currency: "CNY"`、`amountMinor: "300"` 和 `shippingMinor: "200"`。观察器等待 `ucp-after-merchant-refund.request`，随后由单独的工作台会话办理该原申请。观察器按原订单查证退款金额、原运费、整单取消、唯一原生退款与预留释放，再返回事实供 DSH 原卡刷新。买家用例只读商家处理结果。
+
+读取已存在的验收订单时，在同一受保护配置中设置 `existingAftersales`，填写 `orderId`、`caseId` 和期望状态 `state`，支持 `pending_merchant`、`waiting_return`、`refunded`。该入口从真实 DSH 订单列表打开原单，核对签名协议回执的订单和申请标识，不提交购物车、订单或申请。仅当继续 A 单的商家环节时同时提供 `merchantCancellation`，并由观察器核对待审核事实和原退款。
 付款后先核对浏览器永久链接可读、客服同源并携带订单号、咨询区没有提交申请表单。再用 390px 浏览器从 DSH 的原订单打开售后，核对 PAP 宿主显示的取消条款并由买家确认。Core 以永久链接中的公开订单编号关联已支付的订单、Commerce 公开回执和 Native 正在办理的申请。批准前没有申请，批准后只有一笔在办申请，资金效果仍为零。刷新后通过真实 PAP 响应核对同一笔申请。协议日志用订单编号和申请编号共同计算摘要。runner 退出时清理隔离库。端到端的店员和商家 Agent 交接使用持续运行的专用测试店，在同一申请上操作并由 DSH 回读。

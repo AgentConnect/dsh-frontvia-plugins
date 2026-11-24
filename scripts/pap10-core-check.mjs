@@ -24,6 +24,7 @@ const capabilityNames=['catalog.search','catalog.lookup','cart','checkout','orde
 const productProfile={ucp:{version:VERSION,services:{'dev.ucp.shopping':[{version:VERSION,transport:'rest',spec:`https://ucp.dev/${VERSION}/specification/overview/`,schema:`https://ucp.dev/${VERSION}/services/shopping/rest.openapi.json`}]},payment_handlers:{},capabilities:Object.fromEntries(capabilityNames.map(name=>[`dev.ucp.shopping.${name}`,[{version:VERSION,...(name==='fulfillment'?{extends:['dev.ucp.shopping.checkout','dev.ucp.shopping.catalog.search','dev.ucp.shopping.catalog.lookup']}:{}),spec:`https://ucp.dev/${VERSION}/specification/shopping/${name.startsWith('catalog.')?'catalog':name}/`,schema:`https://ucp.dev/${VERSION}/schemas/shopping/${name.replace('.','_')}.json`}]] ))}};
 let fixture,publisher,stage='configuration';
 const discoveryHttp=[];
+const toolFailures=[];
 const safeCode=value=>typeof value==='string'&&/^[a-z][a-z0-9_]{0,79}$/i.test(value)?value:undefined;
 const take=result=>{
   if(!result.ok)throw Object.assign(new Error('Public PAP operation failed'),{code:safeCode(result.error?.code)??'public_pap_failed'});
@@ -39,9 +40,15 @@ async function run(){
     return;
   }
   const config=JSON.parse(await readFile(process.argv[2],'utf8'));
-  const control=resolve(config.controlDir),profileUrl=`https://agent.test:${config.identityPort}/.well-known/ucp`;
+  const control=resolve(config.controlDir),profileUrl=config.liveStore ? config.ucpPlatformProfileUrl : `https://agent.test:${config.identityPort}/.well-known/ucp`;
+  if(config.liveStore){
+    assert(['dsh-ucp-full','ucp-reference'].includes(config.suite));
+    assert.equal(new URL(config.origin).origin,`https://${config.domain}`);
+    assert.equal(config.origin,`https://${config.domain}`);
+    assert.equal(new URL(profileUrl).protocol,'https:');
+  }
   const atomic=async(name,value)=>{const target=join(control,name),temporary=target+'.tmp';await writeFile(temporary,JSON.stringify(value),{mode:0o600});await rename(temporary,target);};
-  if(!config.externallyHostedProfile){
+  if(!config.liveStore&&!config.externallyHostedProfile){
     publisher=https.createServer({key:await readFile(config.key),cert:await readFile(config.cert)},(request,response)=>{
       if(request.method!=='GET'||request.url!=='/.well-known/ucp'){response.writeHead(404);response.end();return;}
       response.writeHead(200,{'content-type':'application/json','cache-control':'public, max-age=300'});response.end(JSON.stringify(productProfile));
@@ -55,7 +62,31 @@ async function run(){
   const Manager=(await import(pathToFileURL(join(selected.root,'lib/management-remote.js')).href)).default;
   const Customer=await import(pathToFileURL(join(root,'packages/customer/src/index.ts')).href);
   const Tools=await import('@deepseek-ai/dsh-tools');const Executor=await import('@deepseek-ai/dsh-tool-executor-native');
-  const base=new selected.SafeHttpsTransport({ca:await readFile(config.ca),privateOrigins:[config.origin,new URL(profileUrl).origin],lookup:async hostname=>['company-a.test','agent.test'].includes(hostname)?[{address:'127.0.0.1',family:4}]:(await import('node:dns/promises')).lookup(hostname,{all:true})});
+  const base=new selected.SafeHttpsTransport(config.liveStore ? {} : {ca:await readFile(config.ca),privateOrigins:[config.origin,new URL(profileUrl).origin],lookup:async hostname=>['company-a.test','agent.test'].includes(hostname)?[{address:'127.0.0.1',family:4}]:(await import('node:dns/promises')).lookup(hostname,{all:true})});
+  if(config.liveStore){
+    stage='managed_store_discovery';
+    const discovery=await base.request(config.origin+'/.well-known/poppy.json',{method:'GET'});
+    assert.equal(discovery.status,200);
+    const metadata=JSON.parse(Buffer.from(discovery.body).toString('utf8'));
+    assert.equal(metadata.organization?.domain,config.domain);
+    assert.equal(metadata.protocol_version,'1.0');
+    assert(metadata.extensions?.operations?.some(extension=>extension.version==='3'));
+    const apiUrls=metadata.apis?.map(api=>api.url)??[];
+    for(const path of ['/ucp/openapi.json','/poppy/aftersales.openapi.json']){
+      assert.equal(apiUrls.filter(url=>url===config.origin+path).length,1);
+    }
+    const response=await base.request(config.origin+'/.well-known/ucp',{method:'GET'});
+    assert.equal(response.status,200);
+    const profile=JSON.parse(Buffer.from(response.body).toString('utf8'));
+    assert(profile.ucp?.payment_handlers?.['com.frontvia.payment.durable_mock']?.length,
+      'The dedicated store must publicly advertise its Mock payment handler before purchase');
+    if(config.suite==='dsh-ucp-full'){
+      const clientProfile=await base.request(profileUrl,{method:'GET'});
+      assert.equal(clientProfile.status,200);
+      assert(JSON.parse(Buffer.from(clientProfile.body).toString('utf8')).ucp?.payment_handlers?.['com.frontvia.payment.durable_mock']?.length,
+        'The dedicated buyer profile must negotiate the same Mock payment handler');
+    }
+  }
   let capture;
   const transport={async request(url,options={}){
     if(capture && url===capture.url && (options.method??'GET')===capture.method && options.headers?.['poppy-session']){
@@ -106,11 +137,23 @@ async function run(){
         agent:{id:'pap10-customer'},signal:new AbortController().signal});
       assert.equal(batch.results.length,1);
       const result=batch.results[0].result;
-      assert(!result.isError&&!result.value?.error,'Customer tool call failed');
+      if(result.isError||result.value?.error){
+        const code=safeCode(result.value?.error?.code)??'customer_tool_failed';
+        toolFailures.push({name,action:args.action,code});
+        throw Object.assign(new Error('Customer tool call failed'),{code});
+      }
       return result.value;
     };
-    const {checkClaudeDomain}=await import('./claude-public-shopping.mjs');
-    console.log(JSON.stringify(await checkClaudeDomain({domain:config.domain,execute,definitions:registry.definitions(),privateDir:fixture.root})));
+    if(config.liveStore){
+      stage='customer_ucp_connection';
+      const connected=await execute('frontvia_connection',{action:'connect',domain:config.domain});
+      assert(typeof connected.flowId==='string','The Customer tool must bind a flow to the discovered store');
+      stage='claude_ucp_domain_browsing';
+    }
+    if(!config.existingAftersales){
+      const {checkClaudeDomain}=await import('./claude-public-shopping.mjs');
+      console.log(JSON.stringify(await checkClaudeDomain({domain:config.domain,execute,definitions:registry.definitions(),privateDir:fixture.root})));
+    }
     assert(take(await sdk.operations()).some(operation=>operation.channel==='ucp'),'UCP candidate routes must be present');
     stage='dsh_web_ucp_e2e';
     const {runDsh}=await import('../tests/e2e/dsh/run.mjs');
@@ -126,10 +169,12 @@ async function run(){
   stage='pap_regular_session';
   const owner=await openSession('regular');
   assert(operations.some(operation=>operation.channel==='ucp'),'UCP candidate routes must be present');
-  stage='pap_anonymous_session';
-  const other=await openSession('anonymous');
-  const sessions={owner:owner.sessionRef,other:other.sessionRef};
-  await atomic('ucp-ready.json',{ready:true,profileUrl,users:['owner','other']});
+  const sessions={owner:owner.sessionRef};
+  if(config.suite!=='ucp-reference'){
+    stage='pap_anonymous_session';
+    sessions.other=(await openSession('anonymous')).sessionRef;
+  }
+  await atomic('ucp-ready.json',{ready:true,profileUrl,users:Object.keys(sessions)});
   console.log(JSON.stringify({status:'passed',case:'pap10-live-awiki-identity-and-product-profile',...sources}));
   stage='restricted_signing_bridge';
   let lastId;
@@ -175,6 +220,6 @@ catch(error){
   process.exitCode=1;
   const location=String(error?.stack??'').match(/(?:awiki-me-identity|pap10-core-check)\.mjs:\d+:\d+/)?.[0];
   console.log(JSON.stringify({status:'failed',stage,error:safeCode(error?.code)??safeCode(error?.name)??'bridge_failed',
-    location,...(discoveryHttp.length?{discoveryHttp}:{})}));
+    location,...(discoveryHttp.length?{discoveryHttp}:{}),...(toolFailures.length?{toolFailures}:{} )}));
 }
 finally{if(publisher)await new Promise(resolve=>publisher.close(resolve));await fixture?.dispose();hooks.deregister();}

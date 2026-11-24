@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Start owned real services, then run the DSH Web product tests."""
 import argparse
+import json
 from pathlib import Path
 import os
 import re
@@ -48,18 +49,46 @@ def check_live_inputs(plugin, environment):
     if missing:
         raise ValueError("Supply the live DSH test inputs " + ", ".join(missing))
 
+def site_configuration(path):
+    if path.is_symlink() or not path.is_file() or path.stat().st_uid != os.getuid() or path.stat().st_mode & 0o077:
+        raise ValueError("--site-config requires an owner-only regular file")
+    configuration = path.resolve(strict=True)
+    value = json.loads(configuration.read_text())
+    if not isinstance(value, dict) or value.get("liveStore") is not True or value.get("suite") != "dsh-ucp-full":
+        raise ValueError("--site-config requires an explicit liveStore full flow")
+    if "existingAftersales" in value:
+        existing = value["existingAftersales"]
+        uuid = r"[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}"
+        if (not isinstance(existing, dict) or set(existing) != {"orderId", "caseId", "state"}
+                or existing["state"] not in ("pending_merchant", "waiting_return", "refunded")
+                or any(not isinstance(existing[key], str) or not re.fullmatch(uuid, existing[key])
+                       for key in ("orderId", "caseId"))
+                or ("merchantCancellation" in value and existing["state"] != "pending_merchant")):
+            raise ValueError("existingAftersales requires an original order, case and supported state")
+    if "merchantCancellation" in value:
+        cancellation = value["merchantCancellation"]
+        if (not isinstance(cancellation, dict) or set(cancellation) != {"amountMinor", "shippingMinor", "currency"}
+                or cancellation["currency"] not in ("CNY", "USD")
+                or any(not isinstance(cancellation[field], str) or not re.fullmatch(r"[1-9]\d{0,13}", cancellation[field])
+                       for field in ("amountMinor", "shippingMinor"))
+                or int(cancellation["shippingMinor"]) >= int(cancellation["amountMinor"])):
+            raise ValueError("merchantCancellation requires a supported currency and an amount including nonzero original shipping")
+    return configuration
+
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     suites = parser.add_mutually_exclusive_group()
     suites.add_argument("--ucp", action="store_true", help="run the PAP 1.0/UCP nonpayment storefront (default)")
     suites.add_argument("--ucp-full", action="store_true", help="run the PAP 1.0/UCP purchase using the isolated Mock channel")
+    suites.add_argument("--site-config", type=Path, help="run the full DSH flow against a dedicated HTTPS Mock store with an independent facts observer")
     parser.add_argument("--preflight-only", action="store_true", help="verify the selected DSH Node.js and Chromium")
     args = parser.parse_args()
     plugin = Path(__file__).resolve().parents[3]
     core = Path(os.environ.get("FRONTVIA_CORE_ROOT", str(plugin.parent / "frontvia-core"))).resolve()
     try:
         node, version = dsh_node(os.environ)
+        site = site_configuration(args.site_config) if args.site_config else None
         if not args.preflight_only:
             check_live_inputs(plugin, os.environ)
     except (OSError, ValueError, subprocess.CalledProcessError) as error:
@@ -81,10 +110,11 @@ const {chromium}=require(process.argv[1]);
     if args.preflight_only:
         return 0
     try:
-        core_executable = core_node(os.environ)
+        core_executable = core_node(os.environ) if site is None else None
     except (OSError, ValueError, subprocess.CalledProcessError) as error:
         parser.error(str(error))
-    print(f"Core Node.js v22.23.1: {core_executable}", flush=True)
+    if core_executable:
+        print(f"Core Node.js v22.23.1: {core_executable}", flush=True)
     environment = {**os.environ, "FRONTVIA_CORE_ROOT": str(core), "FRONTVIA_TEST_PLUGIN_ROOT": str(plugin),
                    "FRONTVIA_DSH_TEST_NODE": str(node)}
     dsh_environment = {**environment, "PATH": str(node.parent) + os.pathsep + os.environ["PATH"]}
@@ -93,6 +123,9 @@ const {chromium}=require(process.argv[1]);
     # Always test freshly built local packages, not a previous manifest's bundles.
     for script in ("build", "pack:local"):
         subprocess.run(["corepack", "pnpm", script], cwd=plugin, env=dsh_environment, check=True)
+    if site:
+        return subprocess.call([str(node), "--import", "tsx", "scripts/pap10-core-check.mjs", str(site)],
+                               cwd=plugin, env=dsh_environment)
     subprocess.run(["cargo", "build", "--manifest-path", str(core / "platform/Cargo.toml"),
                     "--locked", "-p", "frontvia-platform", "--bin", "frontvia-platform"], env=environment, check=True)
     command = [sys.executable, str(core / "platform/tests/pap03/commerce.py")]

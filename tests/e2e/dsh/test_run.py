@@ -49,5 +49,47 @@ class RunnerPreflight(unittest.TestCase):
             })
             which.assert_called_with("claude", path=None)
 
+    def test_site_configuration_requires_explicit_full_flow_and_private_input(self):
+        with TemporaryDirectory() as directory:
+            config = Path(directory) / "site.json"
+            config.write_text('{"liveStore":false,"suite":"dsh-ucp-full"}')
+            config.chmod(0o600)
+            with self.assertRaisesRegex(ValueError, "explicit liveStore"):
+                runner.site_configuration(config)
+            config.write_text('{"liveStore":true,"suite":"dsh-ucp-full"}')
+            self.assertEqual(runner.site_configuration(config), config.resolve())
+            config.chmod(0o644)
+            with self.assertRaisesRegex(ValueError, "owner-only"):
+                runner.site_configuration(config)
+
+    def test_site_configuration_checks_original_shipping_before_merchant_readback(self):
+        with TemporaryDirectory() as directory:
+            config = Path(directory) / "site.json"
+            config.touch(mode=0o600)
+            template = '{"liveStore":true,"suite":"dsh-ucp-full", "merchantCancellation":%s}'
+            config.write_text(template % '{"amountMinor":"300","shippingMinor":"200","currency":"CNY"}')
+            self.assertEqual(runner.site_configuration(config), config.resolve())
+            for invalid in ('null', '{"amountMinor":"300","shippingMinor":"0","currency":"CNY"}',
+                            '{"amountMinor":"300","shippingMinor":"300","currency":"CNY"}'):
+                with self.subTest(invalid=invalid):
+                    config.write_text(template % invalid)
+                    with self.assertRaisesRegex(ValueError, "nonzero original shipping"):
+                        runner.site_configuration(config)
+
+    def test_existing_case_readback_requires_original_order_and_case(self):
+        with TemporaryDirectory() as directory:
+            config = Path(directory) / "site.json"
+            config.touch(mode=0o600)
+            template = '{"liveStore":true,"suite":"dsh-ucp-full","existingAftersales":%s}'
+            order = 'c212c540-11e2-4ee7-b8a2-f1af97f860d3'
+            case = 'ba113c61-a028-416c-8de8-7ea699e62357'
+            valid = '{"orderId":"%s","caseId":"%s","state":"refunded"}' % (order, case)
+            config.write_text(template % valid)
+            self.assertEqual(runner.site_configuration(config), config.resolve())
+            for invalid in ('null', valid.replace(order, 'other'), valid.replace('refunded', 'buy')):
+                config.write_text(template % invalid)
+                with self.assertRaisesRegex(ValueError, "original order, case and supported state"):
+                    runner.site_configuration(config)
+
 if __name__ == "__main__":
     unittest.main()

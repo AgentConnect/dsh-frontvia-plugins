@@ -64,14 +64,15 @@ export class CustomerAftersales {
       this.request(scope,"aftersales.list",{order_id,limit:"20",...(cursor?{cursor}:{})},signal),
     ]);
     const eligibility=aftersalesEligibility.parse(raw);
-    if(eligibility.order_id!==order_id)fail("AFTERSALES_CHANGED");
-    const caseId=selected??eligibility.active_case?.id??previous;
+    const caseHistory=aftersalesCases.parse(history);
+    if(eligibility.order_id!==order_id||caseHistory.items.some(entry=>entry.order_id!==order_id))fail("AFTERSALES_CHANGED");
+    const caseId=selected??eligibility.active_case?.id??(!cursor?caseHistory.items[0]?.id:undefined)??previous;
     const entry=caseId&&caseId!==eligibility.active_case?.id
       ? aftersalesCase.parse(await this.request(scope,"aftersales.get",{order_id,case_id:caseId},signal))
       : eligibility.active_case;
     if(entry&&entry.order_id!==order_id)fail("AFTERSALES_CHANGED");
     if(entry)this.vault.set(key+":case",entry.id);
-    return {eligibility,selected:entry,history:aftersalesCases.parse(history),
+    return {eligibility,selected:entry,history:caseHistory,
       ...(pending?{pending:{phase:pending.phase,input:pending.input}}:{}),...(message?{message}:{})};
   }
 

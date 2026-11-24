@@ -34,7 +34,7 @@ const entry:NonNullable<AftersalesView["selected"]>={
 };
 const history={items:[entry],page:{has_more:false,next_cursor:null}};
 
-function fixture() {
+function fixture(currentHistory=history,currentEntry=entry) {
   const records=new Map<string,unknown>();
   const vault={get<T>(key:string){return records.get(key) as T|undefined;},set(key:string,value:unknown){records.set(key,structuredClone(value));}};
   const calls:{method:string;params:any}[]=[];
@@ -45,8 +45,8 @@ function fixture() {
     assert.equal(ref,scope.connectionRef);
     calls.push({method,params});
     if(method==="aftersales.eligibility")return eligibility;
-    if(method==="aftersales.list")return history;
-    if(method==="aftersales.get")return entry;
+    if(method==="aftersales.list")return currentHistory;
+    if(method==="aftersales.get")return currentEntry;
     if(method==="aftersales.operation.get")return lookup();
     if(method==="aftersales.intent.get")return intentLookup(params);
     return mutation(params);
@@ -55,6 +55,17 @@ function fixture() {
     write(fn:typeof mutation){mutation=fn;},readOperation(fn:typeof lookup){lookup=fn;},
     readIntent(fn:typeof intentLookup){intentLookup=fn;}};
 }
+
+test("a fresh client opens the original settled case when there is no active hold",async()=>{
+  const settled:typeof entry={...entry,stage:"refunded",return_instructions:null,
+    refund:{state:"confirmed",amount_minor:"100",shipping_minor:"0",currency:"CNY",reason:"已退"}};
+  const f=fixture({...history,items:[settled]},settled);
+  const result=await f.build().view(scope);
+  assert.equal(result.selected?.id,caseId);
+  assert.equal(result.selected?.stage,"refunded");
+  assert.deepEqual(f.calls.find(call=>call.method==="aftersales.get")?.params,{order_id:orderId,case_id:caseId});
+  assert(!f.calls.some(call=>call.method==="aftersales.submit"));
+});
 
 test("after-sales recovery on restart queries the original operation without another submission",async()=>{
   const f=fixture();
