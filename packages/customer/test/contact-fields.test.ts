@@ -7,6 +7,8 @@ test("owner contact route accepts a manual email patch without accepting invalid
   const request = {sessionId:"owned-session",flowId:"00000000-0000-4000-8000-000000000001",
     actionId:"00000000-0000-4000-8000-000000000002",expected_version:"v1",patch:{email:"buyer@example.test"}};
   assert.equal(uiSchemas.contact.safeParse(request).success,true);
+  assert.equal(uiSchemas.contact.safeParse({...request,checkout_id:"draft-1"}).success,true);
+  assert.equal(uiSchemas.contact.safeParse({...request,checkout_id:""}).success,false);
   assert.equal(uiSchemas.contact.safeParse({...request,patch:{email:"invalid"}}).success,false);
   assert.equal(uiSchemas.contact.safeParse({...request,tenant_id:"other-tenant"}).success,false);
 });

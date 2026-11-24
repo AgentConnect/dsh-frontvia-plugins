@@ -63,6 +63,38 @@ test("tool updates during a read schedule a fresh read and account changes disca
   off();
 });
 
+test("a contact response cannot republish a checkout retired by another same-flow card", async () => {
+  const views = new FlowViews(async () => { throw new Error("NETWORK_FAILURE"); }, 0);
+  const a: any[] = [], b: any[] = [];
+  const offA = views.subscribe(ref, state => a.push(state), { visible: () => false });
+  const offB = views.subscribe(ref, state => b.push(state), { visible: () => false });
+  const first = { cart: { id: "same-cart" }, checkout: { id: "draft-a", status: "incomplete" } };
+  const next = { ...first, checkout: { ...first.checkout, id: "draft-b" } };
+  views.publish(ref, first);
+  const release = views.hold(ref);
+  try {
+    assert.equal(views.publish(ref, next, "draft-a"), false, "a mismatched receipt cannot acknowledge the original request");
+    views.publish(ref, next);
+    const receiptA = { ...first, operation: { status: "succeeded" } };
+    assert.equal(views.acceptsCheckout(ref, "draft-a"), false);
+    assert.equal(views.publish(ref, receiptA, "draft-a"), false);
+    assert.equal(a.at(-1).value, next);
+    assert.deepEqual(a.at(-1), b.at(-1));
+    await assert.rejects(views.refresh(ref, ["checkout"]), { message: "NETWORK_FAILURE" });
+    assert.equal(views.publish(ref, receiptA, "draft-a"), false, "a read failure cannot restore the retired checkout");
+    views.publish(ref, next);
+    assert.equal(views.publish(ref, { ...next, operation: { status: "succeeded" } }, "draft-b"), true);
+    assert.equal(a.at(-1).value.checkout.id, "draft-b");
+    assert.deepEqual(a.at(-1), b.at(-1));
+    views.publish(ref, { ...next, checkout: { ...next.checkout, status: "canceled" } });
+    assert.equal(views.publish(ref, next, "draft-b"), false, "a canceled checkout cannot be made active by a late save response");
+  } finally {
+    release();
+    offA();
+    offB();
+  }
+});
+
 test("polling is per flow, pauses while hidden, handles access failures, and stops after the last card unmounts", async (t) => {
   t.mock.timers.enable({ apis: ["setInterval"] });
   let calls = 0,

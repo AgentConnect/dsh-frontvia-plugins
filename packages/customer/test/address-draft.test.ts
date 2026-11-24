@@ -430,9 +430,16 @@ const physicalUcpDraft = () => ({
   capabilities: {
     ucp: true,
     ucpFulfillment: true,
-    methods: [{ method: "commerce.checkouts.get", availability: "supported" }],
+    methods: ["commerce.checkouts.get", "commerce.checkouts.create"].map(method => ({ method, availability: "supported" })),
   },
 });
+
+const replacementUcpDraft = () => {
+  const data = physicalUcpDraft();
+  data.checkout.id = "replacement-draft";
+  data.checkout.fulfillment.methods[0]!.destinations[0]!.street_address = "测试镇乙路 2 号";
+  return data;
+};
 
 test("UCP draft address form warns about a numeric-only CN address before an RPC", async () => {
   let tree!: ReactTestRenderer;
@@ -505,8 +512,8 @@ test("UCP draft address form preserves an unacknowledged edit and announces only
     assert.equal(button(tree, "保存到结算草稿").props.disabled, false);
     await startSubmit();
     assert.deepEqual(requests.map(({ operation, payload }) => [
-      operation, payload.expected_version, payload.patch.shipping_address.line1,
-    ]), [["contact", "v1", edited], ["contact", "v1", edited]]);
+      operation, payload.expected_version, payload.checkout_id, payload.patch.shipping_address.line1,
+    ]), [["contact", "v1", "ucp-draft", edited], ["contact", "v1", "ucp-draft", edited]]);
     await act(async () => {
       data.checkout.version = "draft-v2";
       data.checkout.fulfillment.methods[0]!.destinations[0]!.street_address = normalized;
@@ -519,6 +526,130 @@ test("UCP draft address form preserves an unacknowledged edit and announces only
     assert(tree.root.findAll(node => node.children.includes("当前无法收取实物订单款项。")).length);
     await edit(tree, "测试镇新庄村 24 号");
     assert(!hasStatus(successText), "new edits must clear the previous save acknowledgement");
+  } finally {
+    await act(async () => tree?.unmount());
+  }
+});
+
+test("a canceled UCP draft never prefills its unsaved address into the same cart's replacement", async () => {
+  let tree!: ReactTestRenderer;
+  let data = physicalUcpDraft();
+  const intents: string[] = [];
+  const render = () => React.createElement(Storefront, {
+    draftScope: "replace-ucp-draft",
+    data, initialTab: "cart", busy: false, error: "", now: Date.now(),
+    action: async (operation, payload) => {
+      assert.equal(operation, "shopping");
+      const intent = payload.intent.action;
+      intents.push(intent);
+      data = intent === "edit-cart"
+        ? { ...data, checkout: { ...data.checkout, status: "canceled" } }
+        : replacementUcpDraft();
+      tree.update(render());
+      return true;
+    },
+  });
+  try {
+    await act(async () => { tree = create(render()); });
+    await edit(tree, "甲草稿的未保存地址");
+    await click(tree, "取消草稿并修改购物车");
+    await click(tree, "重新创建结算草稿");
+    assert.deepEqual(intents, ["edit-cart", "prepare"]);
+    assert.equal(address(tree).props.value, "测试镇乙路 2 号");
+  } finally {
+    await act(async () => tree?.unmount());
+  }
+});
+
+test("late UCP save results preserve current edits and a newer draft's acknowledgment", async () => {
+  let tree!: ReactTestRenderer;
+  let data: ReturnType<typeof physicalUcpDraft> | undefined = physicalUcpDraft();
+  const resolves: Array<(ok: boolean) => void> = [];
+  const submissions: Array<Promise<void>> = [];
+  const render = () => React.createElement(Storefront, {
+    draftScope: "late-ucp-save",
+    data, initialTab: "cart", busy: false, error: "", now: Date.now(),
+    action: () => new Promise<boolean>(resolve => resolves.push(resolve)),
+  });
+  const startSubmit = () => act(async () => {
+    submissions.push(tree.root.findByType("form").props.onSubmit({ preventDefault() {} }));
+  });
+  const confirm = (index: number) => act(async () => {
+    resolves[index]!(true);
+    await submissions[index];
+  });
+  const savedNotice = () => tree.root.findAll(node => node.props.role === "status" &&
+    text(node.props.children) === "收货信息已保存到结算草稿。").length;
+  try {
+    await act(async () => { tree = create(render()); });
+    await edit(tree, "旧草稿正在保存的地址");
+    await startSubmit();
+    // A failed read remounts the address form while retaining the same local draft.
+    data = undefined;
+    await act(async () => { tree.update(render()); });
+    data = physicalUcpDraft();
+    await act(async () => { tree.update(render()); });
+    await edit(tree, "旧草稿的新输入");
+    await confirm(0);
+    assert.equal(address(tree).props.value, "旧草稿的新输入");
+    assert.equal(savedNotice(), 0);
+
+    await startSubmit();
+    data = replacementUcpDraft();
+    await act(async () => { tree.update(render()); });
+    await edit(tree, "新草稿提交的地址");
+    await startSubmit();
+    await act(async () => {
+      data!.checkout.fulfillment.methods[0]!.destinations[0]!.street_address = "新草稿服务端规范化地址";
+      tree.update(render());
+    });
+    await confirm(2);
+    assert(savedNotice());
+    await confirm(1);
+    assert(savedNotice(), "the old receipt cannot replace the new draft's acknowledgment");
+    assert.equal(address(tree).props.value, "新草稿服务端规范化地址");
+  } finally {
+    await act(async () => tree?.unmount());
+  }
+});
+
+test("an unconfirmed save uses a single error message with an inline fallback during recovery", async () => {
+  let tree!: ReactTestRenderer;
+  let pending = false;
+  let error = "";
+  let errorCode: string | undefined;
+  const failedText = "收货信息未保存，请重试。";
+  const pendingText = "暂未收到商店回复，请先核对原操作结果。";
+  const fallback = "未能确认收货信息已保存，请核对原草稿。";
+  const messages = (message: string) => tree.root.findAllByType("div").filter(node =>
+    node.props.role === "alert" && text(node.props.children).includes(message));
+  const render = () => React.createElement(Storefront, {
+    draftScope: "single-ucp-contact-error",
+    data: { ...physicalUcpDraft(), pending }, initialTab: "cart", busy: false, error, errorCode, now: Date.now(),
+    action: async () => {
+      if (!error) {
+        error = failedText;
+        errorCode = "CONTACT_NOT_SAVED";
+      } else {
+        pending = true;
+        error = pendingText;
+        errorCode = "NETWORK_UNCERTAIN";
+      }
+      tree.update(render());
+      return false;
+    },
+  });
+  try {
+    await act(async () => { tree = create(render()); });
+    const input = "测试镇新庄村 23 号";
+    await edit(tree, input);
+    await submit(tree);
+    assert.equal(messages(failedText).length, 1);
+    assert.equal(messages(fallback).length, 0);
+    await submit(tree);
+    assert.equal(messages(pendingText).length, 0);
+    assert.equal(messages(fallback).length, 1);
+    assert.equal(address(tree).props.value, input);
   } finally {
     await act(async () => tree?.unmount());
   }
