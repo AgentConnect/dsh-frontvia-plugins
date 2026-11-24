@@ -2101,11 +2101,14 @@ export class CustomerService {
     expected: string,
     patch: unknown,
     actionId: string,
+    checkoutId?: string,
   ) {
     this.views.clear();
     return this.serial.run(flowId, async () => {
       const f = this.flow(sessionId, flowId);
       await this.currentCapabilities(f, true);
+      const currentCheckoutId = f.capabilities?.ucp ? f.checkout?.id : undefined;
+      if (checkoutId !== currentCheckoutId) fail("CONTACT_DRAFT_CHANGED");
       const contact = manualCart(f.cart) || this.ucpEmailOnly(f)
         ? manualContactSchema.or(contactSchema).parse(patch)
         : contactSchema.parse(patch);
@@ -2117,9 +2120,10 @@ export class CustomerService {
           fail("ADDRESS_COUNTRY_MISMATCH");
       }
       if (f.capabilities?.ucp) {
-        this.change(f, expected);
         if ((!f.capabilities.ucpFulfillment && "shipping_address" in contact) || !f.checkout)
           fail("CHECKOUT_FULFILLMENT_UNAVAILABLE");
+        if (f.checkout.status === "canceled") fail("CONTACT_DRAFT_CHANGED");
+        this.change(f, expected);
         const result = await this.write(f,"commerce.checkouts.update",ucpCheckoutContact(f.checkout,contact),actionId);
         if (result?.operation?.status !== "succeeded" || f.pending) fail("CONTACT_NOT_SAVED");
         return this.humanView(f);

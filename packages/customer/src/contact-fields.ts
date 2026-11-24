@@ -10,6 +10,12 @@ export function isRequiredContact(country: string | undefined, field: string) {
   return true;
 }
 
+export const numericAddressMessage = "请填写完整收货地址，不能只填数字。";
+
+export function isNumericChineseAddress(country: string | undefined, line1: string) {
+  return country === "CN" && /^\p{N}[\p{N}\s]*$/u.test(line1.trim());
+}
+
 const address = z
   .object({
     country: z.enum(["US", "CN"]),
@@ -37,6 +43,12 @@ export const contactSchema = z
         code: "custom",
         path: ["shipping_address", "phone"],
         message: "有效收货电话必填",
+      });
+    if (isNumericChineseAddress(a.country, a.line1))
+      ctx.addIssue({
+        code: "custom",
+        path: ["shipping_address", "line1"],
+        message: numericAddressMessage,
       });
     for (const field of ["city", "region", "postal_code", "email"] as const) {
       if (

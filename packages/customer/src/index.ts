@@ -107,6 +107,7 @@ export async function apply(
                 a.expected_version,
                 a.patch,
                 a.actionId,
+                a.checkout_id,
               );
             if (operation === "review")
               value = await service.review(a.sessionId, a.flowId);
