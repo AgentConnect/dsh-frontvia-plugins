@@ -64,7 +64,8 @@ test("tool updates during a read schedule a fresh read and account changes disca
 });
 
 test("a contact response cannot republish a checkout retired by another same-flow card", async () => {
-  const views = new FlowViews(async () => { throw new Error("NETWORK_FAILURE"); }, 0);
+  let readError = "NETWORK_FAILURE";
+  const views = new FlowViews(async () => { throw new Error(readError); }, 0);
   const a: any[] = [], b: any[] = [];
   const offA = views.subscribe(ref, state => a.push(state), { visible: () => false });
   const offB = views.subscribe(ref, state => b.push(state), { visible: () => false });
@@ -88,6 +89,10 @@ test("a contact response cannot republish a checkout retired by another same-flo
     assert.deepEqual(a.at(-1), b.at(-1));
     views.publish(ref, { ...next, checkout: { ...next.checkout, status: "canceled" } });
     assert.equal(views.publish(ref, next, "draft-b"), false, "a canceled checkout cannot be made active by a late save response");
+    views.publish(ref, next);
+    readError = "FLOW_NOT_OWNED";
+    await assert.rejects(views.refresh(ref, ["checkout"]), { message: readError });
+    assert.equal(views.publish(ref, next, "draft-b"), false, "an ownership rejection invalidates the current checkout");
   } finally {
     release();
     offA();

@@ -58,17 +58,21 @@ function draft(id: string, street: string) {
   };
 }
 
-const success = (value: ReturnType<typeof draft>) => ({ ok: true as const, value });
+const success = (value: ReturnType<typeof draft> & { operation?: { status: string } }) => ({ ok: true as const, value });
 const failure = (code: string) => ({ ok: false as const, error: { code, details: {} } });
 type Reply = ReturnType<typeof success> | ReturnType<typeof failure>;
 
-async function inlineCart() {
+async function inlineCart(ucp = true) {
   const ui = { flowId: "flow", sessionId: "session", card: "cart" };
   const turn = { data: new Map([["frontvia-customer-cards", { cards: [{ callId: "call", ui }] }]]) };
   let Tail: ComponentType<{ turn: typeof turn }> | undefined;
   const cleanups: (() => void)[] = [];
   const origin = draft("checkout-a", "测试镇甲路 1 号");
-  const responses = { read: Promise.resolve<Reply>(success(origin)), contact: failure("CONTACT_NOT_SAVED") };
+  origin.capabilities.ucp = ucp;
+  const responses: { read: Promise<Reply>; contact: Reply | Promise<Reply> } = {
+    read: Promise.resolve(success(origin)),
+    contact: failure("CONTACT_NOT_SAVED"),
+  };
   const submissions: { checkout_id: string; patch: { shipping_address: { line1: string } } }[] = [];
   apply({
     effect(run: () => () => void) { cleanups.push(run()); },
@@ -150,6 +154,60 @@ test("an inline checkout retains typed input through a failed post-contact refre
     await act(async () => { browser.dispatchEvent(new Event("focus")); });
     assert.equal(address(tree)?.props.value, typed);
     assert.equal(submissions.length, 1, "reading again must not repeat the contact write");
+  } finally {
+    await close();
+  }
+});
+
+test("an inline checkout acknowledges a successful save after an in-flight read fails", async () => {
+  const { tree, responses, submissions, origin, close } = await inlineCart();
+  try {
+    let finishRead!: (value: Reply) => void;
+    let finishContact!: (value: Reply) => void;
+    responses.read = new Promise(resolve => { finishRead = resolve; });
+    await act(async () => { browser.dispatchEvent(new Event("focus")); });
+    responses.contact = new Promise(resolve => { finishContact = resolve; });
+
+    let submission!: Promise<void>;
+    await act(async () => { address(tree)?.props.onChange({ target: { value: typed } }); });
+    await act(async () => {
+      submission = tree.root.findByType("form").props.onSubmit({ preventDefault() {} });
+    });
+    assert.equal(submissions.length, 1);
+    await act(async () => { finishRead(failure("PAP_REQUEST_UNCERTAIN")); });
+    assert.equal(address(tree), undefined);
+
+    const saved = draft(origin.checkout.id, "规范化新路 23 号");
+    await act(async () => {
+      finishContact(success({ ...saved, operation: { status: "succeeded" } }));
+      await submission;
+    });
+    assert.equal(address(tree)?.props.value, "规范化新路 23 号");
+    assert(JSON.stringify(tree.toJSON()).includes("收货信息已保存到结算草稿。"));
+    assert.equal(submissions.length, 1);
+  } finally {
+    await close();
+  }
+});
+
+test("a legacy inline cart rejects a numeric-only Chinese address at the field", async () => {
+  const { tree, submissions, close } = await inlineCart(false);
+  try {
+    const form = tree.root.findByType("form");
+    const elements = Object.fromEntries(form.findAllByType("input").map(input => [
+      input.props.name, { validity: { valid: true }, focus() {} },
+    ]));
+    for (const [name, value] of Object.entries({ recipient: "测试买家", line1: "１２３", phone: "13800138000" })) {
+      await act(async () => {
+        form.findAllByType("input").find(input => input.props.name === name)?.props.onChange({ target: { value } });
+      });
+    }
+    await act(async () => {
+      await form.props.onSubmit({ preventDefault() {}, currentTarget: { elements: { namedItem: (key: string) => elements[key] } } });
+    });
+    assert.equal(submissions.length, 0);
+    assert.equal(address(tree)?.props["aria-invalid"], true);
+    assert(JSON.stringify(tree.toJSON()).includes("请填写完整收货地址，不能只填数字。"));
   } finally {
     await close();
   }

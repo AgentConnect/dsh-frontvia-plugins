@@ -29,7 +29,9 @@ import { PaymentCard } from "./payment-card.js";
 import { shoppingStep } from "./shopping-progress.js";
 import {
   cartContactReady,
+  isNumericChineseAddress,
   manualCart,
+  numericAddressMessage,
   isRequiredContact as contactFieldRequired,
 } from "../contact-fields.js";
 import React, { useCallback, useEffect, useId, useRef, useState } from "react";
@@ -128,6 +130,7 @@ const errorText: Record<string, string> = {
   NETWORK_FAILURE: "暂时无法连接商店，请稍后刷新。",
   NETWORK_TIMEOUT: "商店响应超时，请稍后刷新。",
   NETWORK_UNCERTAIN: "暂未收到商店回复，请先核对原操作结果。",
+  PAP_REQUEST_NOT_SENT: "暂时无法解析商店域名，请检查网络后重试。",
   QUOTE_CHANGED: "报价或购物车已变化，请重新报价并核对。",
   CONFIRMATION_EXPIRED: "确认已过期，请重新核对当前报价。",
   CHECKOUT_REOPEN_NOT_READY: "商家仍保留原结算草稿，请核对当前状态。",
@@ -595,6 +598,8 @@ export function apply(ctx: any) {
           errors[key] =
             key === "email" ? "请输入有效的邮箱地址" : `请检查${label}`;
       }
+      if (isNumericChineseAddress(data.pricing?.country, form.line1))
+        errors.line1 = numericAddressMessage;
       setFieldErrors(errors);
       if (Object.keys(errors).length) {
         (

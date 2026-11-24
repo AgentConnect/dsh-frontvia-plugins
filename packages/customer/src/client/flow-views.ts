@@ -5,6 +5,7 @@ type Interest = { scope?: () => ViewScope; visible?: () => boolean };
 type Entry = {
   ref: Ref;
   state: State;
+  checkoutId?: string;
   listeners: Map<(state: State) => void, Interest>;
   version: number;
   pending?: Promise<any>;
@@ -14,6 +15,19 @@ type Entry = {
   ticks: number;
   timer?: ReturnType<typeof setInterval>;
 };
+const temporaryReadErrors = new Set([
+  "NETWORK_FAILURE",
+  "NETWORK_TIMEOUT",
+  "NETWORK_UNCERTAIN",
+  "PAP_REQUEST_NOT_SENT",
+  "PAP_REQUEST_UNCERTAIN",
+]);
+
+function activeCheckoutId(value: any): string | undefined {
+  const checkout = value?.checkout;
+  return checkout?.status === "canceled" ? undefined : checkout?.id;
+}
+
 /** Number of 15-second ticks between refreshes. Settled views require explicit refresh. */
 export function pollCadence(data: any, scopes: ViewScope[]): number {
   if (!data) return 0;
@@ -100,6 +114,7 @@ export class FlowViews {
       entry = {
         ref: { sessionId: ref.sessionId, flowId: ref.flowId },
         state,
+        checkoutId: activeCheckoutId(state.value),
         listeners: new Map(),
         version: 0,
         holds: 0,
@@ -168,15 +183,17 @@ export class FlowViews {
         (value) => {
           if (current()) {
             entry.state = { value };
+            entry.checkoutId = activeCheckoutId(value);
             this.emit(entry);
           }
           return value;
         },
         (error) => {
           this.snapshots.delete(key);
-          // Never retain private data after an ownership/login rejection.
           if (current()) {
             entry.state = { error };
+            // Keep only the draft ID for a receipt already in flight on a transient failure.
+            if (!temporaryReadErrors.has(error?.message)) entry.checkoutId = undefined;
             this.emit(entry);
           }
           throw error;
@@ -216,8 +233,7 @@ export class FlowViews {
     };
   }
   acceptsCheckout(ref: Ref, checkoutId: string) {
-    const checkout = this.entries.get(this.key(ref))?.state.value?.checkout;
-    return checkout?.id === checkoutId && checkout?.status !== "canceled";
+    return this.entries.get(this.key(ref))?.checkoutId === checkoutId;
   }
   publish(ref: Ref, value: any, checkoutId?: string) {
     if (checkoutId && (value?.checkout?.id !== checkoutId || !this.acceptsCheckout(ref, checkoutId)))
@@ -227,6 +243,7 @@ export class FlowViews {
     if (!entry) return false;
     ++entry.version;
     entry.state = { value };
+    entry.checkoutId = activeCheckoutId(value);
     entry.ticks = 0;
     this.emit(entry);
     return true;
