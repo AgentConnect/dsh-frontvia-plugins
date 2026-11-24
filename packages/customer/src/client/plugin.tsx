@@ -112,7 +112,7 @@ const errorText: Record<string, string> = {
   OPERATION_NOT_COMPLETED: "操作未完成，请刷新核对当前进度后再试。",
   CHECKOUT_IN_PROGRESS: "当前已准备结算，请先核对报价；需要修改时请重新报价。",
   ORDER_CANCEL_UNAVAILABLE:
-    "当前订单不能直接取消，请刷新核对；已付款订单需联系商家退款。",
+    "当前订单不能直接取消，请刷新核对。已付款订单请从原订单打开「查看售后」，按订单显示的资格办理。",
   ORDER_CANCEL_FAILED: "取消未完成，订单仍保留。请核对原订单结果后再试。",
   PAYMENT_CLOSURE_UNCONFIRMED:
     "尚未确认支付渠道关闭，请查询原订单结果，不要重复操作。",

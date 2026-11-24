@@ -8,7 +8,13 @@ import type { AftersalesView } from "../src/aftersales-contract.js";
 import { PapRequestError } from "../src/pap03-transport.js";
 import type { PapPort } from "../src/pap-port.js";
 import { uiSchemas } from "../src/ui-contract.js";
-import { schemas } from "../src/tools.js";
+import { guidance, schemas } from "../src/tools.js";
+
+test("paid order guidance opens the original after-sales card before offering store contact",()=>{
+  assert.match(guidance,/已付款订单先引导买家打开原订单的「查看售后」/);
+  assert.match(guidance,/只有原订单提示联系店铺时/);
+  assert.match(guidance,/模型不代为提交售后申请/);
+});
 
 const orderId="b50aa930-90c6-494a-ab06-c6a22db36592";
 const caseId="c23014de-d1ef-48b2-8424-852870d732b8";
