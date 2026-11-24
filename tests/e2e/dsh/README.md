@@ -8,7 +8,7 @@ python3 tests/support/read-awiki-me-auth.py  # 只读 awiki.me 测试预设，�
 python3 tests/e2e/dsh/run.py
 ```
 
-需要 Node 24、当前 Customer 安装包、正式 PAP 0.2.0 / Identity 0.1.18、Core Web 的 Playwright/Chromium 及 Core 拥有的隔离服务前提。使用实际 `dsh --profile frontvia-e2e` Web 进程和浏览器，测试 profile、业务状态和会话隔离，不修改用户默认 DSH 配置。专用 awiki.me 测试身份的加密状态和必要注册恢复材料保留，以便跨轮复用。
+需要 Node 24、当前 Customer 安装包、锁定的 PAP / Identity 包、Core Web 的 Playwright/Chromium 及专用店。涉及售后写入时，选用支持 Operations v3 的 PAP 候选。使用实际 `dsh --profile frontvia-e2e` Web 进程和浏览器，测试 profile、业务状态和会话与用户默认 DSH 配置隔离。专用 awiki.me 测试身份的加密状态和必要注册恢复材料保留，以便跨轮复用。
 
 测试专用网络插件只负责测试 HTTPS 域名映射和测试 CA，保留真实 PAP 传输及证书校验。Identity 使用正式实现，测试身份通过已部署的 `https://awiki.me` 注册/发布，CIMD/JWKS 从公网实际读取。预置身份是测试前置，不能声称 DSH 界面注册/邮件投递已验收。
 
@@ -48,9 +48,11 @@ python3 tests/e2e/dsh/run.py
 一个 Checkout 草稿及 Native Checkout、额度、付款会话和订单零增长。
 浏览器 suite 输出 3 条逐用例结果，Claude 浏览单独输出 1 条结果。
 
-`python3 tests/e2e/dsh/run.py --ucp-full` 使用同一隔离流程，启动候选 TypeScript Commerce 买家服务和 worker，并通过受控 Mock 渠道完成实际付款链。执行前配置 Core 的专用 PostgreSQL 管理连接和隔离测试身份，沿用上述候选包及浏览器设置。
+`python3 tests/e2e/dsh/run.py --ucp-full` 保留为旧 Core 夹具入口，依赖 `init-frontvia-service.js` 和 C0 Native 账本。运行当前 Native 时使用专用店的 `--site-config`，并在 Core 运行分进程的 `tests/install-postgres.py --e2e-signed <Platform target> --workbench`。
 
 现场 Mock 店使用 `python3 tests/e2e/dsh/run.py --site-config <0600 配置文件>`。配置包含 `liveStore: true`、`suite: "dsh-ucp-full"`、完整 `origin`、`domain`、公开的客户端 `ucpPlatformProfileUrl`、测试商品标题 `productTitle`、报价返回的配送选项 `shippingLabel`、`testContact` 和本轮独立证据目录 `controlDir`。测试联系人只使用专用夹具值，模型输入经进程环境注入。真实 HTTPS 店铺和客户端资料使用系统信任。买家端在下单前核对店铺和专用客户端资料都公开声明 `com.frontvia.payment.durable_mock`。
+
+Dodo Test Mode 独立协议验收使用 `node --import tsx scripts/pap10-core-check.mjs <0600 配置文件>`。配置使用 `suite: "ucp-reference"`、`paymentMode: "dodo_test"`、`liveStore: true` 和该店的 HTTPS `origin`、`domain`、`ucpPlatformProfileUrl`、`controlDir`。参考运行器从受保护证据目录交换签名请求和回执，并在结束后写入停止文件。先核对同一测试店的渠道、商品、PDF 与签名状态，再通过正式托管页和 Dodo 官方测试卡付款。渠道原付款、退款和原订单下载由参考运行器独立回查。
 
 在该目录运行只读事实观察器，按原请求文件返回 Commerce 店铺范围的结算草稿和已授权交接记录、该店 Native 的购物车、付款会话、订单和 capture。售后阶段按原订单公开编号回查同一 Native 占用和原申请编号。观察器按 `ucp-full-flow.mjs` 中的阶段原子写入响应。每次运行使用新证据目录和专用商品。发生浏览器或运输失败时先核对已有购物车、付款与原申请，再决定沿原入口恢复。
 

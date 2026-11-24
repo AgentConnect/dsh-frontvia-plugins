@@ -78,8 +78,13 @@ async function run(){
     const response=await base.request(config.origin+'/.well-known/ucp',{method:'GET'});
     assert.equal(response.status,200);
     const profile=JSON.parse(Buffer.from(response.body).toString('utf8'));
-    assert(profile.ucp?.payment_handlers?.['com.frontvia.payment.durable_mock']?.length,
-      'The dedicated store must publicly advertise its Mock payment handler before purchase');
+    if(config.suite==='ucp-reference'&&config.paymentMode==='dodo_test'){
+      assert(!profile.ucp?.payment_handlers?.['com.frontvia.payment.durable_mock']?.length,
+        'The Dodo reference case requires dedicated hosted-payment settings');
+    }else{
+      assert(profile.ucp?.payment_handlers?.['com.frontvia.payment.durable_mock']?.length,
+        'The dedicated store must publicly advertise its Mock payment handler before purchase');
+    }
     if(config.suite==='dsh-ucp-full'){
       const clientProfile=await base.request(profileUrl,{method:'GET'});
       assert.equal(clientProfile.status,200);
