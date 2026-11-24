@@ -31,6 +31,7 @@ import {
   EmptyTitle,
   EmptyDescription,
   Field,
+  FieldError,
   FieldGroup,
   FieldSet,
   FieldLegend,
@@ -55,6 +56,8 @@ import { productImage } from "./product-image.js";
 import { PaymentCard, paymentState } from "./payment-card.js";
 import {
   isRequiredContact,
+  isNumericChineseAddress,
+  numericAddressMessage,
   cartContactReady,
   deliveryReady as currentDeliveryReady,
   manualCart,
@@ -108,42 +111,63 @@ function AddressForm({
   form,
   setForm,
   saveLabel,
+  checkoutId,
+  errorVisible,
+  onSaveAttempt,
 }: {
   saveLabel?: string;
+  checkoutId?: string;
+  errorVisible: boolean;
+  onSaveAttempt: (actionId: string) => void;
   form: Record<string, string>;
   setForm: (value: Record<string, string>) => void;
   data: any;
   busy: boolean;
   action: Action;
-  next: () => Promise<void>;
+  next: (actionId: string) => void;
 }) {
   const id = useId();
   const [saving, setSaving] = useState(false);
+  const [saveFailed, setSaveFailed] = useState(false);
+  const [invalidAddress, setInvalidAddress] = useState(false);
   const savingRef = useRef(false);
+  const lineInput = useRef<HTMLInputElement>(null);
   return (
     <form
       onSubmit={async (event) => {
         event.preventDefault();
-        if (savingRef.current) return;
+        if (busy || savingRef.current) return;
+        setSaveFailed(false);
+        if (isNumericChineseAddress(data.pricing.country, form.line1 ?? "")) {
+          setInvalidAddress(true);
+          lineInput.current?.focus();
+          return;
+        }
+        setInvalidAddress(false);
         savingRef.current = true;
         setSaving(true);
         try {
           const { email, ...address } = form;
+          const actionId = crypto.randomUUID();
+          onSaveAttempt(actionId);
           const ok = await action("contact", {
             expected_version: data.cart.version,
-            actionId: crypto.randomUUID(),
+            ...(checkoutId ? { checkout_id: checkoutId } : {}),
+            actionId,
             patch: {
               ...(email?.trim() ? { email: email.trim() } : {}),
               shipping_address: { ...address, country: data.pricing.country },
             },
-          });
-          if (ok) await next();
+          }).catch(() => false);
+          if (ok) next(actionId);
+          else setSaveFailed(true);
         } finally {
           savingRef.current = false;
           setSaving(false);
         }
       }}
       className="fv-stack"
+      aria-busy={saving}
     >
       <FieldGroup>
         {contactFields.map(([key, label, autoComplete, max]) => (
@@ -151,6 +175,7 @@ function AddressForm({
             key={key}
             className={key === "line1" ? "fv-wide" : undefined}
             data-disabled={busy || saving}
+            data-invalid={key === "line1" && invalidAddress ? true : undefined}
           >
             <FieldLabel htmlFor={`${id}-${key}`}>
               {label}
@@ -159,6 +184,7 @@ function AddressForm({
             <Input
               id={`${id}-${key}`}
               name={key}
+              ref={key === "line1" ? lineInput : undefined}
               autoComplete={autoComplete}
               required={isRequiredContact(data.pricing.country, key)}
               maxLength={max}
@@ -167,8 +193,17 @@ function AddressForm({
               }
               value={form[key] ?? ""}
               disabled={busy || saving}
-              onChange={(e) => setForm({ ...form, [key]: e.target.value })}
+              aria-invalid={key === "line1" && invalidAddress ? true : undefined}
+              aria-describedby={key === "line1" && invalidAddress ? `${id}-address-error` : undefined}
+              onChange={(e) => {
+                setSaveFailed(false);
+                if (key === "line1") setInvalidAddress(false);
+                setForm({ ...form, [key]: e.target.value });
+              }}
             />
+            {key === "line1" && invalidAddress && (
+              <FieldError id={`${id}-address-error`}>{numericAddressMessage}</FieldError>
+            )}
           </Field>
         ))}
       </FieldGroup>
@@ -177,9 +212,16 @@ function AddressForm({
         。收货资料仅用于配送，不会发送给 AI 模型。
       </p>
       <Button type="submit" disabled={busy || saving}>
-        {saving && <Spinner />}{saveLabel ?? "保存地址，选择配送"}
+        {saving && <Spinner />}{saving ? "正在保存…" : saveLabel ?? "保存地址，选择配送"}
         <ArrowRight data-icon="inline-end" />
       </Button>
+      {saveFailed && !errorVisible && (
+        <Alert variant="destructive">
+          <AlertDescription>
+            {checkoutId ? "未能确认收货信息已保存，请核对原草稿。" : "未能确认收货信息已保存，请核对购物车。"}
+          </AlertDescription>
+        </Alert>
+      )}
     </form>
   );
 }
@@ -335,17 +377,43 @@ function StorefrontContent({
   initialOrderId,
   onViewChange,
 }: Props) {
+  const cartId = data?.cart?.id;
+  const checkoutId = data?.capabilities?.ucp ? data.checkout?.id : undefined;
+  const addressScope = cartId && (!data.capabilities?.ucp || (checkoutId && data.checkout.status !== "canceled"))
+    ? JSON.stringify([cartId, checkoutId])
+    : undefined;
   const [addressDraft, setAddressDraft] = useState<{
-    cartId: string;
-    values: Record<string, string>;
+    scope: string;
+    values?: Record<string, string>;
+    submission?: string;
+    saved?: boolean;
   }>();
+  const currentAddress = addressDraft?.scope === addressScope ? addressDraft : undefined;
   useEffect(() => {
-    // A missing read result must not clear the local draft. A different cart must.
-    if (data?.cart?.id && addressDraft && addressDraft.cartId !== data.cart.id)
-      setAddressDraft(undefined);
-  }, [data?.cart?.id, addressDraft?.cartId]);
+    // Keep edits through a failed read, but retire them when a different cart or checkout is known.
+    if (cartId) setAddressDraft(current => current?.scope === addressScope ? current : undefined);
+  }, [cartId, addressScope]);
+  const setAddressValues = (values: Record<string, string>) => {
+    if (addressScope) setAddressDraft({ scope: addressScope, values });
+  };
+  const startAddressSave = (actionId: string) => {
+    if (addressScope) setAddressDraft({
+      scope: addressScope,
+      values: currentAddress?.values,
+      submission: actionId,
+    });
+  };
+  const finishAddressSave = (actionId: string) => {
+    setAddressDraft(current => current && current.scope === addressScope && current.submission === actionId
+      ? { scope: current.scope, saved: true }
+      : current);
+  };
   const [tab, setTab] = useState<string>(initialTab ?? "products");
   const [step, setStep] = useState<number>();
+  const savedCartAddress = currentAddress?.saved && !checkoutId;
+  useEffect(() => {
+    if (savedCartAddress) setStep(1);
+  }, [savedCartAddress]);
   const [query, setQuery] = useState("");
   const [detail, setDetail] = useState(false);
   const [notice, setNotice] = useState(
@@ -606,6 +674,7 @@ function StorefrontContent({
     ].includes(errorCode ?? "")
       ? error
       : undefined;
+  const addressErrorVisible = !!error && (!data?.pending || (!data.cartCreationPending && !!pendingError));
   const selectedOrder = orderDetail
     ? [data?.viewedOrder, openedOrder].find(order => order?.id === orderDetail)
     : data?.order;
@@ -1237,16 +1306,28 @@ function StorefrontContent({
                                   <p className="fv-muted" key={index}>{message.content}</p>
                                 ))}
                                 {data.checkout?.status === "incomplete" && (data.checkout.emailOnly || manualDelivery) && (
-                                  <ManualContact email={data.checkout.buyer?.email} disabled={blocked} save={email => action("contact", {
-                                    expected_version:data.cart.version, patch:{email}, actionId:crypto.randomUUID(),
+                                  <ManualContact key={addressScope} email={data.checkout.buyer?.email} disabled={blocked} save={email => action("contact", {
+                                    expected_version:data.cart.version, checkout_id:checkoutId, patch:{email}, actionId:crypto.randomUUID(),
                                   })} />
                                 )}
                                 {data.checkout?.status === "incomplete" && !data.checkout.emailOnly && !manualDelivery
                                     && data.capabilities.ucpFulfillment && ["US","CN"].includes(data.pricing.country) && (
-                                  <AddressForm data={data} busy={blocked} action={action} saveLabel="保存到结算草稿"
-                                    form={addressDraft&&addressDraft.cartId===data.cart.id?addressDraft.values:confirmedAddress}
-                                    setForm={values=>setAddressDraft({cartId:data.cart.id,values})}
-                                    next={async()=>{setAddressDraft(undefined);}} />
+                                  <AddressForm
+                                    key={addressScope}
+                                    data={data}
+                                    busy={blocked}
+                                    action={action}
+                                    saveLabel="保存到结算草稿"
+                                    checkoutId={checkoutId}
+                                    errorVisible={addressErrorVisible}
+                                    form={currentAddress?.values ?? confirmedAddress}
+                                    setForm={setAddressValues}
+                                    onSaveAttempt={startAddressSave}
+                                    next={finishAddressSave}
+                                  />
+                                )}
+                                {currentAddress?.saved && checkoutId && (
+                                  <p className="fv-muted" role="status">收货信息已保存到结算草稿。</p>
                                 )}
                                 {data.checkout?.status === "incomplete" && shippingDraft?.groups?.map((group:any) => (
                                   <FieldSet key={group.id}>
@@ -1409,26 +1490,18 @@ function StorefrontContent({
                               return ok;
                             }} /> :
                           <AddressForm
-                            key={data.cart.id}
+                            key={addressScope}
                             data={data}
-                            form={
-                              addressDraft &&
-                              addressDraft.cartId === data.cart.id
-                                ? addressDraft.values
-                                : {
-                                    ...data.cart.shipping_address,
-                                    email: data.cart.email ?? "",
-                                  }
-                            }
-                            setForm={(values) =>
-                              setAddressDraft({ cartId: data.cart.id, values })
-                            }
+                            form={currentAddress?.values ?? {
+                              ...data.cart.shipping_address,
+                              email: data.cart.email ?? "",
+                            }}
+                            setForm={setAddressValues}
                             busy={blocked}
                             action={action}
-                            next={async () => {
-                              setAddressDraft(undefined);
-                              setStep(1);
-                            }}
+                            errorVisible={addressErrorVisible}
+                            onSaveAttempt={startAddressSave}
+                            next={finishAddressSave}
                           />
                         )}
                         {checkoutStep === 1 && (

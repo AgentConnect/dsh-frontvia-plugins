@@ -215,14 +215,21 @@ export class FlowViews {
       }
     };
   }
-  publish(ref: Ref, value: any) {
+  acceptsCheckout(ref: Ref, checkoutId: string) {
+    const checkout = this.entries.get(this.key(ref))?.state.value?.checkout;
+    return checkout?.id === checkoutId && checkout?.status !== "canceled";
+  }
+  publish(ref: Ref, value: any, checkoutId?: string) {
+    if (checkoutId && (value?.checkout?.id !== checkoutId || !this.acceptsCheckout(ref, checkoutId)))
+      return false;
     this.snapshots.delete(this.key(ref));
     const entry = this.entries.get(this.key(ref));
-    if (!entry) return;
+    if (!entry) return false;
     ++entry.version;
     entry.state = { value };
     entry.ticks = 0;
     this.emit(entry);
+    return true;
   }
   invalidate(ref: Ref, scopes?: ViewScope[]) {
     this.snapshots.delete(this.key(ref));

@@ -47,6 +47,7 @@ export const uiSchemas = {
     .object({
       ...common,
       expected_version: ref,
+      checkout_id: ref.optional(),
       patch: manualContactSchema.or(contactSchema),
       actionId: z.uuid(),
     })

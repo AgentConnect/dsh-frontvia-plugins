@@ -110,7 +110,7 @@ function fixture(cartOnly=false, fullFlow=false, hosted=false, orderMessages?: u
     else if(input.operationRef==='create_cart'){cart={...cart,line_items:input.body.line_items.map((line:any,index:number)=>({...line,id:`line-${index+1}`,item:{...line.item,title:'Mug',price:1250},totals:[{type:'subtotal',amount:1250},{type:'total',amount:1250}]}))};body=cart;}
     else throw new Error('Unexpected operation');
     const response={ok:true as const,value:{status:200,body,
-      etag:fullFlow&&body.id===checkoutId?`"checkout-${checkoutRevision}"`:etag}};
+      etag:fullFlow&&(body.id===checkoutId||body.id===replacementCheckoutId)?`"checkout-${checkoutRevision}"`:etag}};
     if(input.idempotencyKey){effects++;receipts.set(input.idempotencyKey,structuredClone(response));if(loseNext){loseNext=false;return {ok:false,error:{code:'request_uncertain',businessRequest:'unknown'}};}}
     return response;
   }};
@@ -183,10 +183,36 @@ test('owner contact updates a complete standard Checkout payload without readonl
  const service=new CustomerService({dataDir:'unused',sites:[]},new Pap03Business(f.sdk),vault),connected=await service.connect('chat','shop.example'),flowId=connected.flowId;
  await service.tool('chat','frontvia_cart',{action:'add',flowId,variant_id:'variant-1',quantity:1},'add');
  await service.tool('chat','frontvia_checkout',{action:'prepare',flowId},'draft');
- await service.contact('chat',flowId,'"v1"',{email:'buyer@example.test',shipping_address:{country:'US',recipient:'Buyer',line1:'1 Main Street',city:'Town',region:'CA',postal_code:'90001'}},'contact');
+ await service.contact('chat',flowId,'"v1"',{email:'buyer@example.test',shipping_address:{country:'US',recipient:'Buyer',line1:'1 Main Street',city:'Town',region:'CA',postal_code:'90001'}},'contact',f.checkoutId);
  const update=f.calls.findLast(call=>call.operationRef==='update_checkout');assert(update);assert.equal(update.path.id,'draft-1');assert.equal(update.body.id,undefined);assert.deepEqual(update.body.line_items,[{id:'line-1',item:{id:'variant-1'},quantity:1}]);
  assert.equal(update.body.buyer.email,'buyer@example.test');const method=update.body.fulfillment.methods[0];assert.equal(method.type,'shipping');assert.deepEqual(method.line_item_ids,['line-1']);assert.equal(method.destinations[0].street_address,'1 Main Street');assert(!('totals' in update.body));assert(!('status' in update.body));
  assert.equal(service.flow('chat',flowId).purchaseReady,false);
+});
+
+test('owner contact refuses a retired or unbound Checkout on the same Cart revision', async () => {
+ const f = fixture(false, true), c = await cartFlow(f);
+ await c.service.tool('chat', 'frontvia_checkout', {action:'prepare', flowId:c.flowId}, 'draft-a');
+ const originalId = c.flow().checkout.id;
+ const cartVersion = c.flow().cart.version;
+ f.expirePreparation('canceled');
+ await c.service.tool('chat', 'frontvia_checkout', {action:'prepare', flowId:c.flowId}, 'draft-b');
+ assert.equal(c.flow().checkout.id, f.replacementCheckoutId);
+ assert.equal(c.flow().cart.version, cartVersion);
+ const patch = {
+  email:'buyer@example.test',
+  shipping_address:{country:'US',recipient:'Buyer',line1:'1 Main Street',city:'Town',region:'CA',postal_code:'90001'},
+ };
+ const save = (checkoutId?: string) => c.service.contact('chat', c.flowId, cartVersion, patch, randomUUID(), checkoutId);
+ await assert.rejects(save(originalId), {code:'CONTACT_DRAFT_CHANGED'});
+ await assert.rejects(save(), {code:'CONTACT_DRAFT_CHANGED'});
+ assert(!f.calls.some(call => call.operationRef === 'update_checkout'));
+ const receipt = await save(f.replacementCheckoutId);
+ const update = f.calls.findLast(call => call.operationRef === 'update_checkout');
+ assert.equal(update.path.id, f.replacementCheckoutId);
+ assert.equal(update.ifMatch, '"checkout-1"');
+ assert.equal(update.body.fulfillment.methods[0].destinations[0].street_address, '1 Main Street');
+ assert.equal(receipt.operation.status, 'succeeded');
+ assert.equal(receipt.checkout.id, f.replacementCheckoutId);
 });
 
 
@@ -713,7 +739,7 @@ test('a hosted digital checkout saves email, exposes only the merchant handoff, 
  const draft=await c.service.view('chat',c.flowId,['checkout']);
  assert.equal(draft.checkout.emailOnly,true);
  assert.equal(draft.checkout.canPrepare,false);
- const offer=await c.service.contact('chat',c.flowId,draft.cart.version,{email:'buyer@example.test'},randomUUID());
+ const offer=await c.service.contact('chat',c.flowId,draft.cart.version,{email:'buyer@example.test'},randomUUID(),draft.checkout.id);
  assert.deepEqual(f.calls.findLast(call=>call.operationRef==='update_checkout').body.buyer,{email:'buyer@example.test'});
  assert.equal(f.calls.findLast(call=>call.operationRef==='update_checkout').body.fulfillment,undefined);
  const url=new URL(offer.checkout.handoff);
@@ -800,7 +826,7 @@ test('two Customer clients can edit the same Checkout after a definite ETag reje
  const b=new CustomerService({dataDir:'unused',sites:[]},bPap,bVault);
  const edit=(client:CustomerService, email:string, key:string)=>client.contact('chat',a.flowId,original.cart.version,{
    email,shipping_address:{country:'US',recipient:'Buyer',line1:'1 Main Street',city:'Town',region:'CA',postal_code:'90001'},
- },key);
+ },key,original.checkout.id);
 
  await edit(a.service,'first@example.test','first');
  await assert.rejects(edit(b,'second@example.test','stale'),{code:'UCP_ETAG_MISMATCH'});

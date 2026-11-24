@@ -133,6 +133,7 @@ const errorText: Record<string, string> = {
   CHECKOUT_REOPEN_NOT_READY: "商家仍保留原结算草稿，请核对当前状态。",
   PAP_IDENTITY_AUTHORIZATION_REQUIRED: "请处理 PAP 授权提示，再继续原操作。",
   CONTACT_NOT_SAVED: "收货信息未保存，请重试。",
+  CONTACT_DRAFT_CHANGED: "结算草稿已变更，请核对当前草稿后重新保存收货信息。",
   CONTACT_REQUIRED: "请先填写并保存完整的收货信息。",
   CART_QUANTITY_LIMIT: "同一规格最多可加购 100 件，请减少数量后重试。",
   OUT_OF_STOCK: "库存不足，请减少数量或选择其他规格。",
@@ -307,6 +308,7 @@ export function apply(ctx: any) {
     catalog?: CatalogSnapshot;
   }) {
     const accountRevision = useAccountRevision();
+    const draftScope = JSON.stringify([accountRevision, ui.sessionId, ui.flowId]);
     const [liveRevision, setLiveRevision] = useState(accountRevision);
     const container = useRef<HTMLElement | null>(null);
     // The selected service panel must load once even if a background WebView
@@ -333,15 +335,21 @@ export function apply(ctx: any) {
     const acting = useRef(false);
     const canShop = resume || !!sendToAgent;
     const [liveData, setData] = useState<any>(),
+      [ucpScope, setUcpScope] = useState<string>(),
       [busy, setBusy] = useState(""),
-      [actionError, setError] = useState(initialError ?? ""),
+      [actionFailure, setActionFailure] = useState<{
+        code: string;
+        checkout?: { id: string; cartId?: string; scope: string };
+      }>({ code: initialError ?? "" }),
       [viewError, setViewError] = useState(""),
       [tab, setTab] = useState<string | undefined>(
         resume ? undefined : ui.card === "connection" ? "products" : ui.card,
       ),
       [tick, setTick] = useState(Date.now());
+    const setError = (code: string) => setActionFailure({ code });
+    const ucpView = ucpScope === draftScope;
     useEffect(() => {
-      if (resume || liveData?.capabilities?.ucp) return;
+      if (resume || ucpView) return;
       const selected = tab ?? (liveData ? shoppingStep(liveData) : ui.card);
       onViewChange(
         selected === "products" || selected === "connection"
@@ -352,8 +360,11 @@ export function apply(ctx: any) {
               ? "cart"
               : "checkout",
       );
-    }, [tab, liveData, resume, onViewChange]);
-    const error = actionError || viewError;
+    }, [tab, liveData, ucpView, resume, onViewChange]);
+    const currentActionError = !actionFailure.checkout || actionFailure.checkout.scope === draftScope
+      ? actionFailure.code
+      : "";
+    const error = currentActionError || viewError;
     const data = withHistoricalCatalog(
       liveRevision === accountRevision ? liveData : undefined,
       catalog,
@@ -400,6 +411,17 @@ export function apply(ctx: any) {
       return views.subscribe(
         ui,
         (state) => {
+          if (state.value) {
+            setUcpScope(state.value.capabilities?.ucp ? draftScope : undefined);
+            const { checkout, cart } = state.value;
+            setActionFailure(current => {
+              const target = current.checkout;
+              if (target && (target.id !== checkout?.id || target.cartId !== cart?.id || checkout?.status === "canceled")) {
+                return { code: "" };
+              }
+              return current;
+            });
+          }
           setLiveRevision(accountRevision);
           setData(state.value);
           setViewError(state.error?.message ?? "");
@@ -428,6 +450,9 @@ export function apply(ctx: any) {
     const downloadOrder = (order_id: string) => call("order-file", { flowId: ui.flowId, sessionId: ui.sessionId, order_id, card: ui.card });
     const action = async (op: string, payload: any = {}, onResult?: (value: any) => void) => {
       if (acting.current) return false;
+      const checkout = op === "contact" && payload.checkout_id
+        ? { id: payload.checkout_id, cartId: data?.cart?.id, scope: draftScope }
+        : undefined;
       acting.current = true;
       const release = views.hold(ui);
       setBusy(op);
@@ -450,11 +475,17 @@ export function apply(ctx: any) {
           op === "view"
             ? await views.refresh(ui)
             : await call(op, { flowId: ui.flowId, sessionId: ui.sessionId, card: ui.card, ...payload });
-        if (op !== "view") views.publish(ui, value);
+        if (op !== "view") {
+          const published = views.publish(ui, value, checkout?.id);
+          if (checkout && !published) {
+            views.invalidate(ui, ["checkout"]);
+            return false;
+          }
+        }
         onResult?.(value);
         if (op === "contact") {
           if (value.pending || value.operation?.status !== "succeeded") {
-            setError("CONTACT_NOT_SAVED");
+            setActionFailure({ code: "CONTACT_NOT_SAVED", checkout });
             return false;
           }
           dirtyForm.current = false;
@@ -495,9 +526,13 @@ export function apply(ctx: any) {
           op === "retry-cart"
         )
           views.invalidate(ui, ["checkout"]);
+        if (checkout && !views.acceptsCheckout(ui, checkout.id)) return false;
         const rejected = op === "confirm" && e.message === "CONFIRMATION_REJECTED";
         if (rejected) views.invalidate(ui, ["checkout"]);
-        setError(op === "confirm" && !rejected ? "CONFIRMATION_RESULT_UNKNOWN" : e.message);
+        setActionFailure({
+          code: op === "confirm" && !rejected ? "CONFIRMATION_RESULT_UNKNOWN" : e.message,
+          checkout,
+        });
         if (op === "confirm" && !rejected && e.message !== "PERSONAL_ACCOUNT_CHANGED")
           views.publish(ui, { ...liveData, pending: true });
         return false;
@@ -577,7 +612,7 @@ export function apply(ctx: any) {
         actionId: crypto.randomUUID(),
       });
     };
-    if (resume || data?.capabilities?.ucp)
+    if (resume || ucpView)
       return (
         <div
           className={resume ? undefined : "fv fv-inline"}
@@ -588,11 +623,7 @@ export function apply(ctx: any) {
           {!resume && <style>{styles}</style>}
           <Storefront downloadOrder={downloadOrder}
             key={accountRevision}
-            draftScope={JSON.stringify([
-              accountRevision,
-              ui.sessionId,
-              ui.flowId,
-            ])}
+            draftScope={draftScope}
             data={data}
             busy={!!busy}
             error={
