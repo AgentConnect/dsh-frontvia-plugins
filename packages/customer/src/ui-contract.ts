@@ -24,9 +24,10 @@ export const uiSchemas = {
       scopes: z.array(z.enum(viewScopes)).min(1).max(6).optional(),
     })
     .strict(),
-  shopping: shoppingActionSchema.extend(common).strict(),
+  "action-progress": z.object({...common,progressId:z.uuid()}).strict(),
+  shopping: shoppingActionSchema.extend({...common,progressId:z.uuid().optional()}).strict(),
   review: z.object(common).strict(),
-  "prepare-purchase": z.object({ ...common, actionId: z.uuid() }).strict(),
+  "prepare-purchase": z.object({ ...common, progressId:z.uuid().optional(), actionId: z.uuid() }).strict(),
   "reopen-ucp-draft": z.object({ ...common, actionId: z.uuid() }).strict(),
   "approve-handoff": z.object({
     ...common, actionId: z.uuid(), challenge: z.string().regex(/^[A-Za-z0-9_-]{43}$/),
@@ -41,14 +42,14 @@ export const uiSchemas = {
   "retry-cart": z.object(common).strict(),
   "discard-cart-add": z.object(common).strict(),
   "order-file": z.object({ ...common, order_id: z.uuid() }).strict(),
-  "aftersales-view": z.object({ ...common, order_id:z.uuid(), case_id:z.uuid().optional(), cursor:z.string().max(4096).optional() }).strict(),
-  "aftersales-change": z.object({ ...common, order_id:z.uuid(), input:aftersalesChange }).strict(),
+  "aftersales-view": z.object({ ...common, order_id:z.uuid(), case_id:z.uuid().optional(), defer_history:z.boolean().optional(), cursor:z.string().max(4096).optional() }).strict(),
+  "aftersales-change": z.object({ ...common, progressId:z.uuid().optional(), order_id:z.uuid(), input:aftersalesChange }).strict(),
   original: z
     .object({ ...common, sourceRef: z.string().regex(/^[a-f0-9]{64}$/) })
     .strict(),
   contact: z
     .object({
-      ...common,
+      ...common, progressId:z.uuid().optional(),
       expected_version: ref,
       checkout_id: ref.optional(),
       patch: manualContactSchema.or(contactSchema),

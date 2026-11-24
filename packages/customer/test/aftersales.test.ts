@@ -3,6 +3,7 @@ import { test } from "node:test";
 import React from "react";
 import { act, create } from "react-test-renderer";
 import { CustomerAftersales } from "../src/aftersales.js";
+import { Order } from "../src/client/commerce-display.js";
 import { AftersalesPanel } from "../src/client/aftersales.js";
 import type { AftersalesView } from "../src/aftersales-contract.js";
 import { PapRequestError } from "../src/pap03-transport.js";
@@ -178,5 +179,61 @@ test("the buyer sees verified money separately from a pending digital entitlemen
   assert.match(text,/已确认退款/);
   assert.match(text,/数字内容已停止访问，正在更新权益记录/);
   assert.doesNotMatch(text,/数字内容权益已撤销/);
+  await act(async()=>ui.unmount());
+});
+
+test("owner first paint reads eligibility before history and preserves original-order checks",async()=>{
+  const f=fixture(), service=f.build();
+  const first=await service.view(scope,undefined,undefined,undefined,true);
+  assert.equal(first.historyDeferred,true);
+  assert.deepEqual(first.eligibility.allowed,["cancel_order"]);
+  assert.deepEqual(f.calls.map(call=>call.method),["aftersales.eligibility"]);
+  const full=await service.view(scope);
+  assert.equal(full.selected?.id,caseId);
+  const other=fixture({...history,items:[{...entry,order_id:lineId}]});
+  await assert.rejects(other.build().view(scope),{code:"AFTERSALES_CHANGED"});
+});
+
+test("an order refund rechecks the selected case and an empty action list renders no bare zero",async()=>{
+  let ui!:ReturnType<typeof create>, settled=false;
+  const calls:any[]=[];
+  const request=async(_op:any,payload:any)=>{
+    calls.push(payload);
+    const selected={...entry,stage:settled?"refunded" as const:"pending_merchant" as const};
+    return {eligibility:{...eligibility,active_case:selected,allowed:[]},selected,history};
+  };
+  const panel=(revision:string)=>React.createElement(AftersalesPanel,{orderId,initialOpen:true,request,orderRevision:revision});
+  await act(async()=>{ui=create(panel("paid"));});
+  assert.match(JSON.stringify(ui.toJSON()),/等待店铺审核/);
+  settled=true;
+  await act(async()=>{ui.update(panel("refunded"));});
+  assert.equal(calls.length,2);
+  assert.equal(calls[1].case_id,caseId);
+  assert.match(JSON.stringify(ui.toJSON()),/渠道已确认退款/);
+  assert(!ui.root.findAll(node=>node.children.some(child=>child==="0")).length);
+  await act(async()=>ui.unmount());
+});
+
+test("a partial return keeps the original capture, refund, net and shipping independently visible",async()=>{
+  const selected:typeof entry={...entry,stage:"refunded",refund:{state:"confirmed",amount_minor:"100",shipping_minor:"0",currency:"CNY",reason:"已确认"}};
+  const result={eligibility:{...eligibility,allowed:[],original_shipping_minor:"200"},selected,history};
+  let ui!:ReturnType<typeof create>;
+  await act(async()=>{
+    ui=create(React.createElement(React.Fragment,null,
+      React.createElement(Order,{order:{id:orderId,currency:"CNY",lines:[],payment:{status:"partially_refunded",captured_minor:400,refunded_minor:100},
+        totals:{grand_total:{amount_minor:"200",currency:"CNY"}}}}),
+      React.createElement(AftersalesPanel,{orderId,initialOpen:true,request:async()=>result})));
+  });
+  const terms=ui.root.findAllByType("dt");
+  const displayed=(name:string)=>terms.find(term=>term.children.join("")===name)?.parent?.findAllByType("dd");
+  for(const [name,amount] of [["原实付","4.00"],["已退款","1.00"],["退款后净额","3.00"]]){
+    assert.ok(displayed(name)?.some(node=>node.children.join("").includes(amount)),name);
+  }
+  const rows=ui.root.findAllByType("dd");
+  for(const [name,amount] of [["原订单运费","¥2.00"],["其中退回运费","¥0.00"]]){
+    const term=terms.find(node=>node.children.join("")===name)!;
+    const siblings=term.parent!.children;
+    assert.equal(siblings[siblings.indexOf(term)+1],rows.find(node=>node.children.join("")===amount));
+  }
   await act(async()=>ui.unmount());
 });

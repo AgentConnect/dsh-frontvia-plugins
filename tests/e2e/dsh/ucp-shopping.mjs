@@ -35,8 +35,8 @@ export async function shopUcp({page,commerce,logPath}){
     await storefront.getByRole('tab',{name:'购物车 (1)',exact:true}).click({timeout:60000});
     await storefront.getByRole('button',{name:/^增加 .+ 数量$/}).first().click();
     await storefront.getByRole('tab',{name:'购物车 (2)',exact:true}).waitFor({state:'visible',timeout:60000});
-    await storefront.getByRole('button',{name:'创建结算草稿',exact:true}).click();
-    await storefront.getByRole('button',{name:'查看结算草稿',exact:true}).waitFor({state:'visible',timeout:60000});
+    await storefront.getByRole('button',{name:'去结算',exact:true}).click();
+    await storefront.getByRole('button',{name:'继续结算',exact:true}).waitFor({state:'visible',timeout:60000});
     await storefront.getByText('可以查看结算信息；商家尚未开放付款提交。',{exact:true}).waitFor({state:'visible'});
     assert(await storefront.getByRole('button',{name:'继续结账',exact:true}).isDisabled());
     assert.equal(await storefront.getByRole('button',{name:/确认购买|支付订单/}).count(),0);
@@ -50,7 +50,7 @@ export async function shopUcp({page,commerce,logPath}){
     await page.reload({waitUntil:'domcontentloaded'});
     if(!await storefront.isVisible())await page.getByRole('button',{name:'Frontvia 服务',exact:true}).click({timeout:30000});
     await storefront.getByRole('tab',{name:'购物车 (2)',exact:true}).click({timeout:60000});
-    await storefront.getByRole('button',{name:'查看结算草稿',exact:true}).waitFor({state:'visible',timeout:60000});
+    await storefront.getByRole('button',{name:'继续结算',exact:true}).waitFor({state:'visible',timeout:60000});
     const output=await readFile(logPath,'utf8');
     const requests=output.split('\n').filter(line=>line.startsWith('{"event":"frontvia-e2e-http"')).map(line=>JSON.parse(line));
     for(const [method,operation] of [['POST','catalog/search'],['POST','catalog/product'],['POST','carts'],['PUT','carts/:id'],['POST','checkout-sessions']])

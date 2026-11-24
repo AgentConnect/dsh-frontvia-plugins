@@ -21,7 +21,8 @@ export function OrderList({
         const lines = Array.isArray(order.lines) ? order.lines : [];
         const first = lines[0];
         const title =
-          first?.title ?? first?.product_title ?? first?.variant_title;
+          first?.title ?? first?.product_title ?? first?.variant_title ?? order.first_title;
+        const lineCount = lines.length || order.line_count || 0;
         const quantity = lines.reduce(
           (sum: number, line: any) =>
             sum + (Number.isFinite(line.quantity) ? line.quantity : 0),
@@ -43,11 +44,11 @@ export function OrderList({
               <div className="fv-order-row-summary">
                 <p>
                   {title
-                    ? `${title}${lines.length > 1 ? ` 等 ${lines.length} 种商品` : ""}`
+                    ? `${title}${lineCount > 1 ? ` 等 ${lineCount} 种商品` : ""}`
                     : "查看订单商品与配送信息"}
                 </p>
                 <p className="fv-muted">
-                  {quantity > 0 ? `共 ${quantity} 件` : "商品信息待查看"}
+                  {quantity > 0 ? `共 ${quantity} 件` : lineCount ? `共 ${lineCount} 种商品` : "打开详情查看商品"}
                   {date && Number.isFinite(date.getTime()) && (
                     <>
                       {" "}
@@ -68,7 +69,7 @@ export function OrderList({
                 <span>
                   {order.totals?.grand_total
                     ? money(order.totals.grand_total)
-                    : "待查看"}
+                    : "打开详情查看金额"}
                 </span>
               </div>
               <Button

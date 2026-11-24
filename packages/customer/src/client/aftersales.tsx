@@ -4,7 +4,7 @@ import { Alert, AlertDescription, Button, Card, CardContent, CardHeader, CardTit
 
 type Method = Exclude<AftersalesChange["kind"],"withdraw">;
 export type AftersalesRequest = (operation:"aftersales-view"|"aftersales-change",
-  payload:{order_id:string;case_id?:string;cursor?:string;input?:AftersalesChange})=>Promise<AftersalesView>;
+  payload:{order_id:string;case_id?:string;cursor?:string;defer_history?:boolean;input?:AftersalesChange})=>Promise<AftersalesView>;
 const labels:Record<Method,string>={cancel_order:"取消整单并退款",refund_only:"仅退款",return_and_refund:"退货退款"};
 const stages:Record<AftersalesCase["stage"],string>={
   pending_merchant:"等待店铺审核",waiting_return:"退货已同意",refunding:"退款核对中",refunded:"渠道已确认退款",
@@ -46,8 +46,8 @@ function minor(text:string) {
   return BigInt(whole!+cents.padEnd(2,"0")).toString();
 }
 
-export function AftersalesPanel({orderId,request,initialOpen=false,originalCaseId}:{
-  orderId:string;request:AftersalesRequest;initialOpen?:boolean;originalCaseId?:string;
+export function AftersalesPanel({orderId,request,initialOpen=false,originalCaseId,orderRevision}:{
+  orderId:string;request:AftersalesRequest;initialOpen?:boolean;originalCaseId?:string;orderRevision?:string;
 }) {
   const [open,setOpen]=useState(initialOpen);
   const [value,setValue]=useState<AftersalesView>();
@@ -63,25 +63,28 @@ export function AftersalesPanel({orderId,request,initialOpen=false,originalCaseI
   const [error,setError]=useState("");
   const [busy,setBusy]=useState(false);
   const running=useRef(false);
+  const [writing,setWriting]=useState(false);
   const heading=useRef<HTMLSpanElement>(null);
   const form=useRef<HTMLFormElement>(null);
   const signature=useId();
+  const observedOrder=useRef(orderRevision);
 
-  async function send(input?:AftersalesChange,caseId?:string,cursor?:string){
+  async function send(input?:AftersalesChange,caseId?:string,cursor?:string,keepForm=false,loadHistory=false){
     if(running.current)return;
     running.current=true;
+    setWriting(!!input);
     setBusy(true);
     setError("");
     try {
       const result=await request(input?"aftersales-change":"aftersales-view",{
-        order_id:orderId,...(caseId?{case_id:caseId}:{}),...(input?{input}:{}),...(cursor?{cursor}:{}),
+        order_id:orderId,...(!input&&!cursor&&!loadHistory&&(!value||value.historyDeferred)?{defer_history:true}:{}),...(caseId?{case_id:caseId}:{}),...(input?{input}:{}),...(cursor?{cursor}:{}),
       });
       setValue(result);
       setKind(current=>current&&result.eligibility.allowed.includes(current)?current:result.eligibility.allowed[0]);
       if(input&&result.message==="recorded"){
         setNewRequest(false);setWithdraw(false);setNotSent(false);setReason("");setQuantities({});setRequested("");setShipping("0");
         heading.current?.focus();
-      } else if(caseId){
+      } else if(caseId&&!keepForm){
         setNewRequest(false);setWithdraw(false);
       }
     }catch(cause){
@@ -93,10 +96,15 @@ export function AftersalesPanel({orderId,request,initialOpen=false,originalCaseI
     if(open&&!value&&!error&&!running.current)void send(undefined,originalCaseId);
     // The panel is keyed to the original order and buyer connection.
   },[open,orderId,originalCaseId]);
+  useEffect(()=>{
+    if (!open || !value || busy || observedOrder.current===orderRevision) return;
+    observedOrder.current=orderRevision;
+    void send(undefined,value.selected?.id,undefined,true);
+  },[orderRevision,open,value,busy]);
   const eligibility=value?.eligibility;
   const entry=value?.selected;
   const pending=value?.pending;
-  const editable=eligibility?.allowed.length&&!pending&&(!entry||newRequest);
+  const editable=(eligibility?.allowed.length??0)>0&&!pending&&(!entry||newRequest);
   const eligibleLines=kind&&kind!=="cancel_order"?eligibility?.lines.filter(line=>line[kind]?.allowed):[];
   const terminal=entry&&["withdrawn","rejected","closed"].includes(entry.stage);
   const canWithdraw=entry?.allowed_actions.includes("withdraw")&&!pending;
@@ -128,7 +136,7 @@ export function AftersalesPanel({orderId,request,initialOpen=false,originalCaseI
       <CardTitle><span ref={heading} tabIndex={-1}>订单售后</span></CardTitle>
     </CardHeader>
     <CardContent className="fv-stack" aria-busy={busy}>
-      {busy&&<p role="status">{value?"正在查询或等待宿主确认…":"正在读取售后…"}</p>}
+      {busy&&!writing&&<p role="status">{value?"正在更新当前售后申请…":"正在读取售后…"}</p>}
       {error&&<Alert role="alert"><AlertDescription>{error}</AlertDescription></Alert>}
       {value?.message==="terms_changed"&&<p role="status">店铺更新了条款，请在宿主重新核对后确认。</p>}
       {value?.message==="no_effect"&&<p role="status">本次操作未生效。请查看订单的当前进度。</p>}
@@ -150,10 +158,12 @@ export function AftersalesPanel({orderId,request,initialOpen=false,originalCaseI
           </Button>
         </div>}
         {expected>0&&<p>商家已收 <strong>{received}/{expected}</strong> 件{damaged>0?`，其中破损 ${damaged} 件`:""}</p>}
-        <dl className="fv-totals"><dt>申请金额</dt><dd>{money(entry.requested_minor,entry.currency)}</dd>
+        <dl className="fv-totals">{eligibility?.original_shipping_minor!=null && eligibility.currency===entry.currency &&
+          <><dt>原订单运费</dt><dd>{money(eligibility.original_shipping_minor,entry.currency)}</dd></>}
+          <dt>申请金额</dt><dd>{money(entry.requested_minor,entry.currency)}</dd>
           {entry.refund&&<><dt>{entry.refund.state==="completed"||entry.refund.state==="confirmed"?"已确认退款":"店铺裁定金额"}</dt>
             <dd>{money(entry.refund.amount_minor,entry.currency)}</dd>
-            {entry.refund.shipping_minor!=null&&<><dt>含原运费</dt><dd>{money(entry.refund.shipping_minor,entry.currency)}</dd></>}
+            {entry.refund.shipping_minor!=null&&<><dt>其中退回运费</dt><dd>{money(entry.refund.shipping_minor,entry.currency)}</dd></>}
           </>}
         </dl>
         {entry.cancellation_pending&&<p role="status">原订单正在取消。</p>}
@@ -213,6 +223,8 @@ export function AftersalesPanel({orderId,request,initialOpen=false,originalCaseI
       <Button variant="outline" disabled={busy} onClick={()=>void send(undefined,entry?.id)}>
         {pending?.phase==="reconciling"||entry?.stage==="refunding"?"查询这笔申请":"刷新售后"}
       </Button>
+      {!pending&&value?.historyDeferred&&<Button variant="ghost" disabled={busy} onClick={()=>void send(undefined,entry?.id,undefined,true,true)}>查看历史申请</Button>}
+      {!pending&&value&&!value.historyDeferred&&!value.history.items.length&&<p className="fv-muted">暂无历史申请</p>}
       {!pending&&value?.history.items.some(item=>item.id!==entry?.id)&&<details>
         <summary>历史申请</summary>
         <ul className="fv-aftersales-history">{value.history.items.map(item=><li key={item.id}><Button variant="ghost" disabled={busy}

@@ -15,8 +15,11 @@ export async function openStorefrontCart(
   const ui = await call("open-store", { siteId, actionId });
   if (!active()) return undefined;
   try {
-    if (intent) await call("shopping", { ...ui, intent, actionId });
-    return { ui, added: !!intent, error: false };
+    if (!intent) return { ui, added: false, error: false };
+    const result = await call("shopping", { sessionId: ui.sessionId, flowId: ui.flowId, intent, actionId });
+    const added = !result?.pending && result?.cart?.lines?.some((line: {variant_id?: string; quantity: number}) =>
+      line.variant_id === intent.variantId && line.quantity >= intent.quantity) === true;
+    return { ui, added, error: !added };
   } catch {
     return { ui, added: false, error: true };
   }

@@ -271,12 +271,18 @@ export function Order({ order, download }: { order: any; download?: (orderId: st
         })}</ul>
       </section>}
       <Separator />
-      <div className="fv-total">
+      {Number.isSafeInteger(order.payment?.captured_minor) && order.payment.captured_minor > 0 ? <dl className="fv-stack">
+        <div className="fv-total"><dt>原实付</dt><dd>{money({amount_minor:order.payment.captured_minor,currency:order.currency})}</dd></div>
+        {Number.isSafeInteger(order.payment.refunded_minor) && order.payment.refunded_minor > 0 && <>
+          <div className="fv-total"><dt>已退款</dt><dd>{money({amount_minor:order.payment.refunded_minor,currency:order.currency})}</dd></div>
+          {order.payment.captured_minor >= order.payment.refunded_minor && <div className="fv-total"><dt>退款后净额</dt><dd>{money({amount_minor:order.payment.captured_minor-order.payment.refunded_minor,currency:order.currency})}</dd></div>}
+        </>}
+      </dl> : <div className="fv-total">
         <span>订单合计</span>
         <span className="fv-total-amount">
           {money(order.totals?.grand_total)}
         </span>
-      </div>
+      </div>}
     </article>
   );
 }

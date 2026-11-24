@@ -100,7 +100,7 @@ export async function shopUcpFullFlow({page,commerce,logPath}){
     await product.getByRole('button',{name:'查看详情',exact:true}).click({timeout:60000});
     await storefront.getByRole('button',{name:'加入购物车',exact:true}).first().click({timeout:60000});
     await storefront.getByRole('tab',{name:'购物车 (1)',exact:true}).click({timeout:60000});
-    await storefront.getByRole('button',{name:'创建结算草稿',exact:true}).click();
+    await storefront.getByRole('button',{name:'去结算',exact:true}).click();
     await storefront.getByRole('button',{name:'保存到结算草稿',exact:true}).waitFor({state:'visible',timeout:60000});
     const draft=await observeFacts(commerce,'ucp-after-draft');
     assert.equal(draft.carts,before.carts+1);

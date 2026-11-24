@@ -4,7 +4,7 @@ import {CustomerService} from '../src/core.js';
 import {Pap03Business} from '../src/pap03-business.js';
 import type {PapOperationsClient} from '@awiki/dsh-pap/product-api';
 
-function fixture(){
+function fixture(lifetime?:number){
  let known=false,identity='one',failure='',catalogFailure='',connected=true;
  const calls:any[]=[],connects:string[]=[];
  const operations=[{companyRef:'company',operationRef:'capabilities',operationId:'commerce.capabilities.get',method:'GET'},{companyRef:'company',operationRef:'products',operationId:'commerce.products.search',method:'GET',queryParameters:[{name:'params',required:false}]},{companyRef:'company',operationRef:'payment',operationId:'commerce.payments.hosted.start',method:'POST'}];
@@ -17,7 +17,7 @@ function fixture(){
    known=true;
    return {ok:true,value:{company:{companyRef:'company',companyId:'https://shop.example',name:'Shop'}}};
   },
-  status:async()=>failure?{ok:false,error:{code:failure}}:{ok:true,value:{state:'ready',identity:{did:identity},companies:known?[{companyRef:'company',companyId:'https://shop.example',domain:'shop.example',name:'Shop'}]:[],sessions:known?[{companyRef:'company',sessionRef:'session',connected}]:[]}},
+  status:async()=>failure?{ok:false,error:{code:failure}}:{ok:true,value:{state:'ready',identity:{did:identity},companies:known?[{companyRef:'company',companyId:'https://shop.example',domain:'shop.example',name:'Shop',...(lifetime!=null?{discoveryExpiresAt:Date.now()+lifetime,discoveryGeneration:1}:{})}]:[],sessions:known?[{companyRef:'company',sessionRef:'session',connected}]:[]}},
   operations:async()=>catalogFailure?{ok:false,error:{code:catalogFailure}}:{ok:true,value:operations},
   request:async input=>{calls.push(input);return {ok:true,value:{status:200,body:{result:{data:(input as {operationRef:string}).operationRef==='capabilities'?{store_id:'store',methods:[{method:'commerce.products.search',availability:'supported'}]}:{items:[]}}}}};}
  };
@@ -171,4 +171,15 @@ test('unconfigured identity keeps the service entry usable but refuses connectio
  assert.equal(business.identityStatus().state,'default_identity_required');
  await assert.rejects(business.connect('shop.example'),{code:'PAP_DEFAULT_IDENTITY_REQUIRED'});
  assert.equal(f.connects.length,0);assert.equal(f.calls.length,0);
+});
+
+test('storefront reuse needs a current discovery and connected original session',async()=>{
+ for(const [ttl,connections] of [[60000,1],[-1,2],[undefined,2]] as const){
+  const f=fixture(ttl), owner=new Pap03Business(f.sdk);
+  await owner.connect('shop.example');
+  await owner.prepareDomain('shop.example',true);
+  assert.equal(f.connects.length,connections);
+  f.disconnect();
+  await assert.rejects(owner.prepareDomain('shop.example',true));
+ }
 });

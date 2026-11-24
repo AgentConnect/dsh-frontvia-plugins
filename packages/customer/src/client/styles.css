@@ -1756,3 +1756,6 @@
   .fv .fv-aftersales-fields { grid-template-columns:minmax(0,1fr); }
   .fv .fv-aftersales .fv-input { font-size:16px; }
 }
+
+.fv .fv-manual-contact { gap: 1rem; align-items: stretch; }
+.fv .fv-manual-contact button { align-self: flex-start; justify-self: start; }

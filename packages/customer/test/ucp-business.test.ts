@@ -12,7 +12,7 @@ const storeContext='com.frontvia.shopping.store_context';
 const orderHistory='com.frontvia.shopping.order_history';
 const metadata=(capability:string)=>({version,status:'success',capabilities:{[capability]:[{version}]}});
 const product={id:'product-1',title:'Mug',description:{plain:'Ceramic'},price_range:{min:{amount:1250,currency:'USD'},max:{amount:1250,currency:'USD'}},variants:[{id:'variant-1',title:'Blue',description:{plain:'Blue ceramic'},price:{amount:1250,currency:'USD'},sku:'MUG-BLUE',availability:{available:false},media:[{type:'image',url:'https://shop.example/mug.jpg',alt_text:'Blue mug'}],options:[{name:'Color',id:'blue',label:'Blue'}]}]};
-function fixture(cartOnly=false, fullFlow=false, hosted=false, orderMessages?: unknown[]){
+function fixture(cartOnly=false, fullFlow=false, hosted=false, orderMessages?: unknown[],historySummary?:Record<string,unknown>,paymentSummary?:Record<string,unknown>){
   let loseNext=false, dropCompleteBeforeAdmission=false, rejection: {status:number;code:string;version:string}|undefined;const receipts=new Map<string,any>();let effects=0;
   const calls:any[]=[],store={companyRef:'shop',companyId:fullFlow?'https://issuer.example':'https://shop.example',domain:'shop.example',name:'Shop',ucpCapabilities:['dev.ucp.shopping.fulfillment']};
   if (fullFlow && !hosted) store.ucpCapabilities.push(UCP_CHECKOUT_CONFIRMATION);
@@ -101,10 +101,10 @@ function fixture(cartOnly=false, fullFlow=false, hosted=false, orderMessages?: u
       checkout={...checkout,status:'complete_in_progress'};
       body=checkout;
     }
-    else if(input.operationRef==='list_orders')body={ucp:metadata(orderHistory),items:[{order_id:orderId}],page:input.query?.cursor?{has_more:false,next_cursor:null}:{has_more:true,next_cursor:'opaque-next'}};
+    else if(input.operationRef==='list_orders')body={ucp:metadata(orderHistory),items:[{order_id:orderId,...(historySummary?{summary:historySummary}:{})}],page:input.query?.cursor?{has_more:false,next_cursor:null}:{has_more:true,next_cursor:'opaque-next'}};
     else if(input.operationRef==='create_checkout'||input.operationRef==='get_checkout'||input.operationRef==='update_checkout')body={...cart,ucp:{version,payment_handlers:{}},id:'draft-1',status:'incomplete',links:[],messages:[{type:'error',code:'payment_method_unavailable',severity:'recoverable',content:'Payment is unavailable'}],...(input.operationRef==='update_checkout'?{buyer:input.body.buyer,fulfillment:input.body.fulfillment}:{})};
     else if(input.operationRef==='cancel_checkout')body={...cart,ucp:{version,payment_handlers:{}},id:'draft-1',status:'canceled',links:[]};
-    else if(input.operationRef==='get_order')body={...cart,id:fullFlow?orderId:'order-1',checkout_id:checkoutId,permalink_url:'https://shop.example/orders/order-1',line_items:cart.line_items.map((line:any)=>({...line,quantity:{original:line.quantity,total:line.quantity,fulfilled:line.quantity}})),fulfillment:{events:[{id:'shipment-event',type:'shipped',occurred_at:'2026-11-15T00:00:00Z',tracking_number:'track-1',tracking_url:'https://carrier.example/track-1',carrier:'Carrier',line_items:[{id:'line-1',quantity:1}]}]},...(orderMessages?{messages:orderMessages}:{})};
+    else if(input.operationRef==='get_order')body={...cart,payment_summary:paymentSummary,id:fullFlow?orderId:'order-1',checkout_id:checkoutId,permalink_url:'https://shop.example/orders/order-1',line_items:cart.line_items.map((line:any)=>({...line,quantity:{original:line.quantity,total:line.quantity,fulfilled:line.quantity}})),fulfillment:{events:[{id:'shipment-event',type:'shipped',occurred_at:'2026-11-15T00:00:00Z',tracking_number:'track-1',tracking_url:'https://carrier.example/track-1',carrier:'Carrier',line_items:[{id:'line-1',quantity:1}]}]},...(orderMessages?{messages:orderMessages}:{})};
     else if(input.operationRef==='get_cart')body=cart;
     else if(input.operationRef==='update_cart'){assert.equal(input.ifMatch,etag);etag='"v2"';cart={...cart,line_items:input.body.line_items.map((line:any)=>({...line,item:{...line.item,title:'Mug',price:1250},totals:[{type:'subtotal',amount:1250},{type:'total',amount:1250}]}))};body=cart;}
     else if(input.operationRef==='create_cart'){cart={...cart,line_items:input.body.line_items.map((line:any,index:number)=>({...line,id:`line-${index+1}`,item:{...line.item,title:'Mug',price:1250},totals:[{type:'subtotal',amount:1250},{type:'total',amount:1250}]}))};body=cart;}
@@ -849,4 +849,25 @@ test('two Customer clients can edit the same Checkout after a definite ETag reje
  assert.notEqual(retry.idempotencyKey,writes[1].idempotencyKey);
  assert.equal(updated.checkout.buyer.email,'second@example.test');
  assert.equal(updated.checkout.version,'"checkout-3"');
+});
+
+test('an authorized historical order summary is usable without opening each order',async()=>{
+ const f=fixture(false,true,false,undefined,{currency:'USD',first_title:'Original book',line_count:1,label:'#81',
+   payment_status:'refunded',total_minor:3500,placed_at:'2026-11-01T11:00:00Z',ignored:'private'});
+ await f.transport.connect('shop.example');
+ const result:any=await f.transport.request('shop.example','commerce.orders.list',{page:{limit:10}});
+ assert.deepEqual(result.result.data.items,[{order_id:f.orderId,first_title:'Original book',line_count:1,label:'#81',
+   payment:{status:'refunded'},totals:{grand_total:{amount_minor:'3500',currency:'USD'}},created_at:'2026-11-01T11:00:00Z'}]);
+ assert.equal(f.calls.filter(c=>c.operationRef==='get_order').length,0);
+});
+
+test('the order detail carries only confirmed amounts in its own currency',async()=>{
+ const messages=[{type:'info',code:'frontvia_order_payment_partially_refunded',content:'Partial refund'}];
+ for(const currency of ['USD','CNY']){
+   const f=fixture(false,false,false,messages,undefined,{currency,captured_minor:400,refunded_minor:100,provider:'private'});
+   const response:any=await f.transport.request('shop.example','commerce.orders.get',{order_id:'order-1'});
+   assert.deepEqual(response.result.data.payment,{status:'partially_refunded',
+     ...(currency==='USD'?{captured_minor:400,refunded_minor:100}:{})});
+   assert.equal(response.result.data.payment_summary,undefined);
+ }
 });

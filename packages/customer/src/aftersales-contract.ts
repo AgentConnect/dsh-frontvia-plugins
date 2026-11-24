@@ -70,6 +70,7 @@ export type AftersalesEligibility = z.infer<typeof aftersalesEligibility>;
 export type AftersalesView = {
   eligibility: AftersalesEligibility;
   selected: AftersalesCase | null;
+  historyDeferred?: true;
   history: z.infer<typeof aftersalesCases>;
   pending?: { phase:"confirm"|"reconciling"; input:AftersalesChange };
   message?: "recorded"|"no_effect"|"terms_changed";

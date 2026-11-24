@@ -1,3 +1,4 @@
+import {measure} from "./action-progress.js";
 import { createHash, randomUUID } from "node:crypto";
 import { canonical, fail, Serial, type Vault } from "./state.js";
 import type { PapPort } from "./pap-port.js";
@@ -23,16 +24,16 @@ export class CustomerAftersales {
   }
 
   private request(scope:OrderScope, method:string, params:Record<string,unknown>, signal?:AbortSignal) {
-    return this.pap.request(scope.connectionRef, method, params, signal);
+    return measure(method,()=>this.pap.request(scope.connectionRef, method, params, signal));
   }
 
-  async view(scope:OrderScope, selected?:string, cursor?:string, signal?:AbortSignal):Promise<AftersalesView> {
+  async view(scope:OrderScope, selected?:string, cursor?:string, signal?:AbortSignal,deferHistory=false):Promise<AftersalesView> {
     const key=this.key(scope);
-    return this.serial.run(key,()=>this.read(scope,key,selected,cursor,signal));
+    return this.serial.run(key,()=>this.read(scope,key,selected,cursor,signal,undefined,deferHistory));
   }
 
   private async read(scope:OrderScope,key:string,selected?:string,cursor?:string,signal?:AbortSignal,
-      message?:AftersalesView["message"]):Promise<AftersalesView> {
+      message?:AftersalesView["message"],deferHistory=false):Promise<AftersalesView> {
     const order_id=scope.orderId;
     const previous=this.vault.get<string>(key+":case");
     let pending=this.vault.get<StoredIntent>(key);
@@ -59,20 +60,22 @@ export class CustomerAftersales {
         fail("AFTERSALES_CHANGED");
       }
     }
-    const [raw,history]=await Promise.all([
-      this.request(scope,"aftersales.eligibility",{order_id},signal),
-      this.request(scope,"aftersales.list",{order_id,limit:"20",...(cursor?{cursor}:{})},signal),
-    ]);
-    const eligibility=aftersalesEligibility.parse(raw);
-    const caseHistory=aftersalesCases.parse(history);
-    if(eligibility.order_id!==order_id||caseHistory.items.some(entry=>entry.order_id!==order_id))fail("AFTERSALES_CHANGED");
-    const caseId=selected??eligibility.active_case?.id??(!cursor?caseHistory.items[0]?.id:undefined)??previous;
+    const readEligibility=()=>this.request(scope,"aftersales.eligibility",{order_id},signal).then(raw=>aftersalesEligibility.parse(raw));
+    const readHistory=()=>this.request(scope,"aftersales.list",{order_id,limit:"20",...(cursor?{cursor}:{})},signal).then(raw=>aftersalesCases.parse(raw));
+    const defer=deferHistory&&!cursor;
+    const [eligibility,history]=await Promise.all([readEligibility(),defer?undefined:readHistory()]);
+    // A terminal order opened on a new device still needs its latest case.
+    const needsLatest=!selected&&!previous&&!eligibility.active_case&&!eligibility.allowed.length;
+    const caseHistory=history??(needsLatest?await readHistory():undefined);
+    if(eligibility.order_id!==order_id||caseHistory?.items.some(entry=>entry.order_id!==order_id))fail("AFTERSALES_CHANGED");
+    const caseId=selected??eligibility.active_case?.id??(!cursor?caseHistory?.items[0]?.id:undefined)??previous;
     const entry=caseId&&caseId!==eligibility.active_case?.id
       ? aftersalesCase.parse(await this.request(scope,"aftersales.get",{order_id,case_id:caseId},signal))
       : eligibility.active_case;
     if(entry&&entry.order_id!==order_id)fail("AFTERSALES_CHANGED");
     if(entry)this.vault.set(key+":case",entry.id);
-    return {eligibility,selected:entry,history:caseHistory,
+    return {eligibility,selected:entry,history:caseHistory??{items:[],page:{has_more:false,next_cursor:null}},
+      ...(!caseHistory?{historyDeferred:true as const}:{}),
       ...(pending?{pending:{phase:pending.phase,input:pending.input}}:{}),...(message?{message}:{})};
   }
 

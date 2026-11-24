@@ -14,7 +14,7 @@ export interface PapPort {
   /** Chat ownership is independent of whether a particular remote session is connected. */
   isCurrentIdentity?(ref:string):boolean;
   capabilityCacheKey?(ref:string):string;
-  prepareDomain?(domain:string):Promise<void>;
+  prepareDomain?(domain:string,reuse?:boolean):Promise<void>;
   refresh?():Promise<void>;
   hostedPayment?(ref:string,link:string,checkoutId:string):Promise<any>;
 }

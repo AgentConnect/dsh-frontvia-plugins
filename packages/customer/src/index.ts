@@ -9,6 +9,8 @@ import type {} from "@deepseek-ai/dsh-app-boot";
 import { join } from "node:path";
 import { CustomerService, type CustomerConfig } from "./core.js";
 import { tools, guidance } from "./tools.js";
+import { randomUUID } from "node:crypto";
+import { ActionProgress, timeOwnerRequest } from "./action-progress.js";
 import { uiSchemas } from "./ui-contract.js";
 import { runUiRequest } from "./ui-request.js";
 export const name = "dsh-frontvia-customer";
@@ -49,6 +51,7 @@ export async function apply(
     text: ({ scope }) =>
       ctx.tools.get("frontvia_connection", scope) ? guidance : "",
   });
+  const progress=new ActionProgress();
   for (const operation of Object.keys(uiSchemas) as (keyof typeof uiSchemas)[])
     ctx.effect(() =>
       ctx.connection.fetch.register({
@@ -68,86 +71,92 @@ export async function apply(
           if (message.method !== `frontvia-customer/${operation}`)
             return new Response(null, { status: 400 });
           const result = await runUiRequest(operation, message.payload, async (a: any) => {
-            let value: any;
-            await pap.refresh();
-            if (operation === "identity-status") value = pap.identityStatus();
-            if (operation === "list") value = {flows:service.list(),sites:pap.sites()};
-            if (operation === "open-store")
-              value = await service.openStore(a.siteId, a.actionId);
-            if (operation === "view")
-              value = service.consultation.owns(a.flowId)
-                ? await service.consultation.view(a.sessionId, a.flowId)
-                : await service.view(a.sessionId, a.flowId, a.scopes);
-            if (operation === "shopping")
-              value = await service.shopping(
-                a.sessionId,
-                a.flowId,
-                {
-                  intent: a.intent,
-                  expected_version: a.expected_version,
-                  actionId: a.actionId,
-                },
-                request.signal,
-              );
-            if (operation === "order-file") value = await service.downloadOrderFile(a.sessionId, a.flowId, a.order_id, request.signal);
-            if (operation === "aftersales-view")
-              value = await service.viewAftersales(a.sessionId,a.flowId,a.order_id,a.case_id,a.cursor,request.signal);
-            if (operation === "aftersales-change")
-              value = await service.changeAftersales(a.sessionId,a.flowId,a.order_id,a.input,request.signal);
-            if (operation === "original")
-              value = await service.consultation.original(
-                a.sessionId,
-                a.flowId,
-                a.sourceRef,
-              );
-            if (operation === "contact")
-              value = await service.contact(
-                a.sessionId,
-                a.flowId,
-                a.expected_version,
-                a.patch,
-                a.actionId,
-                a.checkout_id,
-              );
-            if (operation === "review")
-              value = await service.review(a.sessionId, a.flowId);
-            if (operation === "prepare-purchase")
-              value = await service.prepareUcpPurchase(a.sessionId, a.flowId, a.actionId);
-            if (operation === "reopen-ucp-draft")
-              value = await service.reopenUcpDraft(a.sessionId, a.flowId, a.actionId, request.signal);
-            if (operation === "approve-handoff")
-              value = await service.approveUcpHandoff(a.sessionId, a.flowId, a.challenge, a.actionId);
-            if (operation === "confirm-ucp")
-              value = await service.confirmUcpPurchase(a.sessionId, a.flowId, a.actionId);
-            if (operation === "refresh-ucp-checkout")
-              value = await service.refreshUcpCheckout(a.sessionId, a.flowId);
-            if (operation === "cancel-ucp-checkout")
-              value = await service.cancelUcpCheckout(a.sessionId, a.flowId, a.actionId);
-            if (operation === "order-cancel")
-              value = await service.cancelOrder(a.sessionId, a.flowId);
-            if (operation === "payment-start")
-              value = await service.startPayment(a.sessionId, a.flowId);
-            if (operation === "confirm")
-              value = await service.confirm(a.sessionId, a.flowId, a.intentId);
-            // Legacy accepted operations remain recoverable; never create a new
-            // purchase by submitting a confirmation message to an Agent.
-            if (operation === "shopping-confirm")
-              fail("DIRECT_COMMERCE_REQUIRED");
-            if (operation === "discard-cart-add")
-              value = await service.discardCartAddition(a.sessionId, a.flowId);
-            if (operation === "retry-cart")
-              value = await service.retryCart(a.sessionId, a.flowId);
-            if (operation === "recover" || operation === "recover-status") {
-              if (service.consultation.owns(a.flowId)) {
-                await service.tool(a.sessionId, "frontvia_consultation",
-                  { flowId: a.flowId, action: "recover" }, "ui-recovery", request.signal);
-                value = await service.consultation.view(a.sessionId, a.flowId);
-              } else {
-                await service.recoverFromOwner(a.sessionId, a.flowId, operation === "recover");
-                value = await service.view(a.sessionId, a.flowId, a.scopes);
+            // Polling only reads an ephemeral phase scoped to this owner, flow and opaque request.
+            const key=a.progressId && JSON.stringify([a.sessionId,a.flowId,a.progressId,pap.revision()]);
+            if(operation==="action-progress")return {phase:progress.read(key)??null};
+            const execute=async()=>{
+              let value: any;
+              await pap.refresh();
+              if (operation === "identity-status") value = pap.identityStatus();
+              if (operation === "list") value = {flows:service.list(),sites:pap.sites()};
+              if (operation === "open-store")
+                value = await service.openStore(a.siteId, a.actionId);
+              if (operation === "view")
+                value = service.consultation.owns(a.flowId)
+                  ? await service.consultation.view(a.sessionId, a.flowId)
+                  : await service.view(a.sessionId, a.flowId, a.scopes);
+              if (operation === "shopping")
+                value = await service.shopping(
+                  a.sessionId,
+                  a.flowId,
+                  {
+                    intent: a.intent,
+                    expected_version: a.expected_version,
+                    actionId: a.actionId,
+                  },
+                  request.signal,
+                );
+              if (operation === "order-file") value = await service.downloadOrderFile(a.sessionId, a.flowId, a.order_id, request.signal);
+              if (operation === "aftersales-view")
+                value = await service.viewAftersales(a.sessionId,a.flowId,a.order_id,a.case_id,a.cursor,request.signal,a.defer_history);
+              if (operation === "aftersales-change")
+                value = await service.changeAftersales(a.sessionId,a.flowId,a.order_id,a.input,request.signal);
+              if (operation === "original")
+                value = await service.consultation.original(
+                  a.sessionId,
+                  a.flowId,
+                  a.sourceRef,
+                );
+              if (operation === "contact")
+                value = await service.contact(
+                  a.sessionId,
+                  a.flowId,
+                  a.expected_version,
+                  a.patch,
+                  a.actionId,
+                  a.checkout_id,
+                );
+              if (operation === "review")
+                value = await service.review(a.sessionId, a.flowId);
+              if (operation === "prepare-purchase")
+                value = await service.prepareUcpPurchase(a.sessionId, a.flowId, a.actionId);
+              if (operation === "reopen-ucp-draft")
+                value = await service.reopenUcpDraft(a.sessionId, a.flowId, a.actionId, request.signal);
+              if (operation === "approve-handoff")
+                value = await service.approveUcpHandoff(a.sessionId, a.flowId, a.challenge, a.actionId);
+              if (operation === "confirm-ucp")
+                value = await service.confirmUcpPurchase(a.sessionId, a.flowId, a.actionId);
+              if (operation === "refresh-ucp-checkout")
+                value = await service.refreshUcpCheckout(a.sessionId, a.flowId);
+              if (operation === "cancel-ucp-checkout")
+                value = await service.cancelUcpCheckout(a.sessionId, a.flowId, a.actionId);
+              if (operation === "order-cancel")
+                value = await service.cancelOrder(a.sessionId, a.flowId);
+              if (operation === "payment-start")
+                value = await service.startPayment(a.sessionId, a.flowId);
+              if (operation === "confirm")
+                value = await service.confirm(a.sessionId, a.flowId, a.intentId);
+              // Legacy accepted operations remain recoverable; never create a new
+              // purchase by submitting a confirmation message to an Agent.
+              if (operation === "shopping-confirm")
+                fail("DIRECT_COMMERCE_REQUIRED");
+              if (operation === "discard-cart-add")
+                value = await service.discardCartAddition(a.sessionId, a.flowId);
+              if (operation === "retry-cart")
+                value = await service.retryCart(a.sessionId, a.flowId);
+              if (operation === "recover" || operation === "recover-status") {
+                if (service.consultation.owns(a.flowId)) {
+                  await service.tool(a.sessionId, "frontvia_consultation",
+                    { flowId: a.flowId, action: "recover" }, "ui-recovery", request.signal);
+                  value = await service.consultation.view(a.sessionId, a.flowId);
+                } else {
+                  await service.recoverFromOwner(a.sessionId, a.flowId, operation === "recover");
+                  value = await service.view(a.sessionId, a.flowId, a.scopes);
+                }
               }
-            }
-            return value&&typeof value==="object"&&!Array.isArray(value)?{...value,identityRevision:pap.revision()}:value;
+              return value&&typeof value==="object"&&!Array.isArray(value)?{...value,identityRevision:pap.revision()}:value;
+            };
+            return timeOwnerRequest(operation,randomUUID(),()=>key?progress.track(key,execute):execute());
           });
           return Response.json(
             { type: "server-response", rpcId: message.rpcId, result },

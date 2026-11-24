@@ -1,5 +1,6 @@
 import {requestUcp,ucpBusinessMethods,isUcpBusinessMethod,UCP_CHECKOUT_CONFIRMATION,UCP_PURCHASE_PROFILE,type UcpRequest,type UcpResponse} from './ucp-business.js';
 import type {PapOperationsClient, ProductResult} from '@awiki/dsh-pap/product-api';
+import {actionObserver, measure, type ActionPhase} from "./action-progress.js";
 import {PapError} from './state.js';
 
 export class PapRequestError extends PapError {
@@ -163,7 +164,8 @@ export class Pap03Transport {
     return (await this.send(request,signal)).body;
   }
   private async send(request:UcpRequest,signal?:AbortSignal,ucp=false):Promise<UcpResponse> {
-    const response=value(await this.pap.request(request,signal)) as {status?:number;body?:unknown;bodyAvailable?:boolean;etag?:string};
+    const client: PapOperationsClient & {request(input:unknown,signal?:AbortSignal,report?:(phase:Exclude<ActionPhase,"prepare">)=>void):Promise<ProductResult>} = this.pap;
+    const response=value(await measure("pap_request",()=>client.request(request,signal,actionObserver.getStore()))) as {status?:number;body?:unknown;bodyAvailable?:boolean;etag?:string};
     if(!response||typeof response.status!=='number'||response.bodyAvailable===false||!('body' in response))throw new Error('PAP_BUSINESS_RESPONSE_UNAVAILABLE');
     if(!ucp&&(response.status<200||response.status>=300))throw new PapRequestError({code:'business_http_error',businessRequest:'response_received',httpStatus:response.status,phase:'response'});
     return response as UcpResponse;
