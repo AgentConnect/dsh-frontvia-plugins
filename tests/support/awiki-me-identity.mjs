@@ -15,7 +15,7 @@ const MANAGER=SERVICE+'/management-remote';
 const PROVIDER=SERVICE+'/provider';
 
 /** Real public User Service. Retain only the dedicated encrypted test identity, not run artifacts. */
-export async function awikiMeIdentity(identityPackage=undefined,{reusePublished=false}={}){
+export async function awikiMeIdentity(identityPackage=undefined,{reusePublished=false,readOtp}={}){
   identityPackage??=await loadPublicIdentity();
   const {plugin:{default:Identity},provider:Provider,manager:{default:Manager},bootstrap:Bootstrap}=identityPackage;
   const authFile=process.env.FRONTVIA_IDENTITY_TEST_AUTH_FILE??resolve('.local/identity/awiki-me/auth.json');
@@ -24,7 +24,8 @@ export async function awikiMeIdentity(identityPackage=undefined,{reusePublished=
   assert(input.isFile()&&!input.isSymbolicLink()&&(input.mode&0o077)===0&&input.uid===process.getuid(),'Test authentication input must be an owner-only regular file');
   const auth=JSON.parse(await readFile(authFile,'utf8'));
   assert.equal(auth.origin,'https://awiki.me');
-  assert(/^\+[1-9][0-9]{6,14}$/.test(auth.phone)&&/^[0-9]{6}$/.test(auth.code));
+  assert(/^\+[1-9][0-9]{6,14}$/.test(auth.phone),'A dedicated E.164 test phone is required');
+  if(!reusePublished&&!readOtp)assert(/^[0-9]{6}$/.test(auth.code),'A six-digit test OTP is required');
   const persistent=resolve(process.env.FRONTVIA_IDENTITY_TEST_STATE??'.local/identity/awiki-me');
   await mkdir(persistent,{recursive:true,mode:0o700});
   const identityRoot=join(persistent,'identity'),credentialsFile=join(persistent,'.credentials.yaml');
@@ -114,8 +115,13 @@ export async function awikiMeIdentity(identityPackage=undefined,{reusePublished=
         if(review.request.status==='pending')await manager().decide({requestId:seed.requestId,expectedVersion:review.request.version,decision:'approve'});
       }
       const phase=await until(status,v=>['awaiting_phone_verification','published','blocked','registration_uncertain'].includes(v?.phase));
-      if(phase.phase==='awaiting_phone_verification')await remote.submitRegistrationOtp({code:auth.code});
-      else assert.equal(phase.phase,'published','Live registration blocked; retain original identity state for reconciliation');
+      if(phase.phase==='awaiting_phone_verification'){
+        const code=readOtp?await readOtp():auth.code;
+        assert(/^[0-9]{6}$/.test(code),'Enter the six-digit registration OTP');
+        await remote.submitRegistrationOtp({code});
+      }else{
+        assert.equal(phase.phase,'published',`Live registration stopped (${phase.reason??phase.phase}); retain original identity state for reconciliation`);
+      }
     }
     await readPublished();
     return {

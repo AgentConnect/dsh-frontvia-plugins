@@ -1,9 +1,10 @@
 import {requestUcp,ucpBusinessMethods,isUcpBusinessMethod,UCP_CHECKOUT_CONFIRMATION,UCP_PURCHASE_PROFILE,type UcpRequest,type UcpResponse} from './ucp-business.js';
 import type {PapOperationsClient, ProductResult} from '@awiki/dsh-pap/product-api';
+import {actionObserver, measure, type ActionPhase} from "./action-progress.js";
 import {PapError} from './state.js';
 
 export class PapRequestError extends PapError {
-  constructor(readonly detail: Extract<ProductResult,{ok:false}>['error']) {
+  constructor(readonly detail: Extract<ProductResult,{ok:false}>['error'] & {papOperationId?:string}) {
     super('PAP_'+detail.code.replace(/[^A-Za-z0-9_]/g,'_').toUpperCase());
   }
 }
@@ -11,10 +12,20 @@ function value(result:ProductResult):unknown {
   if(!result.ok)throw new PapRequestError(result.error);
   return result.value;
 }
-type Operation={channel?:string;operationRef:string;companyRef:string;operationId?:string;method:string;queryParameters?:{name:string;required:boolean}[];pathParameters?:string[]};
+type Operation={channel?:string;operationRef:string;companyRef:string;operationId?:string;method:string;queryParameters?:{name:string;required:boolean}[];pathParameters?:string[];approvalProtocol?:string};
 export type StoreConnection={ucp?:boolean;ucpCapabilities?:string[];ucpFulfillmentParents?:string[];domain:string;companyRef:string;companyId:string;name:string;methods:string[]};
 const allowedLegacyMethod = (method: string) => !method.startsWith('commerce.') ||
   method === 'commerce.capabilities.get' || method === 'commerce.connections.list';
+const aftersalesMethods = {
+  'aftersales.eligibility': { method:'GET', path:['order_id'], query:[] },
+  'aftersales.list': { method:'GET', path:['order_id'], query:['limit','cursor'] },
+  'aftersales.get': { method:'GET', path:['order_id','case_id'], query:[] },
+  'aftersales.operation.get': { method:'GET', path:['operation_id'], query:[] },
+  'aftersales.intent.get': { method:'GET', path:['order_id','intent_id'], query:[] },
+  'aftersales.contact': { method:'GET', path:[], query:[] },
+  'aftersales.submit': { method:'POST', path:['order_id'], query:[] },
+  'aftersales.withdraw': { method:'POST', path:['order_id','case_id'], query:[] },
+} as const;
 
 function storeContext(body: any) {
   const capability = 'com.frontvia.shopping.store_context';
@@ -48,7 +59,7 @@ export class Pap03Transport {
     if(typeof companyRef!=='string'||!companyRef||typeof companyId!=='string'||!companyId)throw new Error('INVALID_PAP_COMPANY');
     if(expected && (expected.companyRef!==companyRef || expected.companyId!==companyId)) throw new PapError('PAP_STORE_CHANGED');
     const operations=await this.operations(companyRef);
-    const methods=operations.map(o=>o.operationId).filter((m):m is string=>typeof m==='string'&&/^(commerce|consultation|knowledge)\./.test(m));
+    const methods=operations.map(o=>o.operationId).filter((m):m is string=>typeof m==='string'&&(/^(commerce|consultation|knowledge)\./.test(m)||Object.hasOwn(aftersalesMethods,m)));
     const ucp=operations.some(op=>op.channel==='ucp');
     const store={domain,companyRef,companyId,ucp,ucpCapabilities:connected.company?.ucpCapabilities,ucpFulfillmentParents:connected.company?.ucpFulfillmentParents,name:connected.company?.name??domain,methods:[...new Set(ucp
       ? [...methods.filter(allowedLegacyMethod),...ucpBusinessMethods(operations),'commerce.capabilities.get']
@@ -64,8 +75,33 @@ export class Pap03Transport {
   async request(target:string|StoreConnection,method:string,params:Record<string,unknown>,signal?:AbortSignal):Promise<unknown> {
     signal?.throwIfAborted();
     const store=typeof target==='string' ? this.stores.get(target)??await this.connect(target) : target;
-    if(!/^(commerce|consultation|knowledge)\./.test(method))throw new Error('METHOD_NOT_ADVERTISED');
+    const aftersales=Object.hasOwn(aftersalesMethods,method)?aftersalesMethods[method as keyof typeof aftersalesMethods]:undefined;
+    if(!aftersales&&!/^(commerce|consultation|knowledge)\./.test(method))throw new Error('METHOD_NOT_ADVERTISED');
     const operations=await this.operations(store.companyRef);
+    if(aftersales){
+      const exact=operations.filter(op=>op.operationId===method&&op.channel==='openapi'&&op.method===aftersales.method&&
+        [...(op.pathParameters??[])].sort().join() === [...aftersales.path].sort().join());
+      if(exact.length!==1)throw new PapError('AFTERSALES_UNAVAILABLE');
+      const path:Record<string,string>={}, query:Record<string,string>={};
+      for(const field of aftersales.path){
+        const value=params[field];
+        if(typeof value!=='string'||!/^[A-Za-z0-9_.-]{1,200}$/.test(value))throw new PapError('INVALID_AFTERSALES_REFERENCE');
+        path[field]=value;
+      }
+      for(const field of aftersales.query) if(params[field]!==undefined)query[field]=String(params[field]);
+      const route=exact[0]!;
+      if(aftersales.method==='POST'&&route.approvalProtocol!=='pap-operations-v3')throw new PapError('AFTERSALES_PAP_UPDATE_REQUIRED');
+      const response=await this.send({operationRef:route.operationRef,path,query,
+        ...(aftersales.method==='POST'?{body:params.input}:{})},signal,true);
+      if(response.status>=200&&response.status<300)return response.body;
+      const result=response.body as {error?:unknown;operation?:{operation_id?:unknown}}|undefined;
+      if(result?.error==='approval_required'&&aftersales.method==='POST'&&typeof result.operation?.operation_id==='string')
+        throw new PapRequestError({code:'aftersales_terms_changed',phase:'approval',businessRequest:'not_sent',papOperationId:result.operation.operation_id});
+      if(response.status===404)throw new PapError('AFTERSALES_NOT_FOUND');
+      if(response.status===409)throw new PapError('AFTERSALES_CHANGED');
+      if(result?.error==='approval_declined')throw new PapError('AFTERSALES_DECLINED');
+      throw new PapRequestError({code:'aftersales_http_error',httpStatus:response.status,phase:'response',businessRequest:'response_received'});
+    }
     const ucpMethods=ucpBusinessMethods(operations);
     const useUcp = store.ucp || operations.some(op=>op.channel==='ucp');
     if(useUcp && method==='commerce.capabilities.get') {
@@ -89,7 +125,8 @@ export class Pap03Transport {
         ucpMethods.filter(method=>/^commerce\.(products|variants)\./.test(method));
       const methods=[...available,'commerce.capabilities.get',...(!contexts.length&&connections.length===1&&
         data.methods?.some?.((entry:any)=>entry.method==='commerce.connections.list'&&entry.availability==='supported')
-        ?['commerce.connections.list']:[])];
+        ?['commerce.connections.list']:[]),
+        ...operations.filter(op=>op.operationId&&Object.hasOwn(aftersalesMethods,op.operationId)).map(op=>op.operationId!)];
       const ucpFulfillment = ucpMethods.includes('commerce.checkouts.update')
         && store.ucpCapabilities?.includes('dev.ucp.shopping.fulfillment')===true
         && (store.ucpFulfillmentParents === undefined || store.ucpFulfillmentParents.includes('dev.ucp.shopping.checkout'));
@@ -127,7 +164,8 @@ export class Pap03Transport {
     return (await this.send(request,signal)).body;
   }
   private async send(request:UcpRequest,signal?:AbortSignal,ucp=false):Promise<UcpResponse> {
-    const response=value(await this.pap.request(request,signal)) as {status?:number;body?:unknown;bodyAvailable?:boolean;etag?:string};
+    const client: PapOperationsClient & {request(input:unknown,signal?:AbortSignal,report?:(phase:Exclude<ActionPhase,"prepare">)=>void):Promise<ProductResult>} = this.pap;
+    const response=value(await measure("pap_request",()=>client.request(request,signal,actionObserver.getStore()))) as {status?:number;body?:unknown;bodyAvailable?:boolean;etag?:string};
     if(!response||typeof response.status!=='number'||response.bodyAvailable===false||!('body' in response))throw new Error('PAP_BUSINESS_RESPONSE_UNAVAILABLE');
     if(!ucp&&(response.status<200||response.status>=300))throw new PapRequestError({code:'business_http_error',businessRequest:'response_received',httpStatus:response.status,phase:'response'});
     return response as UcpResponse;

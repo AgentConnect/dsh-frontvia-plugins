@@ -4258,3 +4258,24 @@ test("physical carts cannot use email-only contact to bypass the required addres
     assert.equal(f.remote.writes,before);
   } finally { f.close(); }
 });
+
+test("UCP product detail takes its variants from a single product read", async () => {
+  const f=fixture();
+  try {
+    const flow=await f.flow(), saved=f.vault.get<any>(`flow:${flow}`);
+    saved.capabilities.ucp=true; f.vault.set(`flow:${flow}`,saved);
+    const original=f.service.pap.request;
+    const reads:string[]=[];
+    f.service.pap.request=async(ref,method,params,signal,options)=>{
+      reads.push(method);
+      const result=await original(ref,method,params,signal,options);
+      if(method==="commerce.capabilities.get")result.result.data.ucp=true;
+      if(method==="commerce.products.get")result.result.data.variants=[{id:"blue",product_id:"prod",title:"Blue"}];
+      return result;
+    };
+    const view=await f.service.shopping("session-a",flow,{intent:{action:"product",productId:"prod"},actionId:randomUUID()});
+    assert.equal(view.variants.items[0].id,"blue");
+    assert.equal(reads.filter(x=>x==="commerce.products.get").length,1);
+    assert(!reads.includes("commerce.variants.list"));
+  }finally{f.close();}
+});

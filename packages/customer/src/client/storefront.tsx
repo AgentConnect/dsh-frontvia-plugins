@@ -63,9 +63,13 @@ import {
   manualCart,
 } from "../contact-fields.js";
 import type { ShoppingAction } from "../shopping-action.js";
+import { AftersalesPanel, type AftersalesRequest } from "./aftersales.js";
 type Action = (operation: string, payload?: any, onResult?: (value: any) => void) => Promise<boolean>;
 type Props = {
   downloadOrder?: (orderId: string) => Promise<any>;
+  aftersales?: AftersalesRequest;
+  initialAftersales?: boolean;
+  initialAftersalesCaseId?: string;
   draftScope: string;
   data: any;
   busy: boolean;
@@ -283,7 +287,7 @@ function UcpCheckoutActions({data, busy, action, now, orderView = false}: {
             pairing.current.open = true;
           }
         }}>
-        {checkout.status === "completed" ? "在浏览器查看订单与售后" : "在浏览器继续"}
+        {checkout.status === "completed" ? "在浏览器查看订单" : "在浏览器继续"}
       </a>
       {!hosted && <details ref={pairing} className="fv-browser-pairing">
         <summary>浏览器要求配对时，输入代码</summary>
@@ -365,6 +369,9 @@ export function Storefront(props: Props) {
 }
 function StorefrontContent({
   downloadOrder,
+  aftersales,
+  initialAftersales,
+  initialAftersalesCaseId,
   data,
   busy,
   error,
@@ -456,7 +463,7 @@ function StorefrontContent({
   const initialized = useRef(false);
   const checkedPending = useRef(false);
   useEffect(() => {
-    if (!data?.pending || data.cartCreationPending) {
+    if (!data?.pending || data.cartCreationPending || data.canDiscardCartAddition) {
       checkedPending.current = false;
       return;
     }
@@ -465,10 +472,10 @@ function StorefrontContent({
       () => {
         checkedPending.current = true;
         void action(
-          data.canDiscardCartAddition ? "discard-cart-add" : checkoutRecovery ? "recover-status" : "recover",
+          checkoutRecovery ? "recover-status" : "recover",
         );
       },
-      data.canDiscardCartAddition ? 0 : 1500,
+      1500,
     );
     return () => clearTimeout(timer);
   }, [data?.pending, data?.cartCreationPending, data?.canDiscardCartAddition, checkoutRecovery, busy]);
@@ -709,7 +716,7 @@ function StorefrontContent({
                   ? `正在处理${pendingLabel}…`
                   : pendingError ||
                     (data.canDiscardCartAddition
-                      ? "正在更新购物车…"
+                      ? "上一次加购结果待核对，请先读取原购物车。"
                       : data.canRetryCart
                         ? `${pendingLabel}暂未完成，请重试。`
                         : "状态暂未更新，请稍后刷新。")}
@@ -719,7 +726,7 @@ function StorefrontContent({
                 onClick={() =>
                   action(
                     data.canDiscardCartAddition
-                      ? "discard-cart-add"
+                      ? "recover-status"
                       : data.canRetryCart
                         ? "retry-cart"
                         : checkoutRecovery ? "recover-status" : "recover",
@@ -729,13 +736,15 @@ function StorefrontContent({
                 {busy ? (
                   <Spinner />
                 ) : data.canDiscardCartAddition ? (
-                  "取消等待"
+                  "核对原购物车"
                 ) : data.canRetryCart ? (
                   "重试"
                 ) : (
                   "刷新状态"
                 )}
               </Button>
+              {data.canDiscardCartAddition&&data.canRetryCart&&!busy&&<Button variant="outline" onClick={()=>action("retry-cart")}>继续原加购</Button>}
+              {data.canDiscardCartAddition&&!busy&&<Button variant="outline" onClick={()=>action("discard-cart-add")}>结束本次等待</Button>}
               {data.canRetryPurchase && !busy && (
                 <Button variant="outline" onClick={() => action("recover")}>
                   重试原购买请求
@@ -1300,7 +1309,7 @@ function StorefrontContent({
                             {ucpDraftAvailable && (
                               <div className="fv-stack">
                                 {(!ucpConfirmation || !data.checkout || canceledDraft) && <Button disabled={blocked} onClick={() => shop({action:"prepare"})}>
-                                  {canceledDraft ? "重新创建结算草稿" : data.checkout ? "查看结算草稿" : "创建结算草稿"}
+                                  {canceledDraft ? "重新结算" : data.checkout ? "继续结算" : "去结算"}
                                 </Button>}
                                 {data.checkout?.messages?.map((message:any,index:number) => (
                                   <p className="fv-muted" key={index}>{message.content}</p>
@@ -1850,6 +1859,11 @@ function StorefrontContent({
                           </CardContent>
                         </Card>
                         <div className="fv-stack">
+                          {aftersales && (initialAftersales || data.capabilities?.methods?.some(
+                            (method:{method:string;availability:string})=>method.method==="aftersales.eligibility"&&method.availability==="supported",
+                          )) && <AftersalesPanel key={selectedOrder.id} orderId={selectedOrder.id} orderRevision={JSON.stringify([selectedOrder.payment,selectedOrder.adjustments])}
+                            initialOpen={initialAftersales && initialOrderId===selectedOrder.id} request={aftersales}
+                            originalCaseId={initialOrderId===selectedOrder.id?initialAftersalesCaseId:undefined} />}
                           {ucpConfirmation && data.checkout?.id === selectedOrder.checkout_id && (
                             <UcpCheckoutActions data={data} busy={busy} action={action} now={now} orderView />
                           )}

@@ -1,3 +1,4 @@
+import {actionPhaseText,observeOwnerAction,type ActionPhase} from "./action-progress.js";
 import React, { useEffect, useRef, useState } from "react";
 import { ArrowLeft, Link2, RefreshCw, Store } from "lucide-react";
 import { useAccountRevision } from "./account.js";
@@ -72,6 +73,7 @@ function AccountServicePage({
     }
   });
   const [opening, setOpening] = useState(false);
+  const [phase,setPhase]=useState<ActionPhase>();
   const [addition, setAddition] = useState<{
     flowId: string;
     quantity: number;
@@ -148,7 +150,7 @@ function AccountServicePage({
     entryId.current ??= crypto.randomUUID();
     try {
       const result = await openStorefrontCart(
-        call,
+        (op,payload)=>observeOwnerAction(call,op,payload,next=>{if(live.current)setPhase(next);}),
         targetSite.id,
         entryId.current,
         intent,
@@ -232,6 +234,7 @@ function AccountServicePage({
             </Button>
           </div>
         </header>
+        {phase&&<p role="status" className="fv-muted">{actionPhaseText[phase]}</p>}
         <AccountSummary
           status={account}
           error={accountError}

@@ -44,7 +44,7 @@ export function orderStatus(order: any): {
     return { label: "无需付款 · 待交付", variant: "secondary" };
   if (payment === "authorized")
     return { label: "支付已授权", variant: "secondary" };
-  return { label: "状态待查看", variant: "secondary" };
+  return { label: "打开详情查看状态", variant: "secondary" };
 }
 
 /** Only enrich references from this flow's already returned data. No extra reads. */

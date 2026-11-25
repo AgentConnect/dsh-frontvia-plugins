@@ -1,3 +1,4 @@
+import {measure} from "./action-progress.js";
 import {ucpBusinessMethods} from './ucp-business.js';
 import {createHash} from 'node:crypto';
 import type {PapOperationsClient} from '@awiki/dsh-pap/product-api';
@@ -11,6 +12,7 @@ export class Pap03Business implements PapPort {
   private transport:Pap03Transport;
   private connections=new Map<string,{store:StoreConnection;identity:string}>();
   private epoch='';
+  private catalogGeneration='';
   private readinessError?:PapRequestError;
   private publicState:any={state:'unconfigured'};
   constructor(private readonly pap:PapOperationsClient){this.transport=new Pap03Transport(pap);}
@@ -21,10 +23,12 @@ export class Pap03Business implements PapPort {
     const previous=this.epoch;
     const state=result.value as any;this.publicState=state;
     this.epoch=state?.state==='ready'&&state.identity?createHash('sha256').update(JSON.stringify(state.identity)).digest('hex'):'';
-    if(this.epoch&&(previous!==this.epoch||!this.connections.size)){
+    const generation=JSON.stringify((state?.companies??[]).map((c:any)=>[c.companyRef,c.discoveryGeneration]));
+    if(this.epoch&&(previous!==this.epoch||generation!==this.catalogGeneration||!this.connections.size)){
       const catalog=await this.pap.operations();
       if(!catalog.ok){this.epoch='';this.publicState={state:catalog.error.code};this.readinessError=new PapRequestError(catalog.error);return;}
       const operations=Array.isArray(catalog.value)?catalog.value:[];
+      this.catalogGeneration=generation;
       for(const c of state.companies??[]){
         if(typeof c.domain!=='string'||typeof c.companyId!=='string'||typeof c.companyRef!=='string')continue;
         const own=operations.filter((op:any)=>op.companyRef===c.companyRef);
@@ -36,9 +40,12 @@ export class Pap03Business implements PapPort {
       }
     }
   }
-  async prepareDomain(domain:string){
+  async prepareDomain(domain:string,reuse=false){
     await this.refresh();
     if(this.readinessError)throw this.readinessError;
+    if(reuse && [...this.connections].some(([ref,{store}])=>store.domain===domain && this.canAccess(ref) &&
+      this.publicState.companies?.some((c:any)=>c.companyRef===store.companyRef && c.companyId===store.companyId &&
+        Number.isSafeInteger(c.discoveryGeneration) && c.discoveryExpiresAt>Date.now())))return;
     // Explicit user connection re-discovers the protocol and lets PAP choose a
     // compatible session. Restored lifecycle state may predate a server upgrade.
     await this.discoverDomain(domain);
@@ -50,7 +57,7 @@ export class Pap03Business implements PapPort {
     return this.discoverDomain(domain);
   }
   private async discoverDomain(domain:string){
-    const store=await this.transport.connect(domain);await this.refresh();
+    const store=await measure("discover",()=>this.transport.connect(domain));await this.refresh();
     if(this.readinessError)throw this.readinessError;
     if(!this.epoch)fail('PUBLIC_IDENTITY_REQUIRED');
     const ref=createHash('sha256').update(JSON.stringify([store.companyRef,this.epoch])).digest('hex');
@@ -78,7 +85,7 @@ export class Pap03Business implements PapPort {
   }
   status(ref?:string){return [...this.connections.keys()].filter(r=>(!ref||r===ref)&&this.canAccess(r)).map(r=>{const {store}=this.current(r);return {connectionRef:r,siteId:store.domain,label:store.name,domain:store.domain,issuer:store.companyId,resource:store.companyId,signedIn:false,connected:true};});}
   identity(ref:string){const {store}=this.current(ref);return {issuer:store.companyId,resource:store.companyId,signedIn:false};}
-  capabilityCacheKey(ref:string){const value=this.current(ref);return createHash('sha256').update(JSON.stringify([value.identity,value.store.companyRef,this.publicState.sessions])).digest('hex');}
+  capabilityCacheKey(ref:string){const value=this.current(ref);return createHash('sha256').update(JSON.stringify([value.identity,value.store.companyRef,this.catalogGeneration,this.publicState.sessions.filter((s:any)=>s.companyRef===value.store.companyRef)])).digest('hex');}
   async request(ref:string,method:string,params:unknown,signal?:AbortSignal){
     await this.refresh();const {store}=this.current(ref);
     const send = (target:StoreConnection) => this.transport.request(target,method,params as Record<string,unknown>,signal);

@@ -242,7 +242,7 @@ export async function requestUcp(method:string,params:Record<string,any>,operati
     data={items:result.products.map(item=>product(item)),page:{has_more:result.pagination?.has_next_page===true,next_cursor:result.pagination?.cursor??null}};
   }else if(id==='get_product'){
     const found=object(result.product);
-    if(params.product_id!==undefined&&found.id!==params.product_id)throw new Error('INVALID_UCP_RESPONSE');
+    if((found.variants!==undefined && !Array.isArray(found.variants)) || params.product_id!==undefined&&found.id!==params.product_id)throw new Error('INVALID_UCP_RESPONSE');
     data=method==='commerce.variants.list'?{items:(found.variants??[]).map((variant:any)=>product(variant,found.id)),page:{has_more:false,next_cursor:null}}:method==='commerce.variants.get'?product((found.variants??[]).find((variant:any)=>variant.id===params.variant_id),found.id):product(found);
   }else if(id==='list_orders'){
     const page=object(result.page);
@@ -252,14 +252,28 @@ export async function requestUcp(method:string,params:Record<string,any>,operati
         typeof page.has_more!=='boolean'||
         (page.has_more?typeof page.next_cursor!=='string'||!page.next_cursor:page.next_cursor!==null))
       throw new Error('INVALID_UCP_RESPONSE');
-    data={items:result.items.map(({order_id}:any)=>({order_id})),page:{has_more:page.has_more,next_cursor:page.next_cursor}};
+    data={items:result.items.map(({order_id,summary}:any)=>{
+      if (!summary || !/^[A-Z]{3}$/.test(summary.currency)) return {order_id};
+      return {order_id,
+        ...(typeof summary.label==='string'?{label:summary.label}:{}),
+        ...(typeof summary.placed_at==='string'?{created_at:summary.placed_at}:{}),
+        ...(typeof summary.first_title==='string'?{first_title:summary.first_title,line_count:summary.line_count}:{}),
+        ...(typeof summary.payment_status==='string'?{payment:{status:summary.payment_status}}:{}),
+        ...(Number.isSafeInteger(summary.total_minor)&&summary.total_minor>=0?{totals:{grand_total:amount(summary.total_minor,summary.currency)}}:{}),
+      };
+    }),page:{has_more:page.has_more,next_cursor:page.next_cursor}};
   }else {
     data=resource(result,response.etag);
     if(id==='get_order'){
       projectOrderShipping(data);
+      const summary=result.payment_summary;
+      delete data.payment_summary;
       const status = orderPayment(result.messages);
       if (status) {
         data.payment = { status };
+        if(summary?.currency===result.currency)for(const key of ['captured_minor','refunded_minor']){
+          if(Number.isSafeInteger(summary[key])&&summary[key]>=0)data.payment[key]=summary[key];
+        }
         if (status === 'not_required') data.payment_required = false;
       }
     }

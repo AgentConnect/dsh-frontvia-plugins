@@ -1,3 +1,4 @@
+import {actionPhaseText,observeOwnerAction,type ActionPhase} from "./action-progress.js";
 import type { StartShopping } from "./storefront-cart.js";
 import type { ViewScope } from "../view-scope.js";
 import { Storefront } from "./storefront.js";
@@ -86,6 +87,7 @@ import {
 import styles from "./styles.css";
 import { ConnectionHelp } from "./connection-help.js";
 import { ConsultationCard } from "./consultation.js";
+import { AftersalesPanel, type AftersalesRequest } from "./aftersales.js";
 export const inject = [
   "slots",
   "layout",
@@ -94,7 +96,7 @@ export const inject = [
   "sessions",
   "conversation",
 ];
-type UI = { flowId: string; sessionId: string; card: string; orderId?: string };
+type UI = { flowId: string; sessionId: string; card: string; orderId?: string; afterSalesCaseId?:string };
 const errorText: Record<string, string> = {
   INVALID_UI_REQUEST: "请求参数无效。",
   SHOPPING_VIEW_FAILED: "暂时无法读取购物进度，请刷新此卡片。",
@@ -107,13 +109,16 @@ const errorText: Record<string, string> = {
     "商品已生成订单，请到“我的订单”查看。继续加购会使用新的购物车。",
   OPERATION_DISCARDED: "这次加购已结束，请重新选择商品。",
   CART_DISCARD_UNAVAILABLE: "当前操作无法取消，请查看订单状态。",
-  ADD_NOT_COMPLETED: "未能加入商品，请重试。",
+  PAP_IDENTITY_AUTHORIZATION_DENIED: "你已拒绝本次授权。可以核对内容后重新操作。",
+  PAP_IDENTITY_AUTHORIZATION_EXPIRED: "本次授权已过期，请核对内容后重新操作。",
+  PAP_IDENTITY_AUTHORIZATION_REQUIRED: "请打开「设置 → 身份管理 → 待处理请求」核对本次授权，再查询原操作。",
+  ADD_NOT_COMPLETED: "尚未确认商品已加入，请在这辆购物车核对原操作。",
   CART_RETRY_FAILED: "这次购物车修改未成功，请检查商品数量后重试。",
   CART_RETRY_UNAVAILABLE: "当前购物车无法重试，请刷新查看最新状态。",
   OPERATION_NOT_COMPLETED: "操作未完成，请刷新核对当前进度后再试。",
   CHECKOUT_IN_PROGRESS: "当前已准备结算，请先核对报价；需要修改时请重新报价。",
   ORDER_CANCEL_UNAVAILABLE:
-    "当前订单不能直接取消，请刷新核对；已付款订单需联系商家退款。",
+    "当前订单不能直接取消，请刷新核对。已付款订单请从原订单打开「查看售后」，按订单显示的资格办理。",
   ORDER_CANCEL_FAILED: "取消未完成，订单仍保留。请核对原订单结果后再试。",
   PAYMENT_CLOSURE_UNCONFIRMED:
     "尚未确认支付渠道关闭，请查询原订单结果，不要重复操作。",
@@ -134,7 +139,6 @@ const errorText: Record<string, string> = {
   QUOTE_CHANGED: "报价或购物车已变化，请重新报价并核对。",
   CONFIRMATION_EXPIRED: "确认已过期，请重新核对当前报价。",
   CHECKOUT_REOPEN_NOT_READY: "商家仍保留原结算草稿，请核对当前状态。",
-  PAP_IDENTITY_AUTHORIZATION_REQUIRED: "请处理 PAP 授权提示，再继续原操作。",
   CONTACT_NOT_SAVED: "收货信息未保存，请重试。",
   CONTACT_DRAFT_CHANGED: "结算草稿已变更，请核对当前草稿后重新保存收货信息。",
   CONTACT_REQUIRED: "请先填写并保存完整的收货信息。",
@@ -310,6 +314,7 @@ export function apply(ctx: any) {
     initialError?: string;
     catalog?: CatalogSnapshot;
   }) {
+    const isAftersales=ui.card==="aftersales";
     const accountRevision = useAccountRevision();
     const draftScope = JSON.stringify([accountRevision, ui.sessionId, ui.flowId]);
     const [liveRevision, setLiveRevision] = useState(accountRevision);
@@ -322,7 +327,7 @@ export function apply(ctx: any) {
     const scope = useRef<ViewScope>(
       resume || ["products", "connection"].includes(ui.card)
         ? "catalog"
-        : ui.card === "order"
+        : ui.card === "order" || isAftersales
           ? "order"
           : "checkout",
     );
@@ -346,7 +351,7 @@ export function apply(ctx: any) {
       }>({ code: initialError ?? "" }),
       [viewError, setViewError] = useState(""),
       [tab, setTab] = useState<string | undefined>(
-        resume ? undefined : ui.card === "connection" ? "products" : ui.card,
+        resume ? undefined : ui.card === "connection" ? "products" : isAftersales?"order":ui.card,
       ),
       [tick, setTick] = useState(Date.now());
     const setError = (code: string) => setActionFailure({ code });
@@ -409,7 +414,7 @@ export function apply(ctx: any) {
       setError(initialError ?? "");
       setViewError("");
       setTab(
-        resume ? undefined : ui.card === "connection" ? "products" : ui.card,
+        resume ? undefined : ui.card === "connection" ? "products" : isAftersales?"order":ui.card,
       );
       return views.subscribe(
         ui,
@@ -451,6 +456,11 @@ export function apply(ctx: any) {
       return () => clearInterval(t);
     }, []);
     const downloadOrder = (order_id: string) => call("order-file", { flowId: ui.flowId, sessionId: ui.sessionId, order_id, card: ui.card });
+    const [phase,setPhase]=useState<ActionPhase>();
+    const trackedCall=useCallback((op:string,payload:any)=>observeOwnerAction(call,op,payload,setPhase),[]);
+    const progress=phase&&<p role="status" className="fv-muted">{actionPhaseText[phase]}</p>;
+    const aftersales:AftersalesRequest=useCallback((op,payload)=>trackedCall(op,{flowId:ui.flowId,sessionId:ui.sessionId,card:ui.card,...payload}),
+      [trackedCall,ui.flowId,ui.sessionId,ui.card]);
     const action = async (op: string, payload: any = {}, onResult?: (value: any) => void) => {
       if (acting.current) return false;
       const checkout = op === "contact" && payload.checkout_id
@@ -477,11 +487,19 @@ export function apply(ctx: any) {
         const value =
           op === "view"
             ? await views.refresh(ui)
-            : await call(op, { flowId: ui.flowId, sessionId: ui.sessionId, card: ui.card, ...payload });
+            : await trackedCall(op, { flowId: ui.flowId, sessionId: ui.sessionId, card: ui.card, ...payload });
         if (op !== "view") {
           const published = views.publish(ui, value, checkout?.id);
           if (checkout && !published) {
             views.invalidate(ui, ["checkout"]);
+            return false;
+          }
+        }
+        if (op==="shopping" && payload.intent?.action==="add") {
+          const quantity=(cart:any)=>cart?.lines?.filter((line:any)=>line.variant_id===payload.intent.variantId)
+            .reduce((sum:number,line:any)=>sum+line.quantity,0)??0;
+          if(value.pending || value.operation?.status==="failed" || quantity(value.cart)<quantity(data?.cart)+payload.intent.quantity){
+            setError("ADD_NOT_COMPLETED");
             return false;
           }
         }
@@ -626,7 +644,9 @@ export function apply(ctx: any) {
           }}
         >
           {!resume && <style>{styles}</style>}
-          <Storefront downloadOrder={downloadOrder}
+          {progress}
+          <Storefront downloadOrder={downloadOrder} aftersales={aftersales} initialAftersales={isAftersales}
+            initialAftersalesCaseId={ui.afterSalesCaseId}
             key={accountRevision}
             draftScope={draftScope}
             data={data}
@@ -639,7 +659,7 @@ export function apply(ctx: any) {
             now={tick}
             startShopping={startShopping}
             addedQuantity={addedQuantity}
-            initialTab={resume ? undefined : ui.card === "order" ? "orders"
+            initialTab={resume ? undefined : ui.card === "order" || isAftersales ? "orders"
               : ui.card === "cart" || ui.card === "quote" ? "cart" : "products"}
             initialOrderId={resume ? undefined : ui.orderId}
             onViewChange={onViewChange}
@@ -656,6 +676,7 @@ export function apply(ctx: any) {
         aria-busy={!!busy}
       >
         <style>{styles}</style>
+        {progress}
         <Card>
           <CardHeader>
             <div className="fv-brand">
@@ -1318,6 +1339,8 @@ export function apply(ctx: any) {
                         }}
                       />
                       {data.order && <Order order={data.order} download={downloadOrder} />}{" "}
+                      {isAftersales&&ui.orderId&&<AftersalesPanel key={ui.orderId} orderId={ui.orderId}
+                        request={aftersales} initialOpen originalCaseId={ui.afterSalesCaseId} />}
                       {items(data.orders)
                         .filter(
                           (o: any) => !data.order || o.id !== data.order.id,

@@ -19,6 +19,8 @@ import {
 } from "./shopping-action.js";
 import { contactSchema, cartContactReady, manualCart, manualContactSchema } from "./contact-fields.js";
 import { ConsultationService, consultationSite } from "./consultation.js";
+import { CustomerAftersales } from "./aftersales.js";
+import type { AftersalesChange } from "./aftersales-contract.js";
 export type CustomerConfig = {
   dataDir: string;
   sites: {
@@ -197,6 +199,7 @@ export class CustomerService {
   private catalogCache = new ReadCache(60000, Date.now, 32);
   private views = new SharedReads();
   readonly consultation: ConsultationService;
+  private readonly aftersales: CustomerAftersales;
   private serial = new Serial();
   constructor(
     readonly config: CustomerConfig,
@@ -205,6 +208,7 @@ export class CustomerService {
   ) {
     if (pap.apiVersion !== 3) fail("PAP_VERSION_UNSUPPORTED");
     this.consultation = new ConsultationService(pap, vault);
+    this.aftersales = new CustomerAftersales(pap, vault);
   }
   private save(f: Flow) {
     f.updatedAt = new Date().toISOString();
@@ -423,10 +427,10 @@ export class CustomerService {
     z.uuid().parse(actionId);
     const site = this.pap.sites().find((s) => s.id === siteId);
     if (!site?.description?.methods.includes("commerce.capabilities.get")) fail("SITE_NOT_APPROVED");
-    const result = await this.connect(`storefront:${actionId}`, siteId);
+    const result = await this.connect(`storefront:${actionId}`, siteId, true);
     return result.ui;
   }
-  async connect(sessionId: string, siteId: string) {
+  async connect(sessionId: string, siteId: string, reuse = false) {
     if (!sessionId || sessionId.length > 200) fail("SESSION_REQUIRED");
     // Public PAP restores local lifecycle state without reconnecting a Company.
     // Check chat ownership before explicit discovery or business reads.
@@ -448,7 +452,7 @@ export class CustomerService {
           fail("PERSONAL_CHAT_ACCOUNT_CHANGED");
       }
     }
-    await this.pap.prepareDomain?.(siteId);
+    await this.pap.prepareDomain?.(siteId,reuse);
     const site = this.pap.sites().find((s) => s.id === siteId);
     if (consultationSite(site) && !site?.description?.methods.includes("commerce.capabilities.get"))
       return this.consultation.connect(sessionId, siteId);
@@ -659,6 +663,14 @@ export class CustomerService {
         command.prepareDispatch = "not_sent";
         this.save(f);
       }
+      if (trace?.businessRequest==="not_sent" && ["identity_authorization_denied","identity_authorization_expired"].includes(trace.code) &&
+          (!preparing || priorPrepareDispatch==="not_sent")) {
+        command.status="done";
+        command.result={error:{code:error instanceof PapRequestError?error.code:"OPERATION_NOT_COMPLETED"}};
+        delete f.pending;
+        this.save(f);
+        throw error;
+      }
       const notSent = trace?.businessRequest === "not_sent" && !trace.approval;
       const beforeAcceptance = ["buyer_email_required", "checkout_conflict",
         "payment_method_unavailable", "invalid_request", "resource_state_conflict",
@@ -777,6 +789,17 @@ export class CustomerService {
       };
     }
     const flowId = id.parse(args.flowId);
+    if (name === "frontvia_orders" && args.action === "aftersales") {
+      const orderId=z.uuid().parse(args.order_id);
+      const f=this.flow(sessionId,flowId);
+      const view=await this.viewAftersales(sessionId,flowId,orderId,undefined,undefined,signal);
+      const result=this.result(f,"aftersales",{
+        order_id:orderId, available_actions:view.eligibility.allowed,
+        case:view.selected?{id:view.selected.id, stage:view.selected.stage, kind:view.selected.kind}:null,
+        nextStep:"在原订单的售后卡片查看并办理。提交或撤回需要买家在宿主确认。",
+      },orderId);
+      return { ...result, ui:{...result.ui,...(view.selected?{afterSalesCaseId:view.selected.id}:{})} };
+    }
     return this.serial.run(flowId, () =>
       this.shoppingTool(sessionId, flowId, name, args, callId, signal),
     );
@@ -844,15 +867,16 @@ export class CustomerService {
         const product_id = id.parse(args.product_id),
           context = pricing(f);
         if (args.action === "detail") {
-          // Publish the pair atomically under the existing flow lease. Real
-          // merchant measurements did not justify concurrent connection reads.
+          // UCP embeds variants in the authorized product response.
           data = await this.read(
             f,
             "products.get",
             { product_id, context },
             signal,
           );
-          f.variants = await this.read(
+          f.variants = f.capabilities?.ucp
+            ? { items: data.variants ?? [], page: { has_more: false, next_cursor: null } }
+            : await this.read(
             f,
             "variants.list",
             { product_id, context, page: { limit: 20 } },
@@ -1602,6 +1626,15 @@ export class CustomerService {
       const f = this.flow(sessionId, flowId);
       this.policy(f);
       await this.currentCapabilities(f, true);
+      if (!retryPurchase && this.discardableAddition(f) && f.pending && f.commands[f.pending].params.ucp_protocol===true) {
+        if(f.cart)await this.refresh(f,false,["cart"]);
+        else {
+          // UCP has no receipt lookup by request key. Keep the original create for an explicit retry.
+          f.commands[f.pending].waitEnded=true;
+          this.save(f);
+        }
+        return;
+      }
       await this.recover(f, false, retryPurchase);
     });
   }
@@ -2158,7 +2191,21 @@ export class CustomerService {
       )
     );
   }
-  /** Owner-only: close the original payment at the merchant before canceling. */
+  async viewAftersales(sessionId:string,flowId:string,orderId:string,caseId?:string,cursor?:string,signal?:AbortSignal,deferHistory=false) {
+    const {connectionRef}=this.flow(sessionId,flowId);
+    const result=await this.aftersales.view({connectionRef,orderId},caseId,cursor,signal,deferHistory);
+    this.flow(sessionId,flowId);
+    return result;
+  }
+
+  /** This is called exclusively from the owner UI and still requires PAP's separate operation approval. */
+  async changeAftersales(sessionId:string,flowId:string,orderId:string,input:AftersalesChange,signal?:AbortSignal) {
+    const {connectionRef}=this.flow(sessionId,flowId);
+    const result=await this.aftersales.change({connectionRef,orderId},input,signal);
+    this.flow(sessionId,flowId);
+    return result;
+  }
+
   async downloadOrderFile(sessionId: string, flowId: string, orderId: string, signal?: AbortSignal) {
     const flow = this.flow(sessionId, flowId);
     const result = await this.pap.request(flow.connectionRef, "commerce.orders.get", { order_id: orderId }, signal);

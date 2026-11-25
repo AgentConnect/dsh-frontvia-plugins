@@ -1,15 +1,22 @@
+import {createHash} from 'node:crypto';
 import {readFile} from 'node:fs/promises';
 import {pathToFileURL} from 'node:url';
 
-/** Test-only loopback TLS routing; the production PAP transport still verifies certificates. */
+export function caseFingerprint(orderId,caseId){
+  return createHash('sha256').update(JSON.stringify([orderId,caseId])).digest('hex');
+}
+
+/** Observe the actual PAP traffic, with a fixture CA only for loopback tests. */
 export async function apply(ctx,config){
   const {SafeHttpsTransport}=await import(pathToFileURL(config.transportModule).href);
-  const transport=new SafeHttpsTransport({ca:await readFile(config.ca),
+  const transport=new SafeHttpsTransport(config.liveStore ? {} : {ca:await readFile(config.ca),
     privateOrigins:[config.origin,...(config.ucpPlatformProfileUrl?[new URL(config.ucpPlatformProfileUrl).origin]:[])],
     lookup:async()=>[{address:'127.0.0.1',family:4}]});
   ctx.provide('papHost',{transport:{async request(url,options){
     const response=await transport.request(url,options);
-    const pathname=new URL(url).pathname;
+    const requestUrl=new URL(url);
+    if(requestUrl.origin!==config.origin)return response;
+    const pathname=requestUrl.pathname;
     if(pathname.startsWith('/ucp/v1/')){
       const operation=pathname.replace(/^\/ucp\/v1\//,'')
         .replace(/^(carts|checkout-sessions|orders)\/[^/]+/,'$1/:id');
@@ -29,6 +36,28 @@ export async function apply(ctx,config){
         }catch{}
       }
       console.log(JSON.stringify({event:'frontvia-e2e-http',operation,method:options.method,status:response.status,pap10,...(checkout?{checkout}:{})}));
+    }
+    if(pathname.startsWith('/poppy/v1/aftersales/')){
+      const headers=new Headers(options?.headers);
+      let originalCase;
+      if(response.status===200&&options.method==='GET'&&/(?:\/eligibility|\/cases\/[^/]+)$/.test(pathname)){
+        try{
+          const facts=JSON.parse(Buffer.from(response.body).toString());
+          const caseId=pathname.endsWith('/eligibility')?facts.active_case?.id:facts.id;
+          if(typeof facts.order_id==='string'&&typeof caseId==='string'){
+            originalCase=caseFingerprint(facts.order_id,caseId);
+          }
+        }catch{}
+      }
+      console.log(JSON.stringify({event:'frontvia-e2e-http',
+        operation:pathname.slice('/poppy/v1/'.length).replace(/\/orders\/[^/]+/,'/orders/:id')
+          .replace(/\/(cases|intents|operations)\/[^/]+/,'/$1/:id'),
+        method:options.method,status:response.status,
+        pap10:headers.get('poppy-version')==='1.0'&&headers.has('poppy-session'),
+        operationsV3:/"operations"\s*;\s*v="3"/.test(headers.get('poppy-extensions')??''),
+        userApproval:/(?:^|,\s*)approver="user"(?:,|$)/.test(headers.get('poppy-approval')??''),
+        originalCase,
+      }));
     }
     const operation=pathname.split('/api/')[1];
     if(operation){

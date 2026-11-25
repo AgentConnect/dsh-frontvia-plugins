@@ -169,7 +169,13 @@ Catalog search), `com.frontvia.shopping.order_history` (extends Order) and
 version. Publish Fulfillment under Checkout for physical delivery.
 Customer reads the store's market, binding and connection generation from the
 negotiated Store Context and loads the original Order by ID from paginated
-merchant history. A Catalog/Cart-only store supports browsing and cart editing.
+merchant history. Optional history summaries carry the display label, placement time,
+first item, currency, total and payment status from the authorized order snapshot.
+The order screen loads eligibility before optional history. For a local timing
+trace, set `FRONTVIA_CUSTOMER_TIMINGS=1` on the Customer host. Each owner request
+emits one random reference and elapsed milliseconds for the active discovery,
+PAP, and after-sales reads. Concurrent measurements can overlap.
+A Catalog/Cart-only store supports browsing and cart editing.
 
 For a hosted Checkout, collect the buyer email and any fulfillment the
 Checkout requests. The card opens the merchant's `continue_url` when the

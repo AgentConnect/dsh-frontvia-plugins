@@ -8,7 +8,7 @@ test("canceled orders are neutral even with a paid snapshot; references never im
     { label: "已取消", variant: "secondary" },
   );
   assert.deepEqual(orderStatus({ order_id: "reference" }), {
-    label: "状态待查看",
+    label: "打开详情查看状态",
     variant: "secondary",
   });
   assert.equal(

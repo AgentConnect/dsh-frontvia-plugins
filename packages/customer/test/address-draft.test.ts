@@ -241,7 +241,7 @@ test("Cart-only storefront keeps the Cart visible without Checkout or Order acti
     });
     assert(tree.root.findAll((node) => node.children.includes("Mug")).length);
     assert(tree.root.findAll((node) => node.children.includes("商家购买服务尚未就绪。")).length);
-    for (const label of ["创建结算草稿", "查看结算草稿", "去结账", "继续结账", "我的订单"])
+    for (const label of ["去结算", "继续结算", "去结账", "继续结账", "我的订单"])
       assert.equal(button(tree, label), undefined);
   } finally {
     await act(async () => tree?.unmount());
@@ -372,7 +372,7 @@ test("checkout preparation offers a separate resume and restores checkout on the
     };
     await act(async () => { tree.update(render()); });
     assert.equal(button(tree, "继续原结算准备"), undefined);
-    await click(tree, "重新创建结算草稿");
+    await click(tree, "重新结算");
     assert.equal(requests.at(-1)?.operation, "shopping");
     assert.deepEqual(requests.at(-1)?.payload.intent, { action: "prepare" });
     assert.equal(requests.at(-1)?.payload.expected_version, "v1");
@@ -553,7 +553,7 @@ test("a canceled UCP draft never prefills its unsaved address into the same cart
     await act(async () => { tree = create(render()); });
     await edit(tree, "甲草稿的未保存地址");
     await click(tree, "取消草稿并修改购物车");
-    await click(tree, "重新创建结算草稿");
+    await click(tree, "重新结算");
     assert.deepEqual(intents, ["edit-cart", "prepare"]);
     assert.equal(address(tree).props.value, "测试镇乙路 2 号");
   } finally {
