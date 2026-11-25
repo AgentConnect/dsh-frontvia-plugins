@@ -68,6 +68,62 @@ test("a fresh client opens the original settled case when there is no active hol
   assert(!f.calls.some(call=>call.method==="aftersales.submit"));
 });
 
+test("legacy eligibility opens paginated history until the buyer selects a case",async()=>{
+  const {latest_case_id: _latest,...legacy}=eligibility;
+  const newer:typeof entry={...entry,stage:"refunded",decision_reason:"已核实缺件",
+    refund:{state:"confirmed",amount_minor:"7300",shipping_minor:"0",currency:"CNY",reason:"核实缺件后部分退款"}};
+  const older:typeof entry={...entry,id:lineId,stage:"rejected",decision_reason:"超出售后时限",refund:null};
+  const calls:{method:string;params:Record<string,unknown>}[]=[];
+  const pap={request:async(ref:string,method:string,params:Record<string,unknown>)=>{
+    assert.equal(ref,scope.connectionRef);
+    calls.push({method,params});
+    if(method==="aftersales.eligibility")return {...legacy,allowed:[]};
+    if(method==="aftersales.list")return params.cursor
+      ? {items:[newer],page:{has_more:false,next_cursor:null}}
+      : {items:[older],page:{has_more:true,next_cursor:"next-page"}};
+    if(method==="aftersales.get"&&params.case_id===newer.id)return newer;
+    assert.fail(`Unexpected request to ${method}`);
+  }};
+  const service=new CustomerAftersales(pap as PapPort,{get:()=>undefined,set:()=>assert.fail("unexpected write")});
+  let ui!:ReturnType<typeof create>;
+  await act(async()=>{
+    ui=create(React.createElement(AftersalesPanel,{orderId,initialOpen:true,
+      request:(_operation,payload)=>service.view(scope,payload.case_id,payload.cursor,undefined,payload.defer_history)}));
+  });
+  const text=()=>JSON.stringify(ui.toJSON());
+  const click=async(name:string)=>{
+    const button=ui.root.findAllByType("button").find(node=>node.children.join("")===name)!;
+    assert(button,name);
+    await act(async()=>button.props.onClick());
+  };
+  assert.match(text(),/历史申请/);
+  assert.doesNotMatch(text(),/超出售后时限|已核实缺件|¥73\.00/);
+  assert(!calls.some(call=>call.method==="aftersales.get"));
+
+  await click("更多申请");
+  assert.equal(calls.find(call=>call.params.cursor)?.params.cursor,"next-page");
+  assert(!calls.some(call=>call.method==="aftersales.get"));
+  await click("退货退款 · 渠道已确认退款");
+  assert.deepEqual(calls.filter(call=>call.method==="aftersales.get").map(call=>call.params),
+    [{order_id:orderId,case_id:newer.id}]);
+  assert.match(text(),/¥73\.00/);
+  assert.match(text(),/核实缺件后部分退款/);
+  assert.match(text(),/已核实缺件/);
+  await act(async()=>ui.unmount());
+});
+
+test("an explicit case takes precedence over the active case and latest reference",async()=>{
+  const explicit={...entry,id:lineId};
+  const latest="bce5a071-f92d-4dc5-bf75-55a0fc171244";
+  const f=fixture(history,explicit,{...eligibility,active_case:entry,latest_case_id:latest});
+  const service=f.build();
+  assert.equal((await service.view(scope)).selected?.id,entry.id);
+  assert(!f.calls.some(call=>call.method==="aftersales.get"));
+  assert.equal((await service.view(scope,explicit.id)).selected?.id,explicit.id);
+  assert.deepEqual(f.calls.filter(call=>call.method==="aftersales.get").map(call=>call.params),
+    [{order_id:orderId,case_id:explicit.id}]);
+});
+
 test("after-sales recovery on restart queries the original operation without another submission",async()=>{
   const f=fixture();
   f.write(()=>{throw new PapRequestError({code:"request_uncertain",businessRequest:"unknown",papOperationId:"original-operation"});});
